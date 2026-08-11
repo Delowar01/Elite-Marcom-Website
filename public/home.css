@@ -13,17 +13,28 @@
 }
 .hero__grid {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: clamp(28px, 4vw, 70px); align-items: center;
+  gap: clamp(28px, 4vw, 70px); align-items: start;
 }
 .hero__title { font-size: var(--fs-hero); margin-bottom: 26px; }
 .hero__title .mask-clip { padding-bottom: 0.08em; margin-bottom: -0.08em; }
 
-/* right column: stats above · reserved 1:1 GLB square · chips + cue below */
+/* right column: stats aligned with the left text top · reserved 1:1 GLB
+   square tucked behind them · chips + cue below */
 .hero__stage {
   position: relative; min-height: 0;
-  display: flex; flex-direction: column; gap: 20px; justify-content: center;
+  display: flex; flex-direction: column; gap: 0; justify-content: flex-start;
 }
-.hero__stats { display: flex; justify-content: space-between; gap: 18px; margin: 0; }
+.hero__stats {
+  display: flex; justify-content: space-between; gap: 18px;
+  position: relative; z-index: 2;
+  /* invisible frost: transparent backdrop blur — unnoticeable over the page
+     background, but softly frosts any part of the 3D model behind the text,
+     keeping the stats readable whatever the model's colors are */
+  padding: 10px 14px; margin: -10px -14px 0;
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
 .hero__stats dt, .hero__stats dd { margin: 0; }
 .hero__stats .stat__num { font-size: clamp(1.5rem, 1.2rem + 1vw, 2.1rem); }
 .hero__stats .stat { min-width: 0; }
@@ -35,13 +46,16 @@
 .hero__stage-foot {
   display: flex; justify-content: space-between; align-items: center;
   gap: 14px; flex-wrap: wrap;
+  position: relative; z-index: 2; margin-top: 6px;
 }
 
-/* reserved 1:1 model area — unhighlighted, future models of any shape fit here */
+/* reserved 1:1 model area — unhighlighted, future models of any shape fit here.
+   The negative top margin tucks it up behind the frosted stats row. */
 .hero__stage-inner {
-  position: relative; align-self: center;
-  width: min(100%, 58vh);
+  position: relative; align-self: center; z-index: 1;
+  width: min(100%, 66vh);
   aspect-ratio: 1 / 1;
+  margin-top: -34px;
   touch-action: pan-y; /* touch drag must not block page scroll */
 }
 .hero__stage-inner canvas { display: block; width: 100%; height: 100%; outline: none; }
@@ -82,8 +96,8 @@
   .hero { min-height: 0; padding-top: clamp(120px, 16vh, 160px); }
   .hero__grid { grid-template-columns: 1fr; }
   .hero__stage { order: 2; gap: 16px; }
-  .hero__stage-inner { width: min(100%, 52vh); }
-  .hero__stats { flex-wrap: wrap; gap: 14px 24px; justify-content: flex-start; }
+  .hero__stage-inner { width: min(100%, 52vh); margin-top: 0; }
+  .hero__stats { flex-wrap: wrap; gap: 14px 24px; justify-content: flex-start; margin: 0; padding: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
   .hero__scroll-cue { display: none; }
 }
 
