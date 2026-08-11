@@ -324,7 +324,8 @@ def normalize_product(rec: dict, market: str) -> dict | None:
         return None
 
 
-def _merge_stock(products: list[dict], stock_records: list[dict]) -> None:
+def _merge_stock(products: list[dict], stock_records: list[dict]) -> int:
+    """Returns how many products found a matching stock row."""
     by_key: dict[str, dict] = {}
     for rec in stock_records:
         rec = _normalize_keys(rec)
@@ -335,9 +336,11 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> None:
             key = _s(rec, key_name)
             if key:
                 by_key.setdefault(key, rec)
+    matched = 0
     for p in products:
         rec = by_key.get(p["id"]) or by_key.get(p["code"])
         if rec:
+            matched += 1
             p["stock"]["available"] = max(0, _i(rec, "net_stock", "available_stock", "stock", "net_available",
                                                 "qty_available", "free_qty", "available_qty", "quantity_available"))
             p["stock"]["blocked"] = max(0, _i(rec, "blocked_stock", "blocked", "reserved"))
@@ -345,6 +348,7 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> None:
             inc = _s(rec, "incoming_date", "expected_date")[:30]
             if inc:
                 p["stock"]["incomingDate"] = inc
+    return matched
 
 
 # ---------------- cache ----------------
@@ -381,9 +385,14 @@ async def _fetch_catalog(market: str) -> list[dict]:
     products = [p for p in (normalize_product(r, market) for r in records) if p]
     try:
         raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{token}", host)
-        _merge_stock(products, _parse_records(raw_s, ctype_s)[: config.SUPPLIER_MAX_RECORDS])
-    except SupplierUnavailable:
-        pass  # stock merge is best-effort; product payload often carries stock already
+        stock_records = _parse_records(raw_s, ctype_s)[: config.SUPPLIER_MAX_RECORDS]
+        matched = _merge_stock(products, stock_records)
+        print(f"[jasani] {market}: {len(products)} products, {len(stock_records)} stock rows, "
+              f"{matched} matched, {sum(1 for p in products if p['stock']['available'] > 0)} with stock > 0",
+              flush=True)
+    except SupplierUnavailable as exc:
+        # stock merge is best-effort; product payload often carries stock already
+        print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
     if not products:
         raise SupplierUnavailable("no usable records")
     return products

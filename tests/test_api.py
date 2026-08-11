@@ -500,11 +500,12 @@ def test_jasani_stock_merge_matches_on_any_identifier():
     assert products[0]["stock"]["incomingDate"] is None
 
 
-def test_jasani_cache_roundtrips_non_ascii_names():
+def test_jasani_cache_roundtrips_non_ascii_names(tmp_path, monkeypatch):
     """Windows' locale codec can't encode e.g. the 'ﬃ' ligature seen in the
     live feed — the cache must be UTF-8 and never fail the request."""
     from server import jasani
 
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
     p = jasani.normalize_product(
         {"id": "77", "code": "OF-1", "name": "Oﬃce Desk Set — Arabic هدية",
          "image": "https://www.giftsksa.com/img/o.jpg"}, "ksa")
