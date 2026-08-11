@@ -32,6 +32,16 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
 
   var GLB_URL = "/assets/aces-exhibition.glb";
 
+  /* camera framing — tunable via data attributes (URL query overrides for design review) */
+  var q = new URLSearchParams(location.search);
+  function tune(name, fallback) {
+    var v = parseFloat(q.get(name) || stage.getAttribute("data-" + name) || "");
+    return isNaN(v) ? fallback : v;
+  }
+  var CAM_Z = tune("camz", 5.6);
+  var CAM_Y = tune("camy", 1.15);
+  var CAM_FOV = tune("fov", 38);
+
   /* Preload the GLB bytes without blocking hero text. */
   var preload = fetch(GLB_URL).then(function (r) {
     if (!r.ok) throw new Error("glb http " + r.status);
@@ -68,7 +78,7 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
     stage.appendChild(renderer.domElement);
 
     var scene = new THREE.Scene();
-    var camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+    var camera = new THREE.PerspectiveCamera(CAM_FOV, 1, 0.1, 100);
 
     /* balanced lighting: hemisphere + warm key + cool fill + warm point + violet rim */
     scene.add(new THREE.HemisphereLight(0xf2ecff, 0x2a2233, 1.05));
@@ -183,7 +193,7 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
         });
 
         pivot.add(model);
-        camera.position.set(0, 1.15, 5.6);
+        camera.position.set(0, CAM_Y, CAM_Z);
         camera.lookAt(0, 0.1, 0);
 
         if (stageWrap) stageWrap.classList.remove("is-loading");
