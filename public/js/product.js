@@ -159,7 +159,10 @@
     });
   }
 
+  var currentProductId = null;
+
   function render(p) {
+    currentProductId = p.id;
     els.loading.hidden = true;
     els.loading.style.display = "none";
     els.pdp.hidden = false;
@@ -267,14 +270,9 @@
     els.specs.innerHTML = specsHtml;
     els.specsSection.hidden = !specsHtml;
 
-    /* actions: qty + add, or notify; printing manual when the supplier provides it */
+    /* actions: qty + add, or notify */
     var canOrder = p.stock && p.stock.available > 0;
     var inReq = findRequest(p.id);
-    var manualBtn = p.printingManual
-      ? '<a class="btn btn--ghost btn--manual" href="' + EM.escapeHtml(p.printingManual) + '" target="_blank" rel="noopener">' +
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>' +
-        "Download Printing Manual</a>"
-      : "";
     els.actions.innerHTML =
       (canOrder
         ? '<div class="qty-control" aria-label="Quantity">' +
@@ -283,8 +281,24 @@
             '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
           "</div>" +
           '<button class="btn btn--primary" type="button" data-add>' + (inReq ? "Update request" : "Add to request") + "</button>"
-        : '<button class="btn btn--violet" type="button" data-notify>Notify when available</button>') +
-      manualBtn;
+        : '<button class="btn btn--violet" type="button" data-notify>Notify when available</button>');
+
+    /* printing manual — validated server-side and served from our own domain;
+       the button appears only when a genuine PDF exists for this product */
+    (function (renderedFor) {
+      EM.api("/api/giveaways/manual/status?country=" + encodeURIComponent(market) +
+             "&product_id=" + encodeURIComponent(p.id)).then(function (r) {
+        if (!(r.ok && r.data && r.data.available)) return;
+        /* a variant switch may have re-rendered the page meanwhile */
+        if (currentProductId !== renderedFor || els.actions.querySelector(".btn--manual")) return;
+        var a = document.createElement("a");
+        a.className = "btn btn--ghost btn--manual";
+        a.href = "/api/giveaways/manual?country=" + encodeURIComponent(market) +
+                 "&product_id=" + encodeURIComponent(p.id);
+        a.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Download Printing Manual';
+        els.actions.appendChild(a);
+      }).catch(function () { /* no manual — nothing to show */ });
+    })(p.id);
 
     var qtyInput = els.actions.querySelector(".qty-control input");
     var max = (p.stock && p.stock.available) || 1;

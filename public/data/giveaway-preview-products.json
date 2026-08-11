@@ -40,7 +40,6 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [
     {
      "id": "prev-cap-ksa",
@@ -56,7 +55,8 @@
     }
    ],
    "cartonVolume": "0.096",
-   "templateId": "prev-tmpl-hoodie-ksa"
+   "templateId": "prev-tmpl-hoodie-ksa",
+   "parentId": null
   },
   {
    "id": "prev-hoodie-ksa-m",
@@ -97,7 +97,6 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [
     {
      "id": "prev-cap-ksa",
@@ -113,7 +112,8 @@
     }
    ],
    "cartonVolume": "0.096",
-   "templateId": "prev-tmpl-hoodie-ksa"
+   "templateId": "prev-tmpl-hoodie-ksa",
+   "parentId": null
   },
   {
    "id": "prev-hoodie-ksa-l",
@@ -154,7 +154,6 @@
     "incoming": 60,
     "incomingDate": "2026-09-01"
    },
-   "printingManual": null,
    "colorOptions": [
     {
      "id": "prev-cap-ksa",
@@ -170,7 +169,8 @@
     }
    ],
    "cartonVolume": "0.096",
-   "templateId": "prev-tmpl-hoodie-ksa"
+   "templateId": "prev-tmpl-hoodie-ksa",
+   "parentId": null
   },
   {
    "id": "prev-hoodie-ksa-xl",
@@ -211,7 +211,6 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [
     {
      "id": "prev-cap-ksa",
@@ -227,7 +226,8 @@
     }
    ],
    "cartonVolume": "0.096",
-   "templateId": "prev-tmpl-hoodie-ksa"
+   "templateId": "prev-tmpl-hoodie-ksa",
+   "parentId": null
   },
   {
    "id": "prev-bag-ksa",
@@ -264,10 +264,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-cap-ksa",
@@ -305,10 +305,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-desk-set-ksa",
@@ -347,10 +347,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-eco-notebook-ksa",
@@ -388,10 +388,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-ramadan-box-ksa",
@@ -429,10 +429,10 @@
     "incoming": 150,
     "incomingDate": "2026-09-15"
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-drinkware-ksa",
@@ -471,10 +471,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-tech-kit-ksa",
@@ -512,10 +512,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-hoodie-uae",
@@ -559,7 +559,6 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [
     {
      "id": "prev-cap-uae",
@@ -575,7 +574,8 @@
     }
    ],
    "cartonVolume": "0.096",
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-bag-uae",
@@ -612,10 +612,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-cap-uae",
@@ -653,10 +653,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-desk-set-uae",
@@ -695,10 +695,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-eco-notebook-uae",
@@ -736,10 +736,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-ramadan-box-uae",
@@ -777,10 +777,10 @@
     "incoming": 150,
     "incomingDate": "2026-09-15"
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-drinkware-uae",
@@ -819,10 +819,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   },
   {
    "id": "prev-tech-kit-uae",
@@ -860,10 +860,10 @@
     "incoming": 0,
     "incomingDate": null
    },
-   "printingManual": null,
    "colorOptions": [],
    "cartonVolume": null,
-   "templateId": null
+   "templateId": null,
+   "parentId": null
   }
  ]
 }

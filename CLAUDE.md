@@ -29,6 +29,13 @@ documentation). Non-negotiable rules from it:
   never mix markets.
 - No public prices, no online payment, no automatic supplier orders. The Order API
   needs separate written authorization — do not wire it to the public site.
+- Printing manuals: `parent_id` is only a CANDIDATE manual id for the supplier's
+  `/preview_product?product_id=...` PDF. Candidates are validated server-side
+  (signature, page count, 10 MB cap) and cached 24h — valid and failed verdicts
+  alike — in `runtime/cache/manuals/`. Customers download only via the
+  `/api/giveaways/manual` proxy; never link to a Jasani URL. Full guide:
+  `docs/jasani-printing-manual-guide.md` (drawing tools, custom PDFs and
+  branding-price enrichment are future phases from that guide).
 
 ## Site conventions
 

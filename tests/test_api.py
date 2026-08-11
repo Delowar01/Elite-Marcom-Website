@@ -514,7 +514,7 @@ def test_jasani_normalizes_real_odoo_record():
     assert p["cartonVolume"] == "0.054"
     assert p["sequence"] == 7
     assert p["templateId"] is None  # parent_id only groups when configurable
-    assert p["_parentId"] == "4800"
+    assert p["parentId"] == "4800"  # retained as the printing-manual candidate
     assert "blocked" not in p["stock"]
     assert p["_colorOptionIds"] == ["4822", "4823"]
     assert p["color"] == ""          # Odoo false must not surface as "False"
@@ -569,10 +569,79 @@ def test_jasani_resolves_color_options_as_template_ids():
          "image": "https://www.giftsksa.com/img/2.jpg"}, "ksa")
     products = [red, blue]
     jasani._resolve_color_options(products)
-    assert "_colorOptionIds" not in products[0] and "_parentId" not in products[0]
+    assert "_colorOptionIds" not in products[0]
     assert [o["id"] for o in products[0]["colorOptions"]] == ["2"]  # template 20 → variant 2
     assert products[0]["colorOptions"][0]["color"] == "Blue"
     assert [o["id"] for o in products[1]["colorOptions"]] == ["1"]
+
+
+FAKE_MANUAL_PDF = (b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n" + b"x" * 1200 + b"\n%%EOF")
+
+
+def _manual_catalog(monkeypatch):
+    from server import jasani
+
+    async def fake_catalog(market):
+        return ([{"id": "24246", "code": "ITGL 1291", "name": "NAPIER MagCase",
+                  "parentId": "29453", "templateId": None}], "cache")
+    monkeypatch.setattr(jasani, "get_catalog", fake_catalog)
+    return jasani
+
+
+def test_manual_pdf_validation():
+    from server import jasani
+
+    assert jasani._valid_manual_pdf(FAKE_MANUAL_PDF) is True
+    assert jasani._valid_manual_pdf(b"<html>error page</html>") is False
+    assert jasani._valid_manual_pdf(b"%PDF-1.4 tiny") is False  # too small / no page
+
+
+def test_manual_proxy_serves_validated_pdf(tmp_path, monkeypatch):
+    jasani = _manual_catalog(monkeypatch)
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+
+    async def fake_fetch(market, template_id):
+        assert template_id == "29453"
+        return FAKE_MANUAL_PDF
+    monkeypatch.setattr(jasani, "_fetch_manual_bytes", fake_fetch)
+
+    res = client.get("/api/giveaways/manual/status?country=ksa&product_id=24246")
+    assert res.json() == {"available": True}
+    res = client.get("/api/giveaways/manual?country=ksa&product_id=24246")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/pdf")
+    assert 'filename="ITGL-1291-printing-manual.pdf"' in res.headers["content-disposition"]
+    assert res.content.startswith(b"%PDF-")
+
+    # supplier outage after validation → last-known-good copy still served
+    async def broken_fetch(market, template_id):
+        raise jasani.SupplierUnavailable("down")
+    monkeypatch.setattr(jasani, "_fetch_manual_bytes", broken_fetch)
+    (tmp_path / "manuals" / "ksa-29453.json").write_text(
+        json.dumps({"checkedAt": 0, "valid": True, "size": len(FAKE_MANUAL_PDF)}))
+    res = client.get("/api/giveaways/manual?country=ksa&product_id=24246")
+    assert res.status_code == 200 and res.content.startswith(b"%PDF-")
+
+
+def test_manual_proxy_rejects_non_pdf_candidate(tmp_path, monkeypatch):
+    jasani = _manual_catalog(monkeypatch)
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    calls = {"n": 0}
+
+    async def fake_fetch(market, template_id):
+        calls["n"] += 1
+        return b"<html>not a manual</html>"
+    monkeypatch.setattr(jasani, "_fetch_manual_bytes", fake_fetch)
+
+    assert client.get("/api/giveaways/manual/status?country=ksa&product_id=24246").json() == {"available": False}
+    assert client.get("/api/giveaways/manual?country=ksa&product_id=24246").status_code == 404
+    assert calls["n"] == 1  # the failed verdict is cached — no refetch
+
+
+def test_manual_proxy_unknown_product_404(tmp_path, monkeypatch):
+    jasani = _manual_catalog(monkeypatch)
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    assert client.get("/api/giveaways/manual?country=ksa&product_id=nope").status_code == 404
 
 
 def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):

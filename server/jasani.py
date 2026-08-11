@@ -401,8 +401,6 @@ def normalize_product(rec: dict, market: str) -> dict | None:
         # de-duplicate while preserving order
         seen_imgs: set[str] = set()
         images = [u for u in images if not (u in seen_imgs or seen_imgs.add(u))]
-        manual = _safe_supplier_url(_s(rec, "printing_manual", "printingManual", "manual",
-                                       "manual_url", "branding_manual", "pdf", "pdf_url"))
         tags = _list(rec, "product_template_tags", "tags", "collections", "labels")
         if not tags:
             tags = _rel_names(rec.get("product_template_tags") or rec.get("producttemplatetags"))
@@ -442,15 +440,15 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "tags": tags,
             "market": market,
             # parent_id is the product template id; per the supplier docs it is
-            # only meaningful for grouping when configurable is true
+            # only meaningful for grouping when configurable is true, but it is
+            # also the candidate id for the supplier's printing-manual PDF
             "configurable": configurable,
             "templateId": parent_id if configurable else None,
-            "_parentId": parent_id,  # internal: template-id resolution (popped later)
+            "parentId": parent_id,
             "color": _s(rec, "color", "colour")[:60],
             "options": options,
             "image": images[0] if images else "",
             "images": images,
-            "printingManual": manual or None,
             # alternative-colour product ids, resolved against the catalog later
             "_colorOptionIds": _rel_ids(rec.get("color_options") or rec.get("coloroptions")),
             "sequence": _i(rec, "website_sequence", "sequence", "sort_order", "newness"),
@@ -538,12 +536,12 @@ def _resolve_color_options(products: list[dict]) -> None:
     by_id: dict[str, dict] = {}
     for p in products:
         by_id[p["id"]] = p
-        tid = p.get("_parentId")
+        tid = p.get("parentId")
         if tid:
             by_template.setdefault(tid, p)
     for p in products:
         ids = p.pop("_colorOptionIds", []) or []
-        own_template = p.get("_parentId")
+        own_template = p.get("parentId")
         opts = []
         for cid in ids:
             if own_template and cid == own_template:
@@ -553,8 +551,6 @@ def _resolve_color_options(products: list[dict]) -> None:
                 opts.append({"id": alt["id"], "name": alt["name"],
                              "color": alt["color"], "image": alt["image"]})
         p["colorOptions"] = opts[:12]
-    for p in products:
-        p.pop("_parentId", None)
 
 
 async def _fetch_products(market: str) -> list[dict]:
@@ -628,6 +624,105 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
     except SupplierUnavailable:
         # keep serving the products snapshot with the previous stock values
         return products, "cache"
+
+
+# ---------------- printing manuals ----------------
+# The supplier's /preview_product?product_id={template_id} endpoint returns a
+# printing-manual PDF for many products. parent_id is only a CANDIDATE manual
+# id — every candidate is validated server-side (signature, page count, size)
+# before it is ever served, and the verdict is cached either way. Customers
+# download from the Elite Marcom domain only; no token is involved.
+
+MANUAL_MAX_BYTES = 10 * 1024 * 1024
+MANUAL_CACHE_HOURS = 24
+
+
+def _manual_paths(market: str, template_id: str):
+    d = _CACHE_DIR / "manuals"
+    d.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^0-9A-Za-z_-]", "", str(template_id))[:40]
+    return d / f"{market}-{safe}.pdf", d / f"{market}-{safe}.json"
+
+
+def _valid_manual_pdf(data: bytes) -> bool:
+    if len(data) < 1024 or not data.startswith(b"%PDF-") or b"%%EOF" not in data[-2048:]:
+        return False
+    pages = data.count(b"/Type /Page") + data.count(b"/Type/Page")
+    pages -= data.count(b"/Type /Pages") + data.count(b"/Type/Pages")
+    if pages < 1:
+        counts = re.findall(rb"/Count\s+(\d+)", data)
+        pages = max((int(c) for c in counts), default=0)
+    return 1 <= pages <= 200
+
+
+async def _fetch_manual_bytes(market: str, template_id: str) -> bytes:
+    """Download one candidate manual PDF (public supplier route, no token).
+    Not documented as part of the primary daily limit; still cached 24h."""
+    host = _host(market)
+    url = f"https://{host}/preview_product?product_id={urllib.parse.quote(str(template_id), safe='')}"
+    try:
+        async with httpx.AsyncClient(timeout=config.SUPPLIER_TIMEOUT_S,
+                                     follow_redirects=False, trust_env=False) as client:
+            async with client.stream("GET", url) as res:
+                if res.status_code != 200:
+                    raise SupplierUnavailable(f"manual upstream {res.status_code}")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in res.aiter_bytes():
+                    total += len(chunk)
+                    if total > MANUAL_MAX_BYTES:
+                        raise SupplierUnavailable("manual response too large")
+                    chunks.append(chunk)
+    except SupplierUnavailable:
+        raise
+    except Exception as exc:
+        raise SupplierUnavailable(f"transport: {exc.__class__.__name__}") from exc
+    return b"".join(chunks)
+
+
+async def get_manual(market: str, product_id: str) -> tuple[bytes, str]:
+    """Validated printing-manual PDF for a catalog product.
+
+    Returns (pdf_bytes, product_code). Raises SupplierUnavailable when the
+    product is unknown, has no template candidate, or the candidate does not
+    produce a genuine PDF."""
+    products, _state = await get_catalog(market)
+    product = next((p for p in products if p["id"] == product_id), None)
+    if product is None:
+        raise SupplierUnavailable("unknown product")
+    template_id = str(product.get("parentId") or product.get("templateId") or "")
+    if not template_id.isdigit() or not 0 < int(template_id) < 10**12:
+        raise SupplierUnavailable("no manual candidate for this product")
+    pdf_path, meta_path = _manual_paths(market, template_id)
+    now = time.time()
+    meta = None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    if meta and now - meta.get("checkedAt", 0) < MANUAL_CACHE_HOURS * 3600:
+        if meta.get("valid") and pdf_path.exists():
+            return pdf_path.read_bytes(), product["code"]
+        if not meta.get("valid"):
+            raise SupplierUnavailable("manual candidate previously failed validation")
+    try:
+        data = await _fetch_manual_bytes(market, template_id)
+    except SupplierUnavailable:
+        # supplier outage: keep serving the last-known-good copy
+        if meta and meta.get("valid") and pdf_path.exists():
+            return pdf_path.read_bytes(), product["code"]
+        raise
+    valid = _valid_manual_pdf(data)
+    try:
+        if valid:
+            pdf_path.write_bytes(data)
+        meta_path.write_text(json.dumps({"checkedAt": int(now), "valid": valid,
+                                         "size": len(data)}), encoding="utf-8")
+    except OSError:
+        pass  # cache failures never break the response
+    if not valid:
+        raise SupplierUnavailable("candidate did not return a valid PDF")
+    return data, product["code"]
 
 
 # ---------------- branding ----------------

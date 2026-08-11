@@ -555,6 +555,44 @@ async def giveaways_branding(request: Request, country: Literal["ksa", "uae"] = 
     return {"branding": branding}
 
 
+# ---------------- printing manuals (server-side proxy) ----------------
+# Customers download the supplier's printing-manual PDF from an Elite Marcom
+# URL only — never a Jasani link. Candidates are validated and cached in
+# server/jasani.py before anything is served.
+
+def _manual_filename(code: str) -> str:
+    safe = re.sub(r"[^0-9A-Za-z_-]+", "-", code).strip("-") or "product"
+    return f"{safe[:60]}-printing-manual.pdf"
+
+
+@app.get("/api/giveaways/manual/status")
+async def giveaways_manual_status(request: Request, country: Literal["ksa", "uae"] = Query(...),
+                                  product_id: str = Query(..., min_length=1, max_length=80)):
+    """Cheap availability probe so the UI only shows a working download button."""
+    catalog_read_guard(request, "giveaways_manual")
+    try:
+        await jasani.get_manual(country, product_id)
+        return {"available": True}
+    except jasani.SupplierUnavailable:
+        return {"available": False}
+
+
+@app.get("/api/giveaways/manual")
+async def giveaways_manual(request: Request, country: Literal["ksa", "uae"] = Query(...),
+                           product_id: str = Query(..., min_length=1, max_length=80)):
+    catalog_read_guard(request, "giveaways_manual")
+    try:
+        data, code = await jasani.get_manual(country, product_id)
+    except jasani.SupplierUnavailable:
+        raise HTTPException(status_code=404,
+                            detail="The printing manual is not available for this product — contact us for branding assistance.")
+    return Response(content=data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{_manual_filename(code)}"',
+        "Cache-Control": "public, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
 async def canonical_giveaway_items(items: list[RequestItem], market: str) -> list[dict]:
     """Validate against the canonical server-side catalog (live/cache, else preview)."""
     try:
