@@ -579,51 +579,86 @@ async def canonical_giveaway_items(items: list[RequestItem], market: str) -> lis
     return out
 
 
-class GiveawayEnquiry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    fullName: str
-    company: str
-    email: str
-    phone: str
-    requiredBy: str | None = None
-    deliveryCity: str
-    notes: str = ""
-    consent: bool
-    market: Literal["ksa", "uae"]
-    items: list[RequestItem] = Field(min_length=1, max_length=50)
-    challenge: str
-    consentVersion: str
-    website: str = ""
-    sourcePage: str = "/giveaways.html"
-    turnstileToken: str | None = None
+_LOGO_TYPES = (
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"\xff\xd8\xff", "jpg"),
+    (b"%PDF-", "pdf"),
+)
 
-    @field_validator("items")
-    @classmethod
-    def no_duplicates(cls, v):
-        ids = [i.productId for i in v]
-        if len(ids) != len(set(ids)):
-            raise ValueError("duplicate items")
-        return v
+
+def validate_logo(data: bytes) -> str:
+    """Optional brand logo: PNG/JPG/WEBP/PDF, 5 MB cap. Returns the extension."""
+    if len(data) > _PDF_MAX:
+        raise HTTPException(status_code=400, detail="The logo must be 5 MB or smaller.")
+    if len(data) < 24:
+        raise HTTPException(status_code=400, detail="The logo file looks empty — please re-attach it.")
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    for magic, ext in _LOGO_TYPES:
+        if data.startswith(magic):
+            return ext
+    raise HTTPException(status_code=400, detail="The logo must be a PNG, JPG, WEBP or PDF file.")
 
 
 @app.post("/api/giveaways/enquiries")
-async def giveaways_enquiry(request: Request, body: GiveawayEnquiry):
-    ip_hash = await guard_submission(request, "giveaway_enquiry", body.challenge, body.website,
-                                     body.turnstileToken, limit=5)
+async def giveaways_enquiry(
+    request: Request,
+    fullName: Annotated[str, Form()],
+    company: Annotated[str, Form()],
+    email: Annotated[str, Form()],
+    phone: Annotated[str, Form()],
+    deliveryCity: Annotated[str, Form()],
+    shippingAddress: Annotated[str, Form()],
+    market: Annotated[str, Form()],
+    items: Annotated[str, Form()],  # JSON: [{"productId": ..., "quantity": ...}]
+    consent: Annotated[str, Form()],
+    challenge: Annotated[str, Form()],
+    consentVersion: Annotated[str, Form()],
+    requiredBy: Annotated[str, Form()] = "",
+    notes: Annotated[str, Form()] = "",
+    sourcePage: Annotated[str, Form()] = "/giveaways.html",
+    website: Annotated[str, Form()] = "",
+    turnstileToken: Annotated[str | None, Form()] = None,
+    logo: Annotated[UploadFile | None, File()] = None,
+):
+    ip_hash = await guard_submission(request, "giveaway_enquiry", challenge, website,
+                                     turnstileToken, limit=5)
+    if market not in ("ksa", "uae"):
+        raise HTTPException(status_code=400, detail="Please choose a valid market.")
+    try:
+        raw_items = json.loads(items)
+        if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= 50:
+            raise ValueError
+        item_models = [RequestItem(**i) for i in raw_items]
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400,
+                            detail="Your request list could not be read — please rebuild it and try again.")
+    if len({i.productId for i in item_models}) != len(item_models):
+        raise HTTPException(status_code=400, detail="Your request contains duplicate products.")
     payload = {
-        "fullName": clean_text(body.fullName, 120, 2, "name"),
-        "company": clean_text(body.company, 160, 1, "company"),
-        "email": clean_email(body.email),
-        "phone": clean_phone(body.phone),
-        "requiredBy": clean_date(body.requiredBy, "required-by date"),
-        "deliveryCity": clean_text(body.deliveryCity, 120, 1, "city"),
-        "notes": clean_multiline(body.notes, 3000, 0, "notes"),
-        "market": body.market,
-        "items": await canonical_giveaway_items(body.items, body.market),
-        "consentVersion": check_consent(body.consent, body.consentVersion),
-        "sourcePage": check_source_page(body.sourcePage),
+        "fullName": clean_text(fullName, 120, 2, "name"),
+        "company": clean_text(company, 160, 1, "company"),
+        "email": clean_email(email),
+        "phone": clean_phone(phone),
+        "requiredBy": clean_date(requiredBy or None, "required-by date"),
+        "deliveryCity": clean_text(deliveryCity, 120, 1, "city"),
+        "shippingAddress": clean_multiline(shippingAddress, 600, 5, "shipping address"),
+        "notes": clean_multiline(notes, 3000, 0, "notes"),
+        "market": market,
+        "items": await canonical_giveaway_items(item_models, market),
+        "consentVersion": check_consent(consent in ("yes", "true", "on"), consentVersion),
+        "sourcePage": check_source_page(sourcePage),
     }
-    reference = storage.save_record("giveaway_enquiry", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
+    logo_bytes = None
+    logo_ext = "pdf"
+    if logo is not None and logo.filename:
+        logo_bytes = await logo.read()
+        logo_ext = validate_logo(logo_bytes)
+        scan_malware(logo_bytes)
+        payload["logoAttached"] = True
+    reference = storage.save_record("giveaway_enquiry", payload, ip_hash,
+                                    config.RETENTION_SUBMISSIONS_DAYS,
+                                    cv_bytes=logo_bytes, file_ext=logo_ext)
     return {"reference": reference}
 
 

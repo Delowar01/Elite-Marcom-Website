@@ -295,6 +295,7 @@
       qtyInput.value = String(v);
       return v;
     }
+    if (qtyInput) qtyInput.addEventListener("change", clamp);
     var minus = els.actions.querySelector("[data-qty-minus]");
     var plus = els.actions.querySelector("[data-qty-plus]");
     if (minus) minus.addEventListener("click", function () { qtyInput.value = String(Math.max(1, clamp() - 1)); });
@@ -421,6 +422,21 @@
   });
 
   /* ---------- boot ---------- */
+  /* "Back" returns to the exact catalog position when the visitor came from it */
+  document.querySelectorAll(".pdp__back").forEach(function (back) {
+    back.addEventListener("click", function (e) {
+      var cameFromCatalog = false;
+      try {
+        cameFromCatalog = document.referrer &&
+          new URL(document.referrer).pathname === "/giveaways.html" && history.length > 1;
+      } catch (err) { cameFromCatalog = false; }
+      if (cameFromCatalog) {
+        e.preventDefault();
+        history.back();
+      }
+    });
+  });
+
   updateFab();
   if (!productId) {
     showMissing();

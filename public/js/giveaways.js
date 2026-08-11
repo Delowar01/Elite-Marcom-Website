@@ -146,6 +146,7 @@
     reconcile();
     visibleLimit = BATCH;
     render();
+    restoreReturnState();
     /* hourly browser refresh without multiplying supplier traffic (server caches) */
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(function () {
@@ -257,6 +258,29 @@
     return "/product.html?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(p.id);
   }
 
+  /* remember scroll position + list depth so "Back" lands where the visitor left */
+  var RETURN_KEY = "em-gifts-return";
+  function saveReturnState() {
+    try {
+      sessionStorage.setItem(RETURN_KEY, JSON.stringify({
+        y: window.scrollY, limit: visibleLimit, market: market, t: Date.now()
+      }));
+    } catch (e) { /* storage unavailable — back simply lands at the top */ }
+  }
+  function restoreReturnState() {
+    var raw = null;
+    try {
+      raw = sessionStorage.getItem(RETURN_KEY);
+      sessionStorage.removeItem(RETURN_KEY);
+    } catch (e) { return; }
+    if (!raw) return;
+    var st = null;
+    try { st = JSON.parse(raw); } catch (e) { return; }
+    if (!st || st.market !== market || Date.now() - (st.t || 0) > 30 * 60 * 1000) return;
+    if (st.limit > visibleLimit) { visibleLimit = st.limit; render(); }
+    window.scrollTo(0, st.y || 0);
+  }
+
   function cardHtml(p, group) {
     var multi = group.length > 1;
     var total = groupStock(group);
@@ -275,10 +299,14 @@
     var meta = multi
       ? [p.brand, group.length + " options"].filter(Boolean).join(" · ")
       : [p.brand, p.color].filter(Boolean).join(" · ");
-    /* the card shows the primary image; the full gallery lives on the product page */
+    /* slideable media with auto-hide arrows, right on the card */
+    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : [])).slice(0, 8);
+    var slides = imgs.map(function (src, i) {
+      return '<img src="' + EM.escapeHtml(src) + '" alt="" loading="lazy" width="480" height="480" draggable="false">';
+    }).join("");
     return (
-      '<div class="product-card__media">' +
-        (p.image ? '<img src="' + EM.escapeHtml(p.image) + '" alt="" loading="lazy" width="480" height="480">' : "") +
+      '<div class="product-card__media carousel">' +
+        '<div class="carousel__track">' + slides + "</div>" +
         '<div class="product-card__badges">' + badges + "</div>" +
       "</div>" +
       '<div class="product-card__body">' +
@@ -318,15 +346,22 @@
       bindCard(card, p);
       /* the whole card opens the product page — except its own controls */
       card.addEventListener("click", function (e) {
-        if (e.target.closest("button, input, a, .qty-control")) return;
+        if (e.target.closest("input, .qty-control, .carousel__btn, .carousel__dots")) return;
+        var link = e.target.closest("a");
+        if (e.target.closest("button") && !link) return;
+        saveReturnState();
+        if (link) return; /* the Select options anchor navigates on its own */
         location.href = productUrl(p);
       });
       card.addEventListener("keydown", function (e) {
         if ((e.key === "Enter" || e.key === " ") && e.target === card) {
           e.preventDefault();
+          saveReturnState();
           location.href = productUrl(p);
         }
       });
+      var mediaEl = card.querySelector(".product-card__media");
+      if (mediaEl && EM.carousel) EM.carousel(mediaEl);
       grid.appendChild(card);
     });
     if (els.count) els.count.textContent = list.length + " product" + (list.length === 1 ? "" : "s");
@@ -352,6 +387,8 @@
   function bindCard(card, p) {
     var qtyInput = card.querySelector(".qty-control input");
     var max = (p.stock && p.stock.available) || 1;
+    /* live validation: a typed quantity can never exceed available stock */
+    if (qtyInput) qtyInput.addEventListener("change", function () { clampQty(qtyInput, max); });
     card.querySelectorAll("[data-qty-minus]").forEach(function (b) {
       b.addEventListener("click", function () { qtyInput.value = String(Math.max(1, clampQty(qtyInput, max) - 1)); });
     });
@@ -523,20 +560,24 @@
     form: enquiryForm,
     formKey: "giveaway_enquiry",
     endpoint: "/api/giveaways/enquiries",
+    multipart: true,
     successMessage: "Request received — we will prepare one clear proposal.",
-    collect: function () {
-      return {
-        fullName: enquiryForm.fullName.value.trim(),
-        company: enquiryForm.company.value.trim(),
-        email: enquiryForm.email.value.trim(),
-        phone: enquiryForm.phone.value.trim(),
-        requiredBy: enquiryForm.requiredBy.value || null,
-        deliveryCity: enquiryForm.deliveryCity.value.trim(),
-        notes: enquiryForm.notes.value.trim(),
-        consent: enquiryForm.consent.checked,
-        market: market,
-        items: marketList().map(function (it) { return { productId: it.id, quantity: it.qty }; })
-      };
+    collect: function (fd) {
+      fd.append("fullName", enquiryForm.fullName.value.trim());
+      fd.append("company", enquiryForm.company.value.trim());
+      fd.append("email", enquiryForm.email.value.trim());
+      fd.append("phone", enquiryForm.phone.value.trim());
+      fd.append("requiredBy", enquiryForm.requiredBy.value || "");
+      fd.append("deliveryCity", enquiryForm.deliveryCity.value.trim());
+      fd.append("shippingAddress", enquiryForm.shippingAddress.value.trim());
+      fd.append("notes", enquiryForm.notes.value.trim());
+      fd.append("consent", enquiryForm.consent.checked ? "yes" : "");
+      fd.append("market", market);
+      fd.append("items", JSON.stringify(marketList().map(function (it) {
+        return { productId: it.id, quantity: it.qty };
+      })));
+      var logo = enquiryForm.querySelector('input[name="logo"]');
+      if (logo && logo.files && logo.files[0]) fd.append("logo", logo.files[0]);
     },
     onSuccess: function () {
       requests[market] = [];

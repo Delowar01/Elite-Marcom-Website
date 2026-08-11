@@ -261,52 +261,72 @@ def test_giveaways_invalid_market_rejected():
     assert client.get("/api/giveaways/products?country=zz").status_code == 422
 
 
-def test_giveaway_enquiry_with_preview_catalog():
-    payload = {
+def enquiry_form(**overrides) -> dict:
+    data = {
         "fullName": "Test Person", "company": "Test Co", "email": "t@example.com",
-        "phone": "+966590000000", "requiredBy": None, "deliveryCity": "Riyadh",
-        "notes": "", "consent": True, "market": "ksa",
-        "items": [{"productId": "prev-hoodie-ksa", "quantity": 50}],
+        "phone": "+966590000000", "requiredBy": "", "deliveryCity": "Riyadh",
+        "shippingAddress": "Office 12, King Fahd Road, Riyadh 12211",
+        "notes": "", "consent": "yes", "market": "ksa",
+        "items": json.dumps([{"productId": "prev-hoodie-ksa", "quantity": 50}]),
         **base_fields("giveaway_enquiry"),
     }
-    res = client.post("/api/giveaways/enquiries", json=payload, headers=ORIGIN)
+    data.update(overrides)
+    return data
+
+
+def test_giveaway_enquiry_with_preview_catalog():
+    res = client.post("/api/giveaways/enquiries", data=enquiry_form(), headers=ORIGIN)
     assert res.status_code == 200, res.text
     assert res.json()["reference"].startswith("GV-")
 
 
+def test_giveaway_enquiry_with_logo_upload():
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    res = client.post("/api/giveaways/enquiries", data=enquiry_form(),
+                      files={"logo": ("logo.png", png, "image/png")}, headers=ORIGIN)
+    assert res.status_code == 200, res.text
+
+
+def test_giveaway_enquiry_bad_logo_rejected():
+    res = client.post("/api/giveaways/enquiries", data=enquiry_form(),
+                      files={"logo": ("logo.exe", b"MZ" + b"\x00" * 64, "application/octet-stream")},
+                      headers=ORIGIN)
+    assert res.status_code == 400
+
+
+def test_giveaway_enquiry_missing_shipping_address_rejected():
+    form = enquiry_form()
+    del form["shippingAddress"]
+    res = client.post("/api/giveaways/enquiries", data=form, headers=ORIGIN)
+    assert res.status_code == 422
+
+
 def test_giveaway_enquiry_unknown_product_rejected():
-    payload = {
-        "fullName": "Test Person", "company": "Test Co", "email": "t@example.com",
-        "phone": "+966590000000", "requiredBy": None, "deliveryCity": "Riyadh",
-        "notes": "", "consent": True, "market": "ksa",
-        "items": [{"productId": "forged-product", "quantity": 5}],
-        **base_fields("giveaway_enquiry"),
-    }
-    res = client.post("/api/giveaways/enquiries", json=payload, headers=ORIGIN)
+    res = client.post("/api/giveaways/enquiries",
+                      data=enquiry_form(items=json.dumps([{"productId": "forged-product", "quantity": 5}])),
+                      headers=ORIGIN)
     assert res.status_code == 400
 
 
 def test_giveaway_enquiry_cross_market_rejected():
-    payload = {
-        "fullName": "Test Person", "company": "Test Co", "email": "t@example.com",
-        "phone": "+966590000000", "requiredBy": None, "deliveryCity": "Dubai",
-        "notes": "", "consent": True, "market": "uae",
-        "items": [{"productId": "prev-hoodie-ksa", "quantity": 5}],  # KSA item in UAE request
-        **base_fields("giveaway_enquiry"),
-    }
-    res = client.post("/api/giveaways/enquiries", json=payload, headers=ORIGIN)
+    res = client.post("/api/giveaways/enquiries",
+                      data=enquiry_form(market="uae", deliveryCity="Dubai",
+                                        items=json.dumps([{"productId": "prev-hoodie-ksa", "quantity": 5}])),
+                      headers=ORIGIN)
     assert res.status_code == 400
 
 
 def test_giveaway_enquiry_unavailable_product_rejected():
-    payload = {
-        "fullName": "Test Person", "company": "Test Co", "email": "t@example.com",
-        "phone": "+966590000000", "requiredBy": None, "deliveryCity": "Riyadh",
-        "notes": "", "consent": True, "market": "ksa",
-        "items": [{"productId": "prev-ramadan-box-ksa", "quantity": 1}],  # 0 stock
-        **base_fields("giveaway_enquiry"),
-    }
-    res = client.post("/api/giveaways/enquiries", json=payload, headers=ORIGIN)
+    res = client.post("/api/giveaways/enquiries",
+                      data=enquiry_form(items=json.dumps([{"productId": "prev-ramadan-box-ksa", "quantity": 1}])),
+                      headers=ORIGIN)
+    assert res.status_code == 400
+
+
+def test_giveaway_enquiry_overstock_quantity_rejected():
+    res = client.post("/api/giveaways/enquiries",
+                      data=enquiry_form(items=json.dumps([{"productId": "prev-hoodie-ksa", "quantity": 99999}])),
+                      headers=ORIGIN)
     assert res.status_code == 400
 
 

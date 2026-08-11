@@ -591,6 +591,8 @@ html.reveals-off .reveal { opacity: 1; transform: none; }
   position: relative;
 }
 .dialog--narrow { width: min(560px, 100%); }
+.dialog--wide { width: min(760px, 100%); }
+.field-hint { display: block; font-size: 0.78rem; color: var(--text-muted); margin-top: 6px; }
 .dialog__close { position: absolute; top: 16px; right: 16px; z-index: 2; }
 
 .drawer-scrim {
@@ -688,7 +690,7 @@ body.scroll-locked { overflow: hidden; }
 .availability::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .availability--in { color: #63c98c; }
 .availability--low { color: var(--orange-soft); }
-.availability--out { color: #ff8f7a; }
+.availability--out { color: #ee4b4b; }
 .availability--incoming { color: var(--violet-soft); }
 .product-card__actions { margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 8px; }
 

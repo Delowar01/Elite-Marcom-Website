@@ -371,6 +371,11 @@
 .catalog-grid--gifts .product-card__code { display: flex; justify-content: space-between; align-items: center; }
 .catalog-grid--gifts .product-card__actions { padding-top: 12px; border-top: 1px solid var(--border); }
 .catalog-grid--gifts .product-card__actions .qty-control { margin-right: auto; }
+/* stock badge pinned to the same spot on every card: bottom of the body,
+   right-aligned, regardless of how many lines the name takes */
+.catalog-grid--gifts .product-card__name { min-height: 2.6em; }
+.catalog-grid--gifts .product-card__meta { min-height: 1.1em; }
+.catalog-grid--gifts .availability { margin-top: auto; align-self: flex-end; }
 
 /* min-stock input */
 .minstock-field {
@@ -411,8 +416,8 @@
 /* ---------- product detail page ---------- */
 .pdp { display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(28px, 4vw, 64px); align-items: start; }
 @media (max-width: 900px) { .pdp { grid-template-columns: 1fr; } }
-.pdp__gallery { position: sticky; top: 120px; }
-@media (max-width: 900px) { .pdp__gallery { position: static; } }
+/* image card and specs scroll together as one column — no overlap */
+.pdp__left { min-width: 0; }
 .pdp__gallery .carousel {
   border-radius: 24px; border: 1px solid var(--border);
   background: var(--panel-2); aspect-ratio: 1 / 1;
@@ -540,12 +545,13 @@
 }
 
 /* ---------- specs live under the image card, same width ---------- */
-.pdp__specs-wrap { grid-column: 1; grid-row: 2; border-top: 0; padding-top: 0; margin-top: 0; }
-.pdp__info { grid-column: 2; grid-row: 1 / span 2; }
+.pdp__specs-wrap { border-top: 0; padding-top: 0; margin-top: 26px; }
 @media (max-width: 900px) {
-  .pdp__gallery { grid-column: 1; grid-row: 1; }
-  .pdp__info { grid-column: 1; grid-row: 2; }
-  .pdp__specs-wrap { grid-column: 1; grid-row: 3; }
+  /* single column: images → product info → specs */
+  .pdp__left { display: contents; }
+  .pdp__gallery { order: 1; }
+  .pdp__info { order: 2; }
+  .pdp__specs-wrap { order: 3; margin-top: 0; }
 }
 
 /* ---------- size / colour variant selectors ---------- */

@@ -70,7 +70,8 @@ def make_reference(prefix: str) -> str:
 
 
 def save_record(kind: str, payload: dict, ip_hash: str,
-                retention_days: int, cv_bytes: bytes | None = None) -> str:
+                retention_days: int, cv_bytes: bytes | None = None,
+                file_ext: str = "pdf") -> str:
     prefix = {
         "contact": "EM", "career": "CA",
         "giveaway_enquiry": "GV", "giveaway_notification": "GN",
@@ -82,7 +83,7 @@ def save_record(kind: str, payload: dict, ip_hash: str,
     blob = encrypt(json.dumps(payload, ensure_ascii=False).encode())
     cv_path = None
     if cv_bytes is not None:
-        cv_name = f"{reference}-{secrets.token_hex(6)}.pdf.enc"
+        cv_name = f"{reference}-{secrets.token_hex(6)}.{file_ext}.enc"
         cv_file = _CV_DIR / cv_name
         cv_file.write_bytes(encrypt(cv_bytes))
         cv_path = cv_name

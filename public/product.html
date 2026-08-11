@@ -18,8 +18,8 @@
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
-<link rel="stylesheet" href="/styles.css?v=2">
-<link rel="stylesheet" href="/pages.css?v=4">
+<link rel="stylesheet" href="/styles.css?v=3">
+<link rel="stylesheet" href="/pages.css?v=5">
 <script src="/js/theme-init.js?v=1"></script>
 <meta name="robots" content="noindex">
 </head>
@@ -107,11 +107,17 @@
       </div>
 
       <article class="pdp" id="pdp" hidden>
-        <div class="pdp__gallery">
-          <div class="carousel" id="pdp-carousel" aria-label="Product images">
-            <div class="carousel__track" id="pdp-track"></div>
+        <div class="pdp__left">
+          <div class="pdp__gallery">
+            <div class="carousel" id="pdp-carousel" aria-label="Product images">
+              <div class="carousel__track" id="pdp-track"></div>
+            </div>
+            <div class="pdp__thumbs" id="pdp-thumbs" role="group" aria-label="Choose image"></div>
           </div>
-          <div class="pdp__thumbs" id="pdp-thumbs" role="group" aria-label="Choose image"></div>
+          <div class="pdp__section pdp__specs-wrap" id="pdp-specs-section" hidden>
+            <h2>Specifications</h2>
+            <div class="spec-table" id="pdp-specs"></div>
+          </div>
         </div>
         <div class="pdp__info">
           <div class="pdp__meta-row" id="pdp-badges"></div>
@@ -135,10 +141,6 @@
           <div class="pdp__section">
             <p class="text-muted" style="font-size:0.88rem;margin:0;">No public prices — add the product to your request and receive one clear private proposal. Availability is confirmed at submission.</p>
           </div>
-        </div>
-        <div class="pdp__section pdp__specs-wrap" id="pdp-specs-section" hidden>
-          <h2>Specifications</h2>
-          <div class="spec-table" id="pdp-specs"></div>
         </div>
       </article>
 
@@ -250,6 +252,6 @@
 
 <script src="/js/site.js?v=3" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/product.js?v=3" defer></script>
+<script src="/js/product.js?v=4" defer></script>
 </body>
 </html>
