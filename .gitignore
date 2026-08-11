@@ -1,0 +1,19 @@
+# environments & secrets
+.env
+.venv/
+venv/
+
+# private runtime data (never commit, never serve)
+runtime/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node / tooling
+node_modules/
+
+# OS noise
+.DS_Store
+Thumbs.db

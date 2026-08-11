@@ -1,0 +1,109 @@
+"""Elite Marcom website backend — configuration.
+
+Production fails closed: missing independent secrets, origins, Turnstile,
+malware scanning or a persistent runtime path abort startup.
+"""
+from __future__ import annotations
+
+import os
+import secrets
+import sys
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+PUBLIC_DIR = BASE_DIR / "public"
+
+ENV = os.environ.get("EM_ENV", "development").strip().lower()
+IS_PROD = ENV == "production"
+
+RUNTIME_DIR = Path(os.environ.get("EM_RUNTIME_DIR", str(BASE_DIR / "runtime"))).resolve()
+
+CONSENT_VERSION = "2026-01"
+
+# --- retention defaults (days) ---
+RETENTION_SUBMISSIONS_DAYS = int(os.environ.get("EM_RETENTION_SUBMISSIONS_DAYS", "180"))
+RETENTION_CAREERS_DAYS = int(os.environ.get("EM_RETENTION_CAREERS_DAYS", "90"))
+RETENTION_CATALOG_DAYS = int(os.environ.get("EM_RETENTION_CATALOG_DAYS", "30"))
+
+# --- supplier (Jasani) ---
+JASANI_API_TOKEN = os.environ.get("JASANI_API_TOKEN", "")
+JASANI_HOSTS = {"ksa": "www.giftsksa.com", "uae": "www.jasani.ae"}
+SUPPLIER_TIMEOUT_S = 20.0
+SUPPLIER_MAX_BYTES = 5 * 1024 * 1024
+SUPPLIER_MAX_RECORDS = 5000
+SUPPLIER_DAILY_BUDGET = int(os.environ.get("EM_SUPPLIER_DAILY_BUDGET", "400"))
+CATALOG_REFRESH_MINUTES = 60
+BRANDING_CACHE_HOURS = 24
+BRANDING_CACHE_MAX_ENTRIES = 500
+
+# --- security secrets (independent) ---
+_DEV_PREFIX = "dev-insecure-"
+
+
+def _secret(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    if IS_PROD:
+        _fail(f"{name} is required in production")
+    # deterministic-per-process dev secret; never used in production
+    return _DEV_PREFIX + secrets.token_hex(16)
+
+
+def _fail(message: str) -> None:
+    print(f"[elite-marcom] REFUSING TO START: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+EM_DATA_KEY = _secret("EM_DATA_KEY")            # AES-GCM data-at-rest key material
+EM_CHALLENGE_SECRET = _secret("EM_CHALLENGE_SECRET")  # form-token signing
+EM_IP_HASH_SECRET = _secret("EM_IP_HASH_SECRET")      # IP hashing
+
+TURNSTILE_SECRET = os.environ.get("EM_TURNSTILE_SECRET", "").strip()
+TURNSTILE_SITE_KEY = os.environ.get("EM_TURNSTILE_SITE_KEY", "").strip()
+
+# --- origins ---
+_default_origins = "http://127.0.0.1:8847,http://localhost:8847"
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get("EM_ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()
+]
+
+# proxy peers allowed to supply X-Forwarded-For
+TRUSTED_PROXIES = {
+    p.strip() for p in os.environ.get("EM_TRUSTED_PROXIES", "").split(",") if p.strip()
+}
+
+HOST = os.environ.get("EM_HOST", "127.0.0.1")
+PORT = int(os.environ.get("EM_PORT", "8847"))
+
+# malware scanning (clamd) — mandatory in production, fail closed
+CLAMD_SOCKET = os.environ.get("EM_CLAMD_SOCKET", "/var/run/clamav/clamd.ctl")
+MALWARE_SCAN_REQUIRED = IS_PROD
+
+
+def validate_startup() -> None:
+    """Fail closed on unsafe production configuration."""
+    if not IS_PROD:
+        return
+    problems = []
+    for name, val in (("EM_DATA_KEY", EM_DATA_KEY),
+                      ("EM_CHALLENGE_SECRET", EM_CHALLENGE_SECRET),
+                      ("EM_IP_HASH_SECRET", EM_IP_HASH_SECRET)):
+        if val.startswith(_DEV_PREFIX) or len(val) < 32:
+            problems.append(f"{name} must be set to at least 32 characters")
+    if len({EM_DATA_KEY, EM_CHALLENGE_SECRET, EM_IP_HASH_SECRET}) != 3:
+        problems.append("EM_DATA_KEY / EM_CHALLENGE_SECRET / EM_IP_HASH_SECRET must be distinct")
+    if not TURNSTILE_SECRET or not TURNSTILE_SITE_KEY:
+        problems.append("EM_TURNSTILE_SECRET and EM_TURNSTILE_SITE_KEY are required in production")
+    https_origins = [o for o in ALLOWED_ORIGINS if o.startswith("https://")]
+    if not https_origins:
+        problems.append("EM_ALLOWED_ORIGINS must contain exact https:// origins in production")
+    try:
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        probe = RUNTIME_DIR / ".probe"
+        probe.write_text("ok")
+        probe.unlink()
+    except OSError:
+        problems.append(f"runtime path {RUNTIME_DIR} is not writable/persistent")
+    if problems:
+        _fail("; ".join(problems))

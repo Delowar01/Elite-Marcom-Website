@@ -1,1 +1,110 @@
-# Elite-Marcom-Website
+# Elite Marcom — Corporate Website
+
+Production-ready, ultra-premium corporate website for **Elite Marcom** — a global
+experiential marketing, exhibitions, events, production, branding and
+creative-solutions company operating from **Riyadh** and **Dubai** with
+worldwide delivery.
+
+Eight public pages + Privacy Notice, dark/light themes, an interactive 3D
+exhibition-stand hero (Three.js + supplied GLB), a live Giveaways catalog with a
+secure supplier integration, a Rental request workflow, Careers with encrypted
+CV applications, and a hardened FastAPI backend. **No admin panel, no CMS, no
+accounts** — by design.
+
+## Quick start (local)
+
+```bash
+./install.sh          # one-time: creates .venv and installs pinned dependencies
+./start-local.sh      # starts http://127.0.0.1:8847/
+```
+
+Windows: run `INSTALL DEPENDENCIES.bat` once, then `START WEBSITE.bat`.
+
+Installation and startup are separate on purpose — the start scripts reuse the
+existing environment and never reinstall dependencies.
+
+## Project layout
+
+```
+public/                  strict public webroot (the only directory ever served)
+  index/about/services/projects/giveaways/rental/careers/contact/privacy.html
+  styles.css home.css pages.css        design system + page styles
+  js/                                  site, hero-3d, forms, page scripts
+  vendor/three/                        Three.js 0.167.1 + GLTFLoader (vendored)
+  assets/                              logo, WebP imagery, GLB, career posters
+  data/                                preview/fallback catalogs (non-canonical)
+server/                  FastAPI backend (config, security, storage, jasani, main)
+server/data/             canonical rental inventory + career jobs seed
+runtime/                 private storage (SQLite, encrypted CVs, caches) — never served
+tests/                   API / security / parser tests (pytest)
+.env.example             placeholders only — copy to .env and fill
+```
+
+## Backend
+
+Python 3.11+ / FastAPI / Pydantic v2 / httpx / defusedxml / cryptography.
+
+Public endpoints only: `/healthz`, `/api/security/*`, `/api/careers/*`,
+`/api/contact/enquiries`, `/api/rentals/*`, `/api/giveaways/*`. Swagger/ReDoc
+are disabled in production.
+
+Security highlights:
+
+- exact Origin validation + explicit CORS allowlist for state-changing requests
+- short-lived, one-time, HMAC-signed form challenges bound to form + visitor
+- zero-size honeypot field, per-endpoint rate limits, global concurrency cap
+- Cloudflare Turnstile verification (required in production, optional locally)
+- IP addresses stored only as keyed hashes (dedicated secret), never plaintext
+- submissions and CVs encrypted at rest with AES-GCM; distinct secrets for
+  data encryption, token signing and IP hashing
+- CV rules enforced in UI **and** backend: PDF only, ≤5 MB, valid signature and
+  EOF, unencrypted, 1–100 pages; clamd malware scanning is mandatory in
+  production and fails closed
+- daily retention cleanup: contact/giveaway/rental 180 days, careers/CVs
+  90 days, catalog cache 30 days
+- strict CSP, HSTS (production), nosniff, frame-ancestors 'none', minimal
+  Permissions-Policy
+- production **fails closed** if secrets, https origins, Turnstile or a
+  writable private runtime path are missing
+
+### Giveaways supplier (Jasani)
+
+The supplier is contacted **only from the backend** using `JASANI_API_TOKEN`.
+Allowed hosts are exactly `www.giftsksa.com` (KSA) and `www.jasani.ae` (UAE);
+no redirects, no environment proxies, 5 MB response cap, hardened XML/JSON
+parsing, per-day request budget, 60-minute product/stock cache and 24-hour
+capped branding cache under `runtime/cache/`. If neither live nor cached data
+exists the API returns a controlled `503` and the frontend falls back to the
+local preview catalog, clearly labelled **Preview data**. The token never
+appears in HTML, JS, URLs sent to the browser, logs or errors.
+
+## Production notes
+
+Run behind a maintained HTTPS reverse proxy (Caddy/Nginx). Bind the app
+privately (`EM_HOST=127.0.0.1`), set `EM_TRUSTED_PROXIES` to the proxy's IP so
+forwarded client IPs are honoured only from it, and keep `runtime/` on a
+private persistent volume. Set `EM_ENV=production` — startup aborts unless all
+required configuration is present. Back up `runtime/` (encrypted data) and the
+encryption keys separately.
+
+## Tests
+
+```bash
+./.venv/bin/pip install -r requirements-dev.txt
+./.venv/bin/python -m pytest tests -q
+```
+
+## Supplied-asset notes (honest inventory)
+
+- The interactive hero uses the supplied `Elite_stand_glb.glb`, mapped to
+  `public/assets/aces-exhibition.glb` as specified.
+- Site imagery (portfolio, services, about, catalogs) was extracted from the
+  supplied *Elite Marcom Company Profile* PDF and converted to WebP.
+- The logo SVG/favicons were extracted from the supplied vector logo PDF; a
+  light variant was generated for dark backgrounds.
+- The three career posters referenced in the brief (2D Designer, 3D Exhibition
+  Stand Designer, Sales Executive) were **not** among the supplied files, so
+  branded SVG posters were generated in their place — swap in the originals at
+  `public/assets/careers/` when available.
+- Film-gallery thumbnails use supplied imagery mapped to the exact filenames
+  required by the brief.

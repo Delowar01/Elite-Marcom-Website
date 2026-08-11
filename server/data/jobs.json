@@ -1,0 +1,64 @@
+{
+  "jobs": [
+    {
+      "id": "2d-designer",
+      "title": "2D Designer",
+      "department": "Creative Studio",
+      "track": "creative",
+      "location": "Riyadh, Saudi Arabia",
+      "employmentType": "Full-time",
+      "sortOrder": 1,
+      "published": true,
+      "open": true,
+      "poster": "/assets/careers/poster-2d-designer.svg",
+      "summary": "Design brand identities, event graphics, signage and campaign artwork that move from screen to real environments.",
+      "requirements": [
+        "Strong portfolio across print and digital brand work",
+        "Fluent in Adobe Illustrator, Photoshop and InDesign",
+        "Comfort preparing production-ready artwork",
+        "An eye for typography, layout and colour",
+        "Able to iterate quickly against real deadlines"
+      ]
+    },
+    {
+      "id": "3d-exhibition-designer",
+      "title": "3D Exhibition Stand Designer",
+      "department": "Spatial Design",
+      "track": "spatial",
+      "location": "Riyadh, Saudi Arabia",
+      "employmentType": "Full-time",
+      "sortOrder": 2,
+      "published": true,
+      "open": true,
+      "poster": "/assets/careers/poster-3d-designer.svg",
+      "summary": "Design exhibition stands and brand environments in 3D — from concept renders to technically buildable spaces.",
+      "requirements": [
+        "Portfolio of exhibition or interior 3D design",
+        "Proficiency in 3ds Max, SketchUp or similar, plus V-Ray or equivalent",
+        "Understanding of fabrication methods and materials",
+        "Able to translate a brief into a spatial story",
+        "Collaboration with production teams through build"
+      ]
+    },
+    {
+      "id": "sales-executive",
+      "title": "Sales Executive",
+      "department": "Business Development",
+      "track": "business",
+      "location": "Riyadh, Saudi Arabia",
+      "employmentType": "Full-time",
+      "sortOrder": 3,
+      "published": true,
+      "open": true,
+      "poster": "/assets/careers/poster-sales-executive.svg",
+      "summary": "Grow Elite Marcom's client base across exhibitions, events and branding — owning relationships from first call to signed project.",
+      "requirements": [
+        "Experience selling services in events, exhibitions, media or agencies",
+        "Confident presenting to marketing and procurement teams",
+        "Organised pipeline and follow-up discipline",
+        "Fluent English; Arabic is an advantage",
+        "Driven by targets and long-term relationships"
+      ]
+    }
+  ]
+}
