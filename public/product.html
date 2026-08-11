@@ -19,7 +19,7 @@
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
 <link rel="stylesheet" href="/styles.css?v=2">
-<link rel="stylesheet" href="/pages.css?v=3">
+<link rel="stylesheet" href="/pages.css?v=4">
 <script src="/js/theme-init.js?v=1"></script>
 <meta name="robots" content="noindex">
 </head>
@@ -118,6 +118,7 @@
           <h1 id="pdp-title"></h1>
           <p class="pdp__meta-row"><span class="product-card__code" id="pdp-code"></span></p>
           <p><span class="availability" id="pdp-availability"></span></p>
+          <div class="pdp__variants" id="pdp-variants" hidden></div>
           <div class="pdp__section pdp__desc" id="pdp-desc-section" hidden>
             <h2>Description</h2>
             <p id="pdp-description"></p>
@@ -125,10 +126,6 @@
           <div class="pdp__section" id="pdp-colors-section" hidden>
             <h2>Other colours</h2>
             <div class="pdp__colors" id="pdp-colors"></div>
-          </div>
-          <div class="pdp__section" id="pdp-specs-section" hidden>
-            <h2>Specifications</h2>
-            <div class="spec-table" id="pdp-specs"></div>
           </div>
           <div class="pdp__section" id="pdp-branding-section" hidden>
             <h2>Branding options</h2>
@@ -138,6 +135,10 @@
           <div class="pdp__section">
             <p class="text-muted" style="font-size:0.88rem;margin:0;">No public prices — add the product to your request and receive one clear private proposal. Availability is confirmed at submission.</p>
           </div>
+        </div>
+        <div class="pdp__section pdp__specs-wrap" id="pdp-specs-section" hidden>
+          <h2>Specifications</h2>
+          <div class="spec-table" id="pdp-specs"></div>
         </div>
       </article>
 
@@ -247,8 +248,8 @@
   </div>
 </footer>
 
-<script src="/js/site.js?v=2" defer></script>
+<script src="/js/site.js?v=3" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/product.js?v=2" defer></script>
+<script src="/js/product.js?v=3" defer></script>
 </body>
 </html>

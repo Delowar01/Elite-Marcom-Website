@@ -500,6 +500,31 @@ def test_jasani_normalizes_real_odoo_record():
                            "https://www.jasani.ae/web/image/product.image/91/image_1024"]
 
 
+def test_jasani_flattens_nested_images_array():
+    """Live feed shape: images is a nested 2-D array of {id, image_url} dicts."""
+    from server import jasani
+
+    rec = {
+        "id": 4502, "code": "6311", "name": "XDDESIGN Komo Travel Wallet",
+        "product_tmpl_id": [4400, "XDDESIGN Komo Travel Wallet"],
+        "image_url": "https://www.jasani.ae/web/image/product.product/4502/image_1024",
+        "images": [[
+            {"id": 1954, "image_url": "https://www.jasani.ae/web/image/product.image/1954/image_1024"},
+            {"id": 1955, "image_url": "https://www.jasani.ae/web/image/product.image/1955/image_1024"},
+            {"id": 1956, "image_url": "https://www.jasani.ae/web/image/product.product/4502/image_1024"},
+        ]],
+    }
+    p = jasani.normalize_product(rec, "uae")
+    assert p is not None
+    assert p["templateId"] == "4400"
+    assert p["images"] == [
+        "https://www.jasani.ae/web/image/product.product/4502/image_1024",
+        "https://www.jasani.ae/web/image/product.image/1954/image_1024",
+        "https://www.jasani.ae/web/image/product.image/1955/image_1024",
+    ]
+    assert p["image"] == "https://www.jasani.ae/web/image/product.product/4502/image_1024"
+
+
 def test_jasani_resolves_color_options_against_catalog():
     from server import jasani
 

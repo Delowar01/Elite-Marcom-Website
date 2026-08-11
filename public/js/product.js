@@ -25,6 +25,7 @@
     title: document.getElementById("pdp-title"),
     code: document.getElementById("pdp-code"),
     availability: document.getElementById("pdp-availability"),
+    variants: document.getElementById("pdp-variants"),
     description: document.getElementById("pdp-description"),
     descSection: document.getElementById("pdp-desc-section"),
     specs: document.getElementById("pdp-specs"),
@@ -101,11 +102,73 @@
     return { cls: "availability--out", label: "Out of stock" };
   }
 
+  /* ---------- size / colour variants (one supplier row per variant) ---------- */
+  var group = [];
+
+  function variantAttrMap(v) {
+    var out = {};
+    EM.variantAttrs(v).forEach(function (r) { out[r[0]] = r[1]; });
+    return out;
+  }
+
+  function pickVariant(want, changedLabel) {
+    var best = null, bestScore = -1;
+    group.forEach(function (v) {
+      var attrs = variantAttrMap(v);
+      if (changedLabel && attrs[changedLabel] !== want[changedLabel]) return;
+      var score = 0;
+      Object.keys(want).forEach(function (k) { if (attrs[k] === want[k]) score++; });
+      if (score > bestScore) { best = v; bestScore = score; }
+    });
+    return best;
+  }
+
+  function renderVariants(p) {
+    if (!els.variants) return;
+    if (group.length < 2) { els.variants.hidden = true; els.variants.innerHTML = ""; return; }
+    var current = variantAttrMap(p);
+    var labels = [], values = {};
+    group.forEach(function (v) {
+      EM.variantAttrs(v).forEach(function (r) {
+        if (labels.indexOf(r[0]) === -1) { labels.push(r[0]); values[r[0]] = []; }
+        if (values[r[0]].indexOf(r[1]) === -1) values[r[0]].push(r[1]);
+      });
+    });
+    els.variants.innerHTML = labels.map(function (label) {
+      return '<div class="variant-field"><label>' + EM.escapeHtml(label) + "</label>" +
+        '<select data-variant="' + EM.escapeHtml(label) + '" aria-label="Choose ' + EM.escapeHtml(label) + '">' +
+        values[label].map(function (v) {
+          return '<option value="' + EM.escapeHtml(v) + '"' + (current[label] === v ? " selected" : "") + ">" +
+                 EM.escapeHtml(v) + "</option>";
+        }).join("") +
+        "</select></div>";
+    }).join("");
+    els.variants.hidden = false;
+    els.variants.querySelectorAll("select").forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        var want = {};
+        els.variants.querySelectorAll("select").forEach(function (s) { want[s.getAttribute("data-variant")] = s.value; });
+        var next = pickVariant(want, sel.getAttribute("data-variant"));
+        if (next && next.id !== p.id) {
+          history.replaceState(null, "", "/product.html?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(next.id));
+          render(next);
+        } else {
+          renderVariants(p); /* impossible combination — snap selects back */
+        }
+      });
+    });
+  }
+
   function render(p) {
     els.loading.hidden = true;
     els.loading.style.display = "none";
     els.pdp.hidden = false;
     document.title = p.name + " — Corporate Gifts | Elite Marcom";
+
+    /* re-rendering (variant switch): drop carousel controls before rebuilding */
+    els.carousel.querySelectorAll(".carousel__btn, .carousel__dots").forEach(function (n) { n.remove(); });
+    els.carousel.classList.remove("carousel--single");
+    els.thumbs.innerHTML = "";
 
     /* gallery: every image from the API, slideable, with auto-hide arrows */
     var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []));
@@ -148,6 +211,7 @@
     var av = availability(p);
     els.availability.className = "availability " + av.cls;
     els.availability.textContent = av.label;
+    renderVariants(p);
     /* description straight from the supplier API — shown whenever it exists */
     if (p.description) {
       els.description.textContent = p.description;
@@ -362,9 +426,16 @@
     showMissing();
   } else {
     loadCatalog().then(function (products) {
+      var all = products || [];
       var p = null;
-      (products || []).forEach(function (x) { if (x.id === productId) p = x; });
-      if (p) render(p); else showMissing();
+      all.forEach(function (x) { if (x.id === productId) p = x; });
+      if (p) {
+        var key = EM.giftKey(p);
+        group = all.filter(function (x) { return EM.giftKey(x) === key; });
+        render(p);
+      } else {
+        showMissing();
+      }
     }).catch(showMissing);
   }
 })();

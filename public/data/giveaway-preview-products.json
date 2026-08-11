@@ -18,10 +18,7 @@
    "market": "ksa",
    "color": "Orange",
    "options": [
-    "Size: S",
-    "Size: M",
-    "Size: L",
-    "Size: XL"
+    "Size: Small"
    ],
    "image": "/assets/services/gift-hoodie.webp",
    "images": [
@@ -59,7 +56,182 @@
      "image": "/assets/services/gift-bag.webp"
     }
    ],
-   "cartonVolume": "0.096"
+   "cartonVolume": "0.096",
+   "templateId": "prev-tmpl-hoodie-ksa"
+  },
+  {
+   "id": "prev-hoodie-ksa-m",
+   "code": "EM-G-101-M",
+   "barcode": "",
+   "name": "Signature Orange Hoodie",
+   "brand": "Elite Collection",
+   "description": "Heavyweight cotton-blend hoodie with embroidered brand mark — a giveaway people actually wear.",
+   "categories": [
+    "Apparel"
+   ],
+   "tags": [
+    "new",
+    "premium"
+   ],
+   "market": "ksa",
+   "color": "Orange",
+   "options": [
+    "Size: Medium"
+   ],
+   "image": "/assets/services/gift-hoodie.webp",
+   "images": [
+    "/assets/services/gift-hoodie.webp",
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 8,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "61101190",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 210,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [
+    {
+     "id": "prev-cap-ksa",
+     "name": "Two-Tone Cap",
+     "color": "Navy",
+     "image": "/assets/services/gift-cap.webp"
+    },
+    {
+     "id": "prev-bag-ksa",
+     "name": "Executive Gift Bag",
+     "color": "Sand",
+     "image": "/assets/services/gift-bag.webp"
+    }
+   ],
+   "cartonVolume": "0.096",
+   "templateId": "prev-tmpl-hoodie-ksa"
+  },
+  {
+   "id": "prev-hoodie-ksa-l",
+   "code": "EM-G-101-L",
+   "barcode": "",
+   "name": "Signature Orange Hoodie",
+   "brand": "Elite Collection",
+   "description": "Heavyweight cotton-blend hoodie with embroidered brand mark — a giveaway people actually wear.",
+   "categories": [
+    "Apparel"
+   ],
+   "tags": [
+    "new",
+    "premium"
+   ],
+   "market": "ksa",
+   "color": "Orange",
+   "options": [
+    "Size: Large"
+   ],
+   "image": "/assets/services/gift-hoodie.webp",
+   "images": [
+    "/assets/services/gift-hoodie.webp",
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 8,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "61101190",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 0,
+    "blocked": 0,
+    "incoming": 60,
+    "incomingDate": "2026-09-01"
+   },
+   "printingManual": null,
+   "colorOptions": [
+    {
+     "id": "prev-cap-ksa",
+     "name": "Two-Tone Cap",
+     "color": "Navy",
+     "image": "/assets/services/gift-cap.webp"
+    },
+    {
+     "id": "prev-bag-ksa",
+     "name": "Executive Gift Bag",
+     "color": "Sand",
+     "image": "/assets/services/gift-bag.webp"
+    }
+   ],
+   "cartonVolume": "0.096",
+   "templateId": "prev-tmpl-hoodie-ksa"
+  },
+  {
+   "id": "prev-hoodie-ksa-xl",
+   "code": "EM-G-101-XL",
+   "barcode": "",
+   "name": "Signature Orange Hoodie",
+   "brand": "Elite Collection",
+   "description": "Heavyweight cotton-blend hoodie with embroidered brand mark — a giveaway people actually wear.",
+   "categories": [
+    "Apparel"
+   ],
+   "tags": [
+    "new",
+    "premium"
+   ],
+   "market": "ksa",
+   "color": "Orange",
+   "options": [
+    "Size: XL"
+   ],
+   "image": "/assets/services/gift-hoodie.webp",
+   "images": [
+    "/assets/services/gift-hoodie.webp",
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 8,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "61101190",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 45,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [
+    {
+     "id": "prev-cap-ksa",
+     "name": "Two-Tone Cap",
+     "color": "Navy",
+     "image": "/assets/services/gift-cap.webp"
+    },
+    {
+     "id": "prev-bag-ksa",
+     "name": "Executive Gift Bag",
+     "color": "Sand",
+     "image": "/assets/services/gift-bag.webp"
+    }
+   ],
+   "cartonVolume": "0.096",
+   "templateId": "prev-tmpl-hoodie-ksa"
   },
   {
    "id": "prev-bag-ksa",
@@ -99,7 +271,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-cap-ksa",
@@ -140,7 +313,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-desk-set-ksa",
@@ -182,7 +356,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-eco-notebook-ksa",
@@ -223,7 +398,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-ramadan-box-ksa",
@@ -264,7 +440,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-drinkware-ksa",
@@ -306,7 +483,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-tech-kit-ksa",
@@ -347,7 +525,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-hoodie-uae",
@@ -407,7 +586,8 @@
      "image": "/assets/services/gift-bag.webp"
     }
    ],
-   "cartonVolume": "0.096"
+   "cartonVolume": "0.096",
+   "templateId": null
   },
   {
    "id": "prev-bag-uae",
@@ -447,7 +627,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-cap-uae",
@@ -488,7 +669,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-desk-set-uae",
@@ -530,7 +712,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-eco-notebook-uae",
@@ -571,7 +754,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-ramadan-box-uae",
@@ -612,7 +796,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-drinkware-uae",
@@ -654,7 +839,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   },
   {
    "id": "prev-tech-kit-uae",
@@ -695,7 +881,8 @@
    },
    "printingManual": null,
    "colorOptions": [],
-   "cartonVolume": null
+   "cartonVolume": null,
+   "templateId": null
   }
  ]
 }

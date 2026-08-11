@@ -538,3 +538,34 @@
   .lightbox__nav { width: 40px; height: 40px; }
   .lightbox__slide { padding: 56px 10px 76px; }
 }
+
+/* ---------- specs live under the image card, same width ---------- */
+.pdp__specs-wrap { grid-column: 1; grid-row: 2; border-top: 0; padding-top: 0; margin-top: 0; }
+.pdp__info { grid-column: 2; grid-row: 1 / span 2; }
+@media (max-width: 900px) {
+  .pdp__gallery { grid-column: 1; grid-row: 1; }
+  .pdp__info { grid-column: 1; grid-row: 2; }
+  .pdp__specs-wrap { grid-column: 1; grid-row: 3; }
+}
+
+/* ---------- size / colour variant selectors ---------- */
+.pdp__variants {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px; margin: 18px 0 4px;
+}
+.variant-field label {
+  display: block; font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 7px;
+}
+.variant-field select {
+  width: 100%; padding: 11px 38px 11px 14px;
+  border: 1px solid var(--border-strong); border-radius: 12px;
+  background: var(--surface); color: var(--text);
+  font: inherit; font-size: 0.95rem; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+  transition: border-color var(--dur-1) linear;
+}
+.variant-field select:hover, .variant-field select:focus-visible { border-color: var(--orange-2); }

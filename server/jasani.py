@@ -287,6 +287,30 @@ def _list(rec: dict, *keys: str) -> list[str]:
     return []
 
 
+def _image_urls(v: Any, depth: int = 0) -> list[str]:
+    """URLs from the supplier's images field, which nests arbitrarily:
+    images: [[{"id": 1954, "image_url": "..."}, ...]] — flatten everything."""
+    if depth > 4 or v is None or isinstance(v, bool):
+        return []
+    if isinstance(v, str):
+        s = v.strip()
+        return [s] if s and s.lower() not in _EMPTY_MARKERS else []
+    if isinstance(v, dict):
+        for k in ("image_url", "imageurl", "url", "src", "href", "image"):
+            u = v.get(k)
+            if isinstance(u, str) and u.strip():
+                return [u.strip()]
+        return []
+    if isinstance(v, (list, tuple)):
+        out: list[str] = []
+        for item in v:
+            out.extend(_image_urls(item, depth + 1))
+            if len(out) >= 40:
+                break
+        return out[:40]
+    return []
+
+
 # base domains whose https subdomains may serve product imagery / documents
 _SUPPLIER_DOMAINS = ("giftsksa.com", "jasani.ae")
 
@@ -322,15 +346,15 @@ def normalize_product(rec: dict, market: str) -> dict | None:
         if not (pid or code) or not name:
             return None
         host = config.JASANI_HOSTS[market]
-        # primary image first (image_url), then the additional images array
+        # primary image first (image_url), then the flattened images array
         images = []
         for key in ("image", "image_url", "main_image", "thumbnail"):
             v = _s(rec, key)
             if v:
                 images.append(v)
         for key in ("images", "image_urls", "gallery", "additional_images", "extra_images"):
-            images.extend(_list(rec, key))
-        images = [u for u in (_safe_image(u, host) for u in images) if u][:12]
+            images.extend(_image_urls(rec.get(key) or rec.get(key.replace("_", ""))))
+        images = [u for u in (_safe_image(u, host) for u in images) if u][:36]
         # de-duplicate while preserving order
         seen_imgs: set[str] = set()
         images = [u for u in images if not (u in seen_imgs or seen_imgs.add(u))]
@@ -367,6 +391,9 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "categories": cats,
             "tags": tags,
             "market": market,
+            # shared template id groups size/colour variants of one product
+            "templateId": (_rel_ids(rec.get("product_tmpl_id") or rec.get("producttmplid")
+                                    or rec.get("product_template_id") or rec.get("template_id")) or [None])[0],
             "color": _s(rec, "color", "colour")[:60],
             "options": options,
             "image": images[0] if images else "",

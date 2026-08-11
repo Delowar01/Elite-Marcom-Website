@@ -486,4 +486,39 @@
       }, 80);
     }, { passive: true });
   };
+
+  /* ---------- corporate gifts: variant grouping ----------
+     The supplier lists every size/colour variant as its own product row.
+     Rows sharing a template id (or, failing that, name + brand) are one
+     product with selectable attributes. */
+  EM.giftKey = function (p) {
+    if (p.templateId) return "t:" + p.templateId;
+    return "n:" + (String(p.name || "") + "|" + String(p.brand || "")).toLowerCase();
+  };
+
+  EM.giftGroups = function (products) {
+    var map = {}, order = [];
+    (products || []).forEach(function (p) {
+      var k = EM.giftKey(p);
+      if (!map[k]) { map[k] = []; order.push(k); }
+      map[k].push(p);
+    });
+    return order.map(function (k) { return map[k]; });
+  };
+
+  /* Ordered attribute map for one variant: [["Size","Small"],["Color","Black"]].
+     Built from "Label: value" options; the plain colour field fills in when no
+     Color attribute exists. */
+  EM.variantAttrs = function (p) {
+    var rows = [], seen = {};
+    (p.options || []).forEach(function (o) {
+      var m = /^([^:]{1,40}):\s*(.+)$/.exec(String(o));
+      if (m) {
+        var label = m[1].trim();
+        if (!seen[label]) { seen[label] = true; rows.push([label, m[2].trim()]); }
+      }
+    });
+    if (!seen.Color && !seen.Colour && p.color) rows.push(["Color", p.color]);
+    return rows;
+  };
 })();
