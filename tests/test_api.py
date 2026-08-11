@@ -500,6 +500,19 @@ def test_jasani_stock_merge_matches_on_any_identifier():
     assert products[0]["stock"]["incomingDate"] is None
 
 
+def test_jasani_cache_roundtrips_non_ascii_names():
+    """Windows' locale codec can't encode e.g. the 'ﬃ' ligature seen in the
+    live feed — the cache must be UTF-8 and never fail the request."""
+    from server import jasani
+
+    p = jasani.normalize_product(
+        {"id": "77", "code": "OF-1", "name": "Oﬃce Desk Set — Arabic هدية",
+         "image": "https://www.giftsksa.com/img/o.jpg"}, "ksa")
+    jasani._write_cache("ksa", [p])
+    cached = jasani._read_cache("ksa")
+    assert cached and cached["products"][0]["name"] == "Oﬃce Desk Set — Arabic هدية"
+
+
 def test_jasani_rejects_foreign_image_hosts():
     from server import jasani
 

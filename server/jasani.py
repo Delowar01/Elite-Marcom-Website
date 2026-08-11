@@ -357,14 +357,20 @@ def _cache_file(market: str) -> Any:
 def _read_cache(market: str) -> dict | None:
     f = _cache_file(market)
     try:
-        return json.loads(f.read_text())
+        return json.loads(f.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
 
 
 def _write_cache(market: str, products: list[dict]) -> None:
-    f = _cache_file(market)
-    f.write_text(json.dumps({"fetchedAt": int(time.time()), "products": products}, ensure_ascii=False))
+    # explicit UTF-8: Windows' locale default (cp1252) cannot encode many
+    # supplier product names, and a failed cache write must not fail the request
+    try:
+        f = _cache_file(market)
+        f.write_text(json.dumps({"fetchedAt": int(time.time()), "products": products},
+                                ensure_ascii=False), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
 
 
 async def _fetch_catalog(market: str) -> list[dict]:

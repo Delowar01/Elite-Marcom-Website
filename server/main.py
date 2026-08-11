@@ -192,7 +192,7 @@ _JOBS_FILE = Path(__file__).parent / "data" / "jobs.json"
 
 def load_jobs() -> list[dict]:
     try:
-        data = json.loads(_JOBS_FILE.read_text())
+        data = json.loads(_JOBS_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     jobs = [j for j in data.get("jobs", []) if j.get("published") and j.get("open")]
@@ -357,7 +357,7 @@ _RENTAL_FILE = Path(__file__).parent / "data" / "rental-inventory.json"
 
 def load_rentals() -> list[dict]:
     try:
-        return json.loads(_RENTAL_FILE.read_text()).get("products", [])
+        return json.loads(_RENTAL_FILE.read_text(encoding="utf-8")).get("products", [])
     except (OSError, ValueError):
         return []
 
@@ -506,7 +506,7 @@ _PREVIEW_FILE = config.PUBLIC_DIR / "data" / "giveaway-preview-products.json"
 
 def load_preview_products(market: str) -> list[dict]:
     try:
-        data = json.loads(_PREVIEW_FILE.read_text())
+        data = json.loads(_PREVIEW_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     return [p for p in data.get("products", []) if p.get("market") == market]
