@@ -20,7 +20,7 @@
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
 <link rel="preload" href="/assets/logo-light.svg" as="image">
 <link rel="stylesheet" href="/styles.css?v=2">
-<link rel="stylesheet" href="/home.css?v=3">
+<link rel="stylesheet" href="/home.css?v=4">
 <script src="/js/theme-init.js?v=1"></script>
 <script type="application/ld+json">
 {
@@ -54,7 +54,7 @@
         <li><a href="/about.html">About</a></li>
         <li><a href="/services.html">Services</a></li>
         <li><a href="/projects.html">Projects</a></li>
-        <li><a href="/giveaways.html">Giveaways</a></li>
+        <li><a href="/giveaways.html">Corporate Gifts</a></li>
         <li><a href="/rental.html">Rental</a></li>
         <li><a href="/careers.html">Careers</a></li>
         <li><a href="/contact.html">Contact</a></li>
@@ -88,7 +88,7 @@
       <li><a href="/about.html"><span class="num">02</span>About Us</a></li>
       <li><a href="/services.html"><span class="num">03</span>Services</a></li>
       <li><a href="/projects.html"><span class="num">04</span>Projects</a></li>
-      <li><a href="/giveaways.html"><span class="num">05</span>Giveaways</a></li>
+      <li><a href="/giveaways.html"><span class="num">05</span>Corporate Gifts</a></li>
       <li><a href="/rental.html"><span class="num">06</span>Items for Rental</a></li>
       <li><a href="/careers.html"><span class="num">07</span>Careers</a></li>
       <li><a href="/contact.html"><span class="num">08</span>Contact Us</a></li>
@@ -124,17 +124,17 @@
           <div class="stat"><dt class="stat__num">KSA + UAE</dt><dd class="stat__label">Regional presence</dd></div>
           <div class="stat"><dt class="stat__num">Worldwide</dt><dd class="stat__label">Project support</dd></div>
         </dl>
-        <div class="hero__stage-inner" id="glb-stage" data-camz="4.4" data-camy="0.85" data-cursor="drag" aria-label="Interactive 3D exhibition stand model. Drag to rotate." role="img"></div>
-        <div class="hero__stage-foot reveal" data-reveal="fade-up" data-reveal-delay="440">
-          <ul class="hero__caps" aria-label="Capabilities">
-            <li><a class="chip chip--orange" href="/services.html#exhibition-stands">Exhibition stands</a></li>
-            <li><a class="chip" href="/services.html#corporate-events">Events &amp; conferences</a></li>
-            <li><a class="chip chip--violet" href="/services.html#fit-out">Interiors &amp; branding</a></li>
-            <li><a class="chip" href="/giveaways.html">Media &amp; giveaways</a></li>
-          </ul>
-          <p class="hero__scroll-cue" id="scroll-cue" aria-hidden="true"><span class="cue-dot"></span>Scroll to explore</p>
-        </div>
+        <div class="hero__stage-inner" id="glb-stage" data-camz="5.2" data-camy="0.9" data-cursor="drag" aria-label="Interactive 3D exhibition stand model. Drag to rotate." role="img"></div>
       </div>
+      <p class="hero__scroll-cue" id="scroll-cue" aria-hidden="true"><span class="cue-dot"></span><span class="cue-text">Scroll to explore</span></p>
+    </div>
+    <div class="container hero__caps-row reveal" data-reveal="fade-up" data-reveal-delay="440">
+      <ul class="hero__caps" aria-label="Capabilities">
+        <li><a class="chip chip--orange" href="/services.html#exhibition-stands">Exhibition stands</a></li>
+        <li><a class="chip" href="/services.html#corporate-events">Events &amp; conferences</a></li>
+        <li><a class="chip chip--violet" href="/services.html#fit-out">Interiors &amp; branding</a></li>
+        <li><a class="chip" href="/giveaways.html">Media &amp; corporate gifts</a></li>
+      </ul>
     </div>
   </section>
 
@@ -146,7 +146,7 @@
         <span class="marquee__item">Corporate Events</span>
         <span class="marquee__item">Interior Design</span>
         <span class="marquee__item">Branding</span>
-        <span class="marquee__item">Giveaways</span>
+        <span class="marquee__item">Corporate Gifts</span>
         <span class="marquee__item">Photo &amp; Video</span>
         <span class="marquee__item">Staffing</span>
         <span class="marquee__item">Digital Marketing</span>
@@ -211,7 +211,7 @@
             <span class="service-row__hint">Identity · Signage · Environmental graphics</span><span class="service-row__arrow" aria-hidden="true">→</span>
           </a>
           <a role="listitem" class="service-row reveal" data-reveal="fade-up" data-reveal-delay="160" href="/giveaways.html" data-preview="/assets/portfolio/branded-collection.webp">
-            <span class="service-row__num">05</span><span class="service-row__name">Giveaways &amp; merchandise</span>
+            <span class="service-row__num">05</span><span class="service-row__name">Corporate gifts &amp; merchandise</span>
             <span class="service-row__hint">Sourcing · Custom branding · Fulfilment</span><span class="service-row__arrow" aria-hidden="true">→</span>
           </a>
           <a role="listitem" class="service-row reveal" data-reveal="fade-up" data-reveal-delay="200" href="/services.html#photo-video" data-preview="/assets/portfolio/media-production.webp">
@@ -231,7 +231,15 @@
           <img id="service-preview-img" src="/assets/services/stand-aces-arc.webp" alt="" width="603" height="339" loading="lazy">
         </div>
       </div>
-      <p class="text-muted reveal" data-reveal="fade-up" style="margin-top: 26px;">Also available — <a href="/rental.html">Items for rental</a>, <a href="/services.html#outdoor-activities">Outdoor activities</a>, <a href="/services.html#branding">Event branding</a> and <a href="/services.html#photo-video">Production support</a>.</p>
+      <div class="also-available reveal" data-reveal="fade-up">
+        <span class="also-available__label">Also available</span>
+        <nav class="also-available__links" aria-label="More services">
+          <a href="/rental.html">Items for rental</a>
+          <a href="/services.html#outdoor-activities">Outdoor activities</a>
+          <a href="/services.html#branding">Event branding</a>
+          <a href="/services.html#photo-video">Production support</a>
+        </nav>
+      </div>
     </div>
   </section>
 
@@ -366,7 +374,7 @@
       <nav aria-label="Footer — more">
         <h3>More</h3>
         <ul>
-          <li><a href="/giveaways.html">Giveaways</a></li>
+          <li><a href="/giveaways.html">Corporate Gifts</a></li>
           <li><a href="/rental.html">Items for Rental</a></li>
           <li><a href="/careers.html">Careers</a></li>
           <li><a href="/contact.html">Contact Us</a></li>
