@@ -760,6 +760,7 @@ body.scroll-locked { overflow: hidden; }
   transition: transform var(--dur-1) var(--ease-out);
 }
 .request-fab:hover { transform: translateY(-3px); }
+.request-fab[hidden] { display: none; }
 .request-fab .count {
   background: rgba(255,255,255,0.25); border-radius: 999px; min-width: 26px; height: 26px;
   display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem;

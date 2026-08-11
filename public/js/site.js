@@ -432,4 +432,58 @@
   };
 
   EM.formatQty = function (n) { return String(Math.max(0, Math.floor(n))); };
+
+  /* ---------- image carousel (catalog cards + product page) ----------
+     markup: .carousel > .carousel__track > img*, buttons/dots injected here.
+     Buttons auto-hide: visible only on hover/focus, and never for 1 image. */
+  EM.carousel = function (root) {
+    var track = root.querySelector(".carousel__track");
+    if (!track) return;
+    var slides = track.children.length;
+    if (slides <= 1) { root.classList.add("carousel--single"); return; }
+
+    var prev = doc.createElement("button");
+    prev.type = "button";
+    prev.className = "carousel__btn carousel__btn--prev";
+    prev.setAttribute("aria-label", "Previous image");
+    prev.innerHTML = "&#8249;";
+    var next = doc.createElement("button");
+    next.type = "button";
+    next.className = "carousel__btn carousel__btn--next";
+    next.setAttribute("aria-label", "Next image");
+    next.innerHTML = "&#8250;";
+    var dots = doc.createElement("div");
+    dots.className = "carousel__dots";
+    dots.setAttribute("aria-hidden", "true");
+    for (var i = 0; i < slides; i++) {
+      var d = doc.createElement("span");
+      d.className = "carousel__dot" + (i === 0 ? " is-active" : "");
+      dots.appendChild(d);
+    }
+    root.appendChild(prev);
+    root.appendChild(next);
+    root.appendChild(dots);
+
+    function index() {
+      return Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+    }
+    function go(delta, e) {
+      if (e) { e.stopPropagation(); e.preventDefault(); }
+      var target = Math.min(slides - 1, Math.max(0, index() + delta));
+      track.scrollTo({ left: target * track.clientWidth, behavior: EM.reducedMotion() ? "auto" : "smooth" });
+    }
+    prev.addEventListener("click", function (e) { go(-1, e); });
+    next.addEventListener("click", function (e) { go(1, e); });
+
+    var scrollTimer = null;
+    track.addEventListener("scroll", function () {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(function () {
+        var idx = index();
+        dots.querySelectorAll(".carousel__dot").forEach(function (d, i) {
+          d.classList.toggle("is-active", i === idx);
+        });
+      }, 80);
+    }, { passive: true });
+  };
 })();

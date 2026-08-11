@@ -19,7 +19,7 @@
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
 <link rel="stylesheet" href="/styles.css?v=2">
-<link rel="stylesheet" href="/pages.css?v=1">
+<link rel="stylesheet" href="/pages.css?v=2">
 <script src="/js/theme-init.js?v=1"></script>
 </head>
 <body>
@@ -134,6 +134,7 @@
         <select id="give-category" aria-label="Filter by category"><option value="">All categories</option></select>
         <select id="give-brand" aria-label="Filter by brand"><option value="">All brands</option></select>
         <select id="give-color" aria-label="Filter by colour"><option value="">All colours</option></select>
+        <span class="minstock-field"><label for="give-minstock">Min. stock</label><input type="number" id="give-minstock" min="0" step="1" inputmode="numeric" placeholder="0" aria-label="Show products with at least this much stock"></span>
         <select id="give-sort" aria-label="Sort products">
           <option value="featured">Featured</option>
           <option value="newest">Newest first</option>
@@ -156,13 +157,29 @@
         <span class="catalog-count" id="give-active-filters" aria-live="polite"></span>
       </div>
 
-      <div class="catalog-grid" id="give-grid" aria-busy="true"></div>
+      <div class="catalog-grid catalog-grid--gifts" id="give-grid" aria-busy="true"></div>
       <div class="empty-state" id="give-empty" hidden>
         <h3>No products match this view</h3>
         <p>Adjust the search or filters — or <button type="button" class="link-arrow" id="give-clear">clear everything</button>.</p>
       </div>
       <div class="center" style="margin-top:34px;">
         <button class="btn btn--ghost" type="button" id="give-more" hidden>Load more products</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Contact highlight -->
+  <section class="section" aria-labelledby="gifts-contact-h" style="padding-top:0;">
+    <div class="container">
+      <div class="gifts-contact reveal" data-reveal="fade-up">
+        <div class="gifts-contact__copy">
+          <h2 id="gifts-contact-h">Looking for more options, custom gifts or something special?</h2>
+          <p>The catalog is only the beginning. Talk to us directly for wider sourcing, fully custom merchandise, bespoke packaging and special requests — we will shape it around your brand.</p>
+        </div>
+        <div class="gifts-contact__actions">
+          <a class="btn btn--primary" href="mailto:info@elitemarcom.com?subject=Custom%20corporate%20gifts" data-magnetic>info@elitemarcom.com</a>
+          <a class="btn btn--violet" href="https://wa.me/966599255995" rel="noopener" target="_blank">WhatsApp us</a>
+        </div>
       </div>
     </div>
   </section>
@@ -199,17 +216,6 @@
     </div>
   </aside>
 
-  <!-- Product detail drawer -->
-  <div class="drawer-scrim" id="give-detail-scrim"></div>
-  <aside class="drawer" id="give-detail-drawer" role="dialog" aria-modal="true" aria-labelledby="give-detail-title" aria-hidden="true">
-    <div class="drawer__head">
-      <h2 id="give-detail-title">Product details</h2>
-      <button class="icon-btn" type="button" data-drawer-close aria-label="Close product details">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-    </div>
-    <div class="drawer__body" id="give-detail-body"></div>
-  </aside>
 
   <!-- Enquiry dialog -->
   <div class="dialog-scrim" id="give-enquiry-dialog" role="presentation">
@@ -321,8 +327,8 @@
   </div>
 </footer>
 
-<script src="/js/site.js?v=1" defer></script>
+<script src="/js/site.js?v=2" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/giveaways.js?v=1" defer></script>
+<script src="/js/giveaways.js?v=2" defer></script>
 </body>
 </html>

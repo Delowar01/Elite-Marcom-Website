@@ -23,6 +23,7 @@
     category: document.getElementById("give-category"),
     brand: document.getElementById("give-brand"),
     color: document.getElementById("give-color"),
+    minstock: document.getElementById("give-minstock"),
     sort: document.getElementById("give-sort"),
     flags: document.getElementById("give-flags"),
     activeFilters: document.getElementById("give-active-filters"),
@@ -180,6 +181,7 @@
     var cat = els.category ? els.category.value : "";
     var brand = els.brand ? els.brand.value : "";
     var color = els.color ? els.color.value : "";
+    var minStock = els.minstock ? Math.max(0, parseInt(els.minstock.value, 10) || 0) : 0;
     var out = products.filter(function (p) {
       if (q) {
         var hay = (p.name + " " + p.code + " " + (p.brand || "") + " " + (p.description || "") + " " +
@@ -194,6 +196,7 @@
       if (flags.luxury && !p.luxury) return false;
       if (flags.ramadan && !p.ramadan) return false;
       if (flags["in-stock"] && !(p.stock && p.stock.available > 0)) return false;
+      if (minStock > 0 && !(p.stock && p.stock.available >= minStock)) return false;
       if (flags.incoming && !(p.stock && p.stock.incoming > 0)) return false;
       return true;
     });
@@ -211,6 +214,7 @@
     if (els.category && els.category.value) n++;
     if (els.brand && els.brand.value) n++;
     if (els.color && els.color.value) n++;
+    if (els.minstock && parseInt(els.minstock.value, 10) > 0) n++;
     Object.keys(flags).forEach(function (k) { if (flags[k]) n++; });
     return n;
   }
@@ -224,6 +228,10 @@
     return { cls: "availability--out", label: "Out of stock" };
   }
 
+  function productUrl(p) {
+    return "/product.html?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(p.id);
+  }
+
   function cardHtml(p) {
     var av = availability(p);
     var inReq = findRequest(p.id);
@@ -232,13 +240,17 @@
     if (p.categories && p.categories.length) badges += '<span class="chip">' + EM.escapeHtml(p.categories[0]) + "</span>";
     if (p.isNew) badges += '<span class="chip chip--violet">New</span>';
     if (p.sustainable) badges += '<span class="chip chip--orange">Sustainable</span>';
+    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []));
+    var slides = imgs.map(function (src, i) {
+      return '<img src="' + EM.escapeHtml(src) + '" alt="" loading="lazy" width="480" height="480"' + (i > 0 ? ' draggable="false"' : "") + ">";
+    }).join("");
     return (
-      '<div class="product-card__media">' +
-        (p.image ? '<img src="' + EM.escapeHtml(p.image) + '" alt="" loading="lazy" width="400" height="300">' : "") +
+      '<div class="product-card__media carousel">' +
+        '<div class="carousel__track">' + slides + "</div>" +
         '<div class="product-card__badges">' + badges + "</div>" +
       "</div>" +
       '<div class="product-card__body">' +
-        '<span class="product-card__code">' + EM.escapeHtml(p.code) + " · " + market.toUpperCase() + "</span>" +
+        '<span class="product-card__code"><span>' + EM.escapeHtml(p.code) + "</span><span>" + market.toUpperCase() + "</span></span>" +
         '<h3 class="product-card__name">' + EM.escapeHtml(p.name) + "</h3>" +
         '<span class="product-card__meta">' + EM.escapeHtml([p.brand, p.color].filter(Boolean).join(" · ")) + "</span>" +
         '<span class="availability ' + av.cls + '">' + EM.escapeHtml(av.label) + "</span>" +
@@ -251,7 +263,6 @@
               "</div>" +
               '<button class="btn btn--primary btn--small" type="button" data-add>' + (inReq ? "Update request" : "Add request") + "</button>"
             : '<button class="btn btn--violet btn--small" type="button" data-notify>Notify when available</button>') +
-          '<button class="btn btn--ghost btn--small" type="button" data-details>View details</button>' +
         "</div>" +
       "</div>");
   }
@@ -265,8 +276,24 @@
       var card = document.createElement("article");
       card.className = "product-card";
       card.setAttribute("data-id", p.id);
+      card.setAttribute("role", "link");
+      card.setAttribute("tabindex", "0");
+      card.setAttribute("aria-label", p.name + " — open product page");
       card.innerHTML = cardHtml(p);
       bindCard(card, p);
+      /* the whole card opens the product page — except its own controls */
+      card.addEventListener("click", function (e) {
+        if (e.target.closest("button, input, a, .qty-control, .carousel__dots")) return;
+        location.href = productUrl(p);
+      });
+      card.addEventListener("keydown", function (e) {
+        if ((e.key === "Enter" || e.key === " ") && e.target === card) {
+          e.preventDefault();
+          location.href = productUrl(p);
+        }
+      });
+      var mediaEl = card.querySelector(".product-card__media");
+      if (mediaEl && EM.carousel) EM.carousel(mediaEl);
       grid.appendChild(card);
     });
     if (els.count) els.count.textContent = list.length + " product" + (list.length === 1 ? "" : "s");
@@ -303,8 +330,6 @@
       addToRequest(p, clampQty(qtyInput, max));
       addBtn.textContent = "Update request";
     });
-    var detBtn = card.querySelector("[data-details]");
-    if (detBtn) detBtn.addEventListener("click", function () { openDetail(p); });
     var notBtn = card.querySelector("[data-notify]");
     if (notBtn) notBtn.addEventListener("click", function () { openNotify(p); });
   }
@@ -347,6 +372,10 @@
     clearTimeout(searchTimer);
     searchTimer = setTimeout(function () { visibleLimit = BATCH; render(); }, 220);
   });
+  if (els.minstock) els.minstock.addEventListener("input", function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(function () { visibleLimit = BATCH; render(); }, 220);
+  });
   [els.category, els.brand, els.color, els.sort].forEach(function (sel) {
     if (sel) sel.addEventListener("change", function () { visibleLimit = BATCH; render(); });
   });
@@ -362,6 +391,7 @@
   if (els.clear) els.clear.addEventListener("click", function () {
     if (els.search) els.search.value = "";
     [els.category, els.brand, els.color].forEach(function (s) { if (s) s.value = ""; });
+    if (els.minstock) els.minstock.value = "";
     flags = {};
     if (els.flags) els.flags.querySelectorAll("[data-flag]").forEach(function (c) { c.setAttribute("aria-pressed", "false"); });
     visibleLimit = BATCH;
@@ -376,74 +406,6 @@
       });
     });
   });
-
-  /* ---------- detail drawer ---------- */
-  var detailDrawer = EM.drawer(document.getElementById("give-detail-drawer"), document.getElementById("give-detail-scrim"));
-  var detailBody = document.getElementById("give-detail-body");
-
-  function openDetail(p) {
-    var av = availability(p);
-    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : [])).slice(0, 5);
-    var gallery = imgs.map(function (src, i) {
-      return '<figure class="media-frame" style="aspect-ratio:4/3;margin-bottom:10px;"><img src="' + EM.escapeHtml(src) + '" alt="' + EM.escapeHtml(p.name) + ' — image ' + (i + 1) + '" loading="lazy"></figure>';
-    }).join("");
-    var facts = [];
-    if (p.unitsPerCarton) facts.push(["Units per carton", p.unitsPerCarton]);
-    if (p.cartonDimensions) facts.push(["Carton dimensions", p.cartonDimensions]);
-    if (p.cartonWeight) facts.push(["Carton weight", p.cartonWeight]);
-    if (p.hsCode) facts.push(["HS code", p.hsCode]);
-    var factsHtml = facts.length
-      ? '<dl class="case__facts">' + facts.map(function (f) {
-          return "<div><dt>" + EM.escapeHtml(String(f[0])) + "</dt><dd>" + EM.escapeHtml(String(f[1])) + "</dd></div>";
-        }).join("") + "</dl>"
-      : "";
-    var canOrder = p.stock && p.stock.available > 0;
-    var inReq = findRequest(p.id);
-    detailBody.innerHTML =
-      gallery +
-      '<span class="product-card__code">' + EM.escapeHtml(p.code) + " · " + market.toUpperCase() + "</span>" +
-      "<h3 style=\"margin:6px 0 8px;\">" + EM.escapeHtml(p.name) + "</h3>" +
-      (p.brand ? '<p class="text-muted" style="margin:0 0 6px;">' + EM.escapeHtml(p.brand) + "</p>" : "") +
-      '<span class="availability ' + av.cls + '">' + EM.escapeHtml(av.label) + "</span>" +
-      (p.description ? "<p style=\"margin-top:14px;\">" + EM.escapeHtml(p.description) + "</p>" : "") +
-      ((p.tags || []).length ? '<p style="display:flex;flex-wrap:wrap;gap:6px;">' + p.tags.slice(0, 8).map(function (t) {
-        return '<span class="chip">' + EM.escapeHtml(t) + "</span>";
-      }).join("") + "</p>" : "") +
-      ((p.categories || []).length ? '<p class="text-muted" style="font-size:0.85rem;">Categories: ' + EM.escapeHtml(p.categories.join(", ")) + "</p>" : "") +
-      ((p.options || []).length ? '<p class="text-muted" style="font-size:0.85rem;">Options: ' + EM.escapeHtml(p.options.join(", ")) + "</p>" : "") +
-      factsHtml +
-      '<div id="give-branding-slot"><p class="text-muted" style="font-size:0.85rem;">Checking branding options…</p></div>' +
-      '<div class="product-card__actions" style="margin-top:18px;">' +
-        (canOrder
-          ? '<div class="qty-control" aria-label="Quantity">' +
-              '<button type="button" data-qty-minus aria-label="Decrease quantity">−</button>' +
-              '<input type="number" inputmode="numeric" value="' + (inReq ? inReq.qty : 1) + '" min="1" max="' + p.stock.available + '" aria-label="Requested quantity">' +
-              '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
-            "</div>" +
-            '<button class="btn btn--primary btn--small" type="button" data-add>' + (inReq ? "Update request" : "Add request") + "</button>"
-          : '<button class="btn btn--violet btn--small" type="button" data-notify>Notify when available</button>') +
-      "</div>";
-    bindCard(detailBody, p);
-    detailDrawer.open();
-
-    /* branding details — only for a product already known in this market's catalog */
-    EM.api("/api/giveaways/branding?country=" + market + "&product_id=" + encodeURIComponent(p.id)).then(function (r) {
-      var slot = document.getElementById("give-branding-slot");
-      if (!slot) return;
-      if (r.ok && r.data && Array.isArray(r.data.branding) && r.data.branding.length) {
-        slot.innerHTML = "<h4 style=\"margin:16px 0 8px;\">Branding options</h4><ul class=\"service-points\">" +
-          r.data.branding.map(function (b) {
-            var bits = [b.area, b.method, b.dimensions].filter(Boolean).map(String).map(EM.escapeHtml);
-            return "<li>" + bits.join(" · ") + "</li>";
-          }).join("") + "</ul>";
-      } else {
-        slot.innerHTML = '<p class="text-muted" style="font-size:0.85rem;">Branding recommendations are provided with your proposal.</p>';
-      }
-    }).catch(function () {
-      var slot = document.getElementById("give-branding-slot");
-      if (slot) slot.innerHTML = '<p class="text-muted" style="font-size:0.85rem;">Branding recommendations are provided with your proposal.</p>';
-    });
-  }
 
   /* ---------- request drawer ---------- */
   var requestDrawer = EM.drawer(document.getElementById("give-request-drawer"), document.getElementById("give-request-scrim"));

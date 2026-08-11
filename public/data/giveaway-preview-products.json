@@ -20,7 +20,9 @@
       "options": [],
       "image": "/assets/services/gift-hoodie.webp",
       "images": [
-        "/assets/services/gift-hoodie.webp"
+        "/assets/services/gift-hoodie.webp",
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-collection.webp"
       ],
       "sequence": 8,
       "isNew": true,
@@ -36,7 +38,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-bag-ksa",
@@ -56,7 +59,8 @@
       "options": [],
       "image": "/assets/services/gift-bag.webp",
       "images": [
-        "/assets/services/gift-bag.webp"
+        "/assets/services/gift-bag.webp",
+        "/assets/services/gift-collection.webp"
       ],
       "sequence": 7,
       "isNew": false,
@@ -72,7 +76,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-cap-ksa",
@@ -92,7 +97,9 @@
       "options": [],
       "image": "/assets/services/gift-cap.webp",
       "images": [
-        "/assets/services/gift-cap.webp"
+        "/assets/services/gift-cap.webp",
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-bag.webp"
       ],
       "sequence": 6,
       "isNew": true,
@@ -108,7 +115,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-desk-set-ksa",
@@ -129,7 +137,9 @@
       "options": [],
       "image": "/assets/portfolio/branded-collection.webp",
       "images": [
-        "/assets/portfolio/branded-collection.webp"
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-collection.webp",
+        "/assets/services/gift-bag.webp"
       ],
       "sequence": 5,
       "isNew": false,
@@ -145,7 +155,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-eco-notebook-ksa",
@@ -166,7 +177,8 @@
       "options": [],
       "image": "/assets/services/gift-collection.webp",
       "images": [
-        "/assets/services/gift-collection.webp"
+        "/assets/services/gift-collection.webp",
+        "/assets/portfolio/branded-collection.webp"
       ],
       "sequence": 4,
       "isNew": false,
@@ -182,7 +194,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-ramadan-box-ksa",
@@ -203,7 +216,8 @@
       "options": [],
       "image": "/assets/about/hospitality-catering.webp",
       "images": [
-        "/assets/about/hospitality-catering.webp"
+        "/assets/about/hospitality-catering.webp",
+        "/assets/services/gift-bag.webp"
       ],
       "sequence": 3,
       "isNew": false,
@@ -219,7 +233,8 @@
         "blocked": 0,
         "incoming": 150,
         "incomingDate": "2026-09-15"
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-drinkware-ksa",
@@ -240,7 +255,9 @@
       "options": [],
       "image": "/assets/services/gift-collection.webp",
       "images": [
-        "/assets/services/gift-collection.webp"
+        "/assets/services/gift-collection.webp",
+        "/assets/services/gift-cap.webp",
+        "/assets/services/gift-hoodie.webp"
       ],
       "sequence": 2,
       "isNew": true,
@@ -256,7 +273,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-tech-kit-ksa",
@@ -277,7 +295,8 @@
       "options": [],
       "image": "/assets/portfolio/branded-collection.webp",
       "images": [
-        "/assets/portfolio/branded-collection.webp"
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-collection.webp"
       ],
       "sequence": 1,
       "isNew": true,
@@ -293,7 +312,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-hoodie-uae",
@@ -314,7 +334,9 @@
       "options": [],
       "image": "/assets/services/gift-hoodie.webp",
       "images": [
-        "/assets/services/gift-hoodie.webp"
+        "/assets/services/gift-hoodie.webp",
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-collection.webp"
       ],
       "sequence": 8,
       "isNew": true,
@@ -330,7 +352,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-bag-uae",
@@ -350,7 +373,8 @@
       "options": [],
       "image": "/assets/services/gift-bag.webp",
       "images": [
-        "/assets/services/gift-bag.webp"
+        "/assets/services/gift-bag.webp",
+        "/assets/services/gift-collection.webp"
       ],
       "sequence": 7,
       "isNew": false,
@@ -366,7 +390,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-cap-uae",
@@ -386,7 +411,9 @@
       "options": [],
       "image": "/assets/services/gift-cap.webp",
       "images": [
-        "/assets/services/gift-cap.webp"
+        "/assets/services/gift-cap.webp",
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-bag.webp"
       ],
       "sequence": 6,
       "isNew": true,
@@ -402,7 +429,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-desk-set-uae",
@@ -423,7 +451,9 @@
       "options": [],
       "image": "/assets/portfolio/branded-collection.webp",
       "images": [
-        "/assets/portfolio/branded-collection.webp"
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-collection.webp",
+        "/assets/services/gift-bag.webp"
       ],
       "sequence": 5,
       "isNew": false,
@@ -439,7 +469,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-eco-notebook-uae",
@@ -460,7 +491,8 @@
       "options": [],
       "image": "/assets/services/gift-collection.webp",
       "images": [
-        "/assets/services/gift-collection.webp"
+        "/assets/services/gift-collection.webp",
+        "/assets/portfolio/branded-collection.webp"
       ],
       "sequence": 4,
       "isNew": false,
@@ -476,7 +508,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-ramadan-box-uae",
@@ -497,7 +530,8 @@
       "options": [],
       "image": "/assets/about/hospitality-catering.webp",
       "images": [
-        "/assets/about/hospitality-catering.webp"
+        "/assets/about/hospitality-catering.webp",
+        "/assets/services/gift-bag.webp"
       ],
       "sequence": 3,
       "isNew": false,
@@ -513,7 +547,8 @@
         "blocked": 0,
         "incoming": 150,
         "incomingDate": "2026-09-15"
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-drinkware-uae",
@@ -534,7 +569,9 @@
       "options": [],
       "image": "/assets/services/gift-collection.webp",
       "images": [
-        "/assets/services/gift-collection.webp"
+        "/assets/services/gift-collection.webp",
+        "/assets/services/gift-cap.webp",
+        "/assets/services/gift-hoodie.webp"
       ],
       "sequence": 2,
       "isNew": true,
@@ -550,7 +587,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     },
     {
       "id": "prev-tech-kit-uae",
@@ -571,7 +609,8 @@
       "options": [],
       "image": "/assets/portfolio/branded-collection.webp",
       "images": [
-        "/assets/portfolio/branded-collection.webp"
+        "/assets/portfolio/branded-collection.webp",
+        "/assets/services/gift-collection.webp"
       ],
       "sequence": 1,
       "isNew": true,
@@ -587,7 +626,8 @@
         "blocked": 0,
         "incoming": 0,
         "incomingDate": null
-      }
+      },
+      "printingManual": null
     }
   ]
 }

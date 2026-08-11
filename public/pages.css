@@ -310,3 +310,129 @@
   border: 1px solid var(--border); background: var(--surface);
   backdrop-filter: blur(16px);
 }
+
+/* ============================================================
+   Corporate Gifts — catalog & product page
+   ============================================================ */
+
+/* ---------- image carousel ---------- */
+.carousel { position: relative; overflow: hidden; }
+.carousel__track {
+  display: flex; width: 100%; height: 100%;
+  overflow-x: auto; scroll-snap-type: x mandatory;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.carousel__track::-webkit-scrollbar { display: none; }
+.carousel__track > img {
+  flex: 0 0 100%; width: 100%; height: 100%;
+  object-fit: cover; scroll-snap-align: start;
+}
+.carousel__btn {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; line-height: 1; padding-bottom: 3px;
+  background: var(--surface-strong); color: var(--text);
+  border: 1px solid var(--border-strong);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-1);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-1) linear, transform var(--dur-1) var(--ease-out);
+  z-index: 3;
+}
+.carousel__btn--prev { left: 10px; }
+.carousel__btn--next { right: 10px; }
+.carousel:hover .carousel__btn, .carousel:focus-within .carousel__btn {
+  opacity: 1; pointer-events: auto;
+}
+@media (hover: none) { .carousel__btn { opacity: 0.85; pointer-events: auto; } }
+.carousel__btn:hover { transform: translateY(-50%) scale(1.08); }
+.carousel__dots {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+  display: flex; gap: 6px; z-index: 3;
+}
+.carousel__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform var(--dur-1) var(--ease-out), background-color var(--dur-1) linear;
+}
+.carousel__dot.is-active { background: var(--orange-2); transform: scale(1.25); }
+
+/* ---------- gifts catalog: 3 wide cards per row ---------- */
+.catalog-grid--gifts { grid-template-columns: repeat(3, 1fr); gap: 28px; }
+@media (max-width: 1100px) { .catalog-grid--gifts { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .catalog-grid--gifts { grid-template-columns: 1fr; } }
+
+.catalog-grid--gifts .product-card { cursor: pointer; }
+.catalog-grid--gifts .product-card__media { aspect-ratio: 1 / 1; }
+.catalog-grid--gifts .product-card__body { padding: 20px 22px 22px; gap: 10px; }
+.catalog-grid--gifts .product-card__name { font-size: 1.18rem; }
+.catalog-grid--gifts .product-card__code { display: flex; justify-content: space-between; align-items: center; }
+.catalog-grid--gifts .product-card__actions { padding-top: 12px; border-top: 1px solid var(--border); }
+.catalog-grid--gifts .product-card__actions .qty-control { margin-right: auto; }
+
+/* min-stock input */
+.minstock-field {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  padding: 0 12px; background: var(--surface);
+}
+.minstock-field label { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.minstock-field input {
+  width: 74px; border: 0; background: transparent; color: var(--text);
+  font: inherit; font-size: max(16px, 0.95em); padding: 11px 0;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.minstock-field input::-webkit-outer-spin-button,
+.minstock-field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* ---------- gifts contact highlight ---------- */
+.gifts-contact {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 20px 30px;
+  margin-top: 40px; padding: clamp(24px, 3.5vw, 40px);
+  border-radius: 26px; position: relative; overflow: hidden;
+  border: 1px solid var(--border-strong);
+  background:
+    radial-gradient(120% 160% at 0% 0%, rgba(237, 108, 38, 0.16), transparent 55%),
+    radial-gradient(120% 160% at 100% 100%, rgba(116, 103, 199, 0.18), transparent 55%),
+    var(--surface);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.gifts-contact::before {
+  content: ""; position: absolute; inset: 0 0 auto; height: 3px;
+  background: var(--grad-brand);
+}
+.gifts-contact__copy { flex: 1 1 340px; }
+.gifts-contact__copy h2 { margin-bottom: 8px; font-size: clamp(1.3rem, 1.1rem + 1vw, 1.8rem); }
+.gifts-contact__copy p { margin: 0; color: var(--text-muted); max-width: 52ch; }
+.gifts-contact__actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* ---------- product detail page ---------- */
+.pdp { display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(28px, 4vw, 64px); align-items: start; }
+@media (max-width: 900px) { .pdp { grid-template-columns: 1fr; } }
+.pdp__gallery { position: sticky; top: 120px; }
+@media (max-width: 900px) { .pdp__gallery { position: static; } }
+.pdp__gallery .carousel {
+  border-radius: 24px; border: 1px solid var(--border);
+  background: var(--panel-2); aspect-ratio: 1 / 1;
+}
+.pdp__gallery .carousel__btn { width: 44px; height: 44px; font-size: 1.6rem; }
+.pdp__thumbs { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.pdp__thumbs button {
+  width: 72px; height: 72px; border-radius: 12px; overflow: hidden;
+  border: 2px solid transparent; padding: 0; background: var(--panel-2);
+  transition: border-color var(--dur-1) linear;
+}
+.pdp__thumbs button img { width: 100%; height: 100%; object-fit: cover; }
+.pdp__thumbs button.is-active, .pdp__thumbs button:hover { border-color: var(--orange-2); }
+.pdp__meta-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.pdp h1 { font-size: clamp(1.7rem, 1.3rem + 1.6vw, 2.6rem); margin-bottom: 10px; }
+.pdp__facts { margin: 22px 0; }
+.pdp__section { border-top: 1px solid var(--border); padding-top: 20px; margin-top: 22px; }
+.pdp__section h2 { font-size: 1.1rem; margin-bottom: 12px; }
+.pdp__actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 24px; }
+.pdp__back { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-muted); margin-bottom: 26px; }
+.pdp__back:hover { color: var(--orange-2); }
+.btn--manual { gap: 10px; }
+.btn--manual svg { width: 17px; height: 17px; }

@@ -57,24 +57,29 @@ async def _fetch(url: str, expected_host: str) -> tuple[bytes, str]:
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != expected_host or parsed.port not in (None, 443):
         raise SupplierUnavailable("blocked upstream url")
-    async with httpx.AsyncClient(
-        timeout=config.SUPPLIER_TIMEOUT_S,
-        follow_redirects=False,   # no redirects
-        trust_env=False,          # no environment proxy inheritance
-    ) as client:
-        async with client.stream("GET", url) as res:
-            if res.status_code != 200:
-                raise SupplierUnavailable(f"upstream {res.status_code}")
-            ctype = res.headers.get("content-type", "").split(";")[0].strip().lower()
-            if ctype and ctype not in ALLOWED_CONTENT_TYPES:
-                raise SupplierUnavailable(f"unexpected content type {ctype}")
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in res.aiter_bytes():
-                total += len(chunk)
-                if total > config.SUPPLIER_MAX_BYTES:
-                    raise SupplierUnavailable("upstream response too large")
-                chunks.append(chunk)
+    try:
+        async with httpx.AsyncClient(
+            timeout=config.SUPPLIER_TIMEOUT_S,
+            follow_redirects=False,   # no redirects
+            trust_env=False,          # no environment proxy inheritance
+        ) as client:
+            async with client.stream("GET", url) as res:
+                if res.status_code != 200:
+                    raise SupplierUnavailable(f"upstream {res.status_code}")
+                ctype = res.headers.get("content-type", "").split(";")[0].strip().lower()
+                if ctype and ctype not in ALLOWED_CONTENT_TYPES:
+                    raise SupplierUnavailable(f"unexpected content type {ctype}")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in res.aiter_bytes():
+                    total += len(chunk)
+                    if total > config.SUPPLIER_MAX_BYTES:
+                        raise SupplierUnavailable("upstream response too large")
+                    chunks.append(chunk)
+    except SupplierUnavailable:
+        raise
+    except Exception as exc:  # network/TLS/protocol failures → controlled unavailability
+        raise SupplierUnavailable(f"transport: {exc.__class__.__name__}") from exc
     return b"".join(chunks), ctype
 
 
@@ -177,19 +182,29 @@ def _list(rec: dict, *keys: str) -> list[str]:
     return []
 
 
-def _safe_image(url: str, host: str) -> str:
-    """Only https URLs from the matching approved supplier host."""
+# base domains whose https subdomains may serve product imagery / documents
+_SUPPLIER_DOMAINS = ("giftsksa.com", "jasani.ae")
+
+
+def _safe_supplier_url(url: str) -> str:
+    """Only https URLs on an approved supplier domain (or its subdomains)."""
     if not url:
         return ""
     try:
         p = urllib.parse.urlsplit(url.strip())
     except ValueError:
         return ""
-    if p.scheme != "https" or p.hostname != host or p.port not in (None, 443):
+    hostname = p.hostname or ""
+    allowed = any(hostname == d or hostname.endswith("." + d) for d in _SUPPLIER_DOMAINS)
+    if p.scheme != "https" or not allowed or p.port not in (None, 443):
         return ""
     if p.username or p.password or p.fragment:
         return ""
-    return urllib.parse.urlunsplit(("https", host, p.path, p.query, ""))
+    return urllib.parse.urlunsplit(("https", hostname, p.path, p.query, ""))
+
+
+def _safe_image(url: str, host: str) -> str:
+    return _safe_supplier_url(url)
 
 
 def normalize_product(rec: dict, market: str) -> dict | None:
@@ -208,7 +223,12 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             v = _s(rec, key)
             if v:
                 images.append(v)
-        images = [u for u in (_safe_image(u, host) for u in images) if u][:5]
+        images = [u for u in (_safe_image(u, host) for u in images) if u][:12]
+        # de-duplicate while preserving order
+        seen_imgs: set[str] = set()
+        images = [u for u in images if not (u in seen_imgs or seen_imgs.add(u))]
+        manual = _safe_supplier_url(_s(rec, "printing_manual", "printingManual", "manual",
+                                       "manual_url", "branding_manual", "pdf", "pdf_url"))
         tags = _list(rec, "tags", "collections", "labels")
         cats = _list(rec, "categories", "category", "product_category")
         lower = " ".join(tags + cats).lower()
@@ -229,6 +249,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "options": _list(rec, "options", "variants", "attributes"),
             "image": images[0] if images else "",
             "images": images,
+            "printingManual": manual or None,
             "sequence": _i(rec, "sequence", "sort_order", "newness"),
             "isNew": bool(re.search(r"\bnew\b", lower)) or _i(rec, "is_new") == 1,
             "sustainable": "sustain" in lower or "eco" in lower or "recycl" in lower,

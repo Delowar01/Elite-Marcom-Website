@@ -42,7 +42,7 @@ MAX_BODY_BYTES = 8 * 1024 * 1024  # generous cap; CV endpoint enforces 5 MB on t
 
 # ---------------- security headers ----------------
 
-_SUPPLIER_IMG = " ".join(f"https://{h}" for h in config.JASANI_HOSTS.values())
+_SUPPLIER_IMG = "https://*.giftsksa.com https://giftsksa.com https://*.jasani.ae https://jasani.ae"
 CSP = (
     "default-src 'self'; "
     "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com; "
