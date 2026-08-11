@@ -469,13 +469,25 @@ def test_jasani_normalizes_real_odoo_record():
         "brand": "",
         "categories": [],
         "carton_weight": 14.200000000000001,
+        "carton_volume": 0.05400000001,
         "qty_available": "36",
+        "website_sequence": 7,
+        "brand_id": [3, "Giftology"],
+        "product_template_attribute_value_ids": [{"display_name": "Size: M"}, {"display_name": "Color: Grey"}],
+        "color_options": [4822, 4823],
         "image": "https://www.jasani.ae/web/image/product.product/4821/image_1024?unique=abc123",
+        "images": ["https://www.jasani.ae/web/image/product.image/91/image_1024",
+                   "https://www.jasani.ae/web/image/product.product/4821/image_1024?unique=abc123"],
     }
     p = jasani.normalize_product(rec, "ksa")
     assert p is not None
     assert p["id"] == "4821"
     assert p["code"] == "LAM-PEN-01"
+    assert p["brand"] == "Giftology"
+    assert p["options"] == ["Size: M", "Color: Grey"]
+    assert p["cartonVolume"] == "0.054"
+    assert p["sequence"] == 7
+    assert p["_colorOptionIds"] == ["4822", "4823"]
     assert p["color"] == ""          # Odoo false must not surface as "False"
     assert p["barcode"] == ""
     assert p["hsCode"] == ""
@@ -483,7 +495,24 @@ def test_jasani_normalizes_real_odoo_record():
     assert p["cartonWeight"] == "14.2"
     assert p["stock"]["available"] == 36
     assert "metal pen" in p["description"] and "<b>" not in p["description"]
-    assert p["images"] == ["https://www.jasani.ae/web/image/product.product/4821/image_1024?unique=abc123"]
+    # primary image first, additional images after, duplicates removed
+    assert p["images"] == ["https://www.jasani.ae/web/image/product.product/4821/image_1024?unique=abc123",
+                           "https://www.jasani.ae/web/image/product.image/91/image_1024"]
+
+
+def test_jasani_resolves_color_options_against_catalog():
+    from server import jasani
+
+    mk = lambda i, color: jasani.normalize_product(
+        {"id": i, "code": "C" + i, "name": "Mug " + color, "color": color,
+         "color_options": [int(j) for j in ("1", "2", "3") if j != i],
+         "image": "https://www.giftsksa.com/img/" + i + ".jpg"}, "ksa")
+    products = [mk("1", "Red"), mk("2", "Blue")]  # id 3 not in catalog
+    jasani._resolve_color_options(products)
+    assert "_colorOptionIds" not in products[0]
+    assert [o["id"] for o in products[0]["colorOptions"]] == ["2"]
+    assert products[0]["colorOptions"][0]["color"] == "Blue"
+    assert [o["id"] for o in products[1]["colorOptions"]] == ["1"]
 
 
 def test_jasani_stock_merge_matches_on_any_identifier():

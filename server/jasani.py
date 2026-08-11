@@ -203,7 +203,7 @@ def _clean_description(raw: str) -> str:
     return text.strip()[:2500]
 
 
-def _weight(rec: dict, *keys: str) -> str:
+def _weight(rec: dict, *keys: str, ndigits: int = 2) -> str:
     """Weight-ish numeric strings: trim float artifacts like 14.200000000000001."""
     raw = _s(rec, *keys)
     m = re.match(r"^(-?\d+(?:\.\d+)?)(.*)$", raw)
@@ -215,15 +215,73 @@ def _weight(rec: dict, *keys: str) -> str:
         return raw[:40]
     if num <= 0:
         return ""
-    trimmed = f"{num:.2f}".rstrip("0").rstrip(".")
+    trimmed = f"{num:.{ndigits}f}".rstrip("0").rstrip(".")
     return (trimmed + m.group(2))[:40]
+
+
+def _rel_names(v: Any) -> list[str]:
+    """Display names from Odoo relational values: [id, "Name"] pairs, lists of
+    {display_name/name} dicts, or plain strings. Bare ids carry no name."""
+    if v is None or isinstance(v, bool):
+        return []
+    if isinstance(v, str):
+        s = v.strip()
+        return [s] if s and s.lower() not in _EMPTY_MARKERS else []
+    if isinstance(v, dict):
+        for k in ("display_name", "name"):
+            n = v.get(k)
+            if isinstance(n, str) and n.strip():
+                return [n.strip()]
+        return []
+    if isinstance(v, (list, tuple)):
+        # a single many2one pair: [3, "Giftology"]
+        if len(v) == 2 and isinstance(v[0], (int, float)) and isinstance(v[1], str):
+            return [v[1].strip()] if v[1].strip() else []
+        out: list[str] = []
+        for item in v:
+            out.extend(_rel_names(item))
+        return out[:20]
+    return []
+
+
+def _rel_ids(v: Any) -> list[str]:
+    """Record ids from Odoo relational values: ints, [id, name] pairs, or {id: ...} dicts."""
+    if v is None or isinstance(v, bool):
+        return []
+    if isinstance(v, (int, float)):
+        return [str(int(v))]
+    if isinstance(v, str):
+        return [p.strip() for p in re.split(r"[|;,]", v) if p.strip().isdigit()]
+    if isinstance(v, dict):
+        i = v.get("id")
+        return [str(int(i))] if isinstance(i, (int, float)) and not isinstance(i, bool) else []
+    if isinstance(v, (list, tuple)):
+        if len(v) == 2 and isinstance(v[0], (int, float)) and isinstance(v[1], str):
+            return [str(int(v[0]))]
+        out: list[str] = []
+        for item in v:
+            out.extend(_rel_ids(item))
+        return out[:20]
+    return []
 
 
 def _list(rec: dict, *keys: str) -> list[str]:
     for k in keys:
         v = rec.get(k)
         if isinstance(v, list):
-            return [str(x).strip() for x in v if str(x).strip()][:20]
+            out: list[str] = []
+            for x in v:
+                if isinstance(x, dict):  # e.g. {"url": ...} or {"display_name": ...}
+                    for dk in ("url", "image_url", "src", "href", "display_name", "name"):
+                        dv = x.get(dk)
+                        if isinstance(dv, str) and dv.strip():
+                            out.append(dv.strip())
+                            break
+                elif isinstance(x, (str, int, float)) and not isinstance(x, bool):
+                    s = str(x).strip()
+                    if s and s.lower() not in _EMPTY_MARKERS:
+                        out.append(s)
+            return out[:20]
         if isinstance(v, str) and v.strip():
             return [p.strip() for p in re.split(r"[|;,]", v) if p.strip()][:20]
     return []
@@ -264,13 +322,14 @@ def normalize_product(rec: dict, market: str) -> dict | None:
         if not (pid or code) or not name:
             return None
         host = config.JASANI_HOSTS[market]
+        # primary image first (image_url), then the additional images array
         images = []
-        for key in ("images", "image_urls", "gallery"):
-            images.extend(_list(rec, key))
         for key in ("image", "image_url", "main_image", "thumbnail"):
             v = _s(rec, key)
             if v:
                 images.append(v)
+        for key in ("images", "image_urls", "gallery", "additional_images", "extra_images"):
+            images.extend(_list(rec, key))
         images = [u for u in (_safe_image(u, host) for u in images) if u][:12]
         # de-duplicate while preserving order
         seen_imgs: set[str] = set()
@@ -280,6 +339,13 @@ def normalize_product(rec: dict, market: str) -> dict | None:
         tags = _list(rec, "tags", "collections", "labels")
         cats = _list(rec, "categories", "category", "product_category")
         lower = " ".join(tags + cats).lower()
+        brand = _s(rec, "brand", "brand_name") or " / ".join(_rel_names(rec.get("brand_id")))
+        # garment size / colour variants, e.g. [{"display_name": "Size: M"}, ...]
+        options = _list(rec, "options", "variants", "attributes")
+        options.extend(_rel_names(rec.get("product_template_attribute_value_ids")
+                                  or rec.get("producttemplateattributevalueids")))
+        seen_opts: set[str] = set()
+        options = [o for o in options if not (o in seen_opts or seen_opts.add(o))][:20]
         # net_available_qty is Jasani's guaranteed-sellable quantity; the rest
         # are fallbacks seen in other payload variants
         available = max(0, _i(rec, "net_available_qty", "net_stock", "available_stock", "stock",
@@ -292,7 +358,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "code": code or pid,
             "barcode": _s(rec, "barcode", "ean")[:40],
             "name": name[:200],
-            "brand": _s(rec, "brand", "brand_name")[:100],
+            "brand": brand[:100],
             "description": _clean_description(_s(
                 rec, "description", "product_description", "description_sale",
                 "website_description", "long_description", "web_description",
@@ -302,11 +368,13 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "tags": tags,
             "market": market,
             "color": _s(rec, "color", "colour")[:60],
-            "options": _list(rec, "options", "variants", "attributes"),
+            "options": options,
             "image": images[0] if images else "",
             "images": images,
             "printingManual": manual or None,
-            "sequence": _i(rec, "sequence", "sort_order", "newness"),
+            # alternative-colour product ids, resolved against the catalog later
+            "_colorOptionIds": _rel_ids(rec.get("color_options") or rec.get("coloroptions")),
+            "sequence": _i(rec, "website_sequence", "sequence", "sort_order", "newness"),
             "isNew": bool(re.search(r"\bnew\b", lower)) or _i(rec, "is_new") == 1,
             "sustainable": "sustain" in lower or "eco" in lower or "recycl" in lower,
             "luxury": "lux" in lower or "premium" in lower,
@@ -315,6 +383,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "unitsPerCarton": _i(rec, "units_per_carton", "carton_qty") or None,
             "cartonDimensions": _s(rec, "carton_dimensions", "carton_size")[:80] or None,
             "cartonWeight": _weight(rec, "carton_weight", "carton_weight_kg") or None,
+            "cartonVolume": _weight(rec, "carton_volume", "carton_cbm", ndigits=3) or None,
             "stock": {
                 "available": available,
                 "blocked": blocked,
@@ -381,12 +450,27 @@ def _write_cache(market: str, products: list[dict]) -> None:
         pass
 
 
+def _resolve_color_options(products: list[dict]) -> None:
+    """Replace raw color_options ids with public references to catalog siblings."""
+    by_id = {p["id"]: p for p in products}
+    for p in products:
+        ids = p.pop("_colorOptionIds", []) or []
+        opts = []
+        for cid in ids:
+            alt = by_id.get(cid)
+            if alt and alt["id"] != p["id"]:
+                opts.append({"id": alt["id"], "name": alt["name"],
+                             "color": alt["color"], "image": alt["image"]})
+        p["colorOptions"] = opts[:12]
+
+
 async def _fetch_catalog(market: str) -> list[dict]:
     host = _host(market)
     token = _token()
     raw, ctype = await _fetch(f"https://{host}/products/all/{token}", host)
     records = _parse_records(raw, ctype)[: config.SUPPLIER_MAX_RECORDS]
     products = [p for p in (normalize_product(r, market) for r in records) if p]
+    _resolve_color_options(products)
     try:
         raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{token}", host)
         stock_records = _parse_records(raw_s, ctype_s)[: config.SUPPLIER_MAX_RECORDS]

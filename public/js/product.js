@@ -27,7 +27,10 @@
     availability: document.getElementById("pdp-availability"),
     description: document.getElementById("pdp-description"),
     descSection: document.getElementById("pdp-desc-section"),
-    facts: document.getElementById("pdp-facts"),
+    specs: document.getElementById("pdp-specs"),
+    specsSection: document.getElementById("pdp-specs-section"),
+    colors: document.getElementById("pdp-colors"),
+    colorsSection: document.getElementById("pdp-colors-section"),
     brandingSection: document.getElementById("pdp-branding-section"),
     branding: document.getElementById("pdp-branding"),
     actions: document.getElementById("pdp-actions"),
@@ -111,6 +114,11 @@
              (i > 0 ? ' loading="lazy"' : "") + ' width="800" height="800">';
     }).join("");
     EM.carousel(els.carousel);
+    lbImages = imgs;
+    els.track.querySelectorAll("img").forEach(function (img, i) {
+      img.classList.add("pdp__zoomable");
+      img.addEventListener("click", function () { lbOpen(i); });
+    });
     if (imgs.length > 1) {
       els.thumbs.innerHTML = imgs.map(function (src, i) {
         return '<button type="button" class="' + (i === 0 ? "is-active" : "") + '" aria-label="Show image ' + (i + 1) + '">' +
@@ -148,17 +156,52 @@
       els.descSection.hidden = true;
     }
 
-    var facts = [];
-    if (p.color) facts.push(["Colour", p.color]);
-    if (p.options && p.options.length) facts.push(["Options", p.options.join(", ")]);
-    if (p.unitsPerCarton) facts.push(["Units per carton", p.unitsPerCarton]);
-    if (p.cartonDimensions) facts.push(["Carton dimensions", p.cartonDimensions]);
-    if (p.cartonWeight) facts.push(["Carton weight", p.cartonWeight]);
-    if (p.hsCode) facts.push(["HS code", p.hsCode]);
-    if (p.categories && p.categories.length > 1) facts.push(["Categories", p.categories.join(", ")]);
-    els.facts.innerHTML = facts.map(function (f) {
-      return "<div><dt>" + EM.escapeHtml(String(f[0])) + "</dt><dd>" + EM.escapeHtml(String(f[1])) + "</dd></div>";
-    }).join("");
+    /* alternative colours — sibling products resolved server-side */
+    if (p.colorOptions && p.colorOptions.length) {
+      els.colors.innerHTML = p.colorOptions.map(function (o) {
+        return '<a class="pdp__color" href="/product.html?country=' + encodeURIComponent(market) +
+               "&id=" + encodeURIComponent(o.id) + '" title="' + EM.escapeHtml(o.name) + '">' +
+               (o.image ? '<img src="' + EM.escapeHtml(o.image) + '" alt="' + EM.escapeHtml(o.name) + '" loading="lazy" width="64" height="64">' : "") +
+               (o.color ? "<span>" + EM.escapeHtml(o.color) + "</span>" : "") +
+               "</a>";
+      }).join("");
+      els.colorsSection.hidden = false;
+    } else {
+      els.colorsSection.hidden = true;
+    }
+
+    /* specifications — grouped like the supplier's spec sheet */
+    function specRows(rows) {
+      return rows.map(function (f) {
+        return '<div class="spec-table__row"><span class="spec-table__label">' + EM.escapeHtml(String(f[0])) +
+               '</span><span class="spec-table__value">' + EM.escapeHtml(String(f[1])) + "</span></div>";
+      }).join("");
+    }
+    var productRows = [];
+    if (p.brand) productRows.push(["Brand", p.brand]);
+    if (p.color) productRows.push(["Colour", p.color]);
+    /* merge repeated option labels: "Size: S", "Size: M" → one "Size" row */
+    var optValues = {}, optOrder = [];
+    (p.options || []).forEach(function (o) {
+      var m = /^([^:]{1,40}):\s*(.+)$/.exec(String(o));
+      var label = m ? m[1].trim() : "Option";
+      var value = m ? m[2].trim() : String(o);
+      if (!optValues[label]) { optValues[label] = []; optOrder.push(label); }
+      if (optValues[label].indexOf(value) === -1) optValues[label].push(value);
+    });
+    optOrder.forEach(function (label) { productRows.push([label, optValues[label].join(", ")]); });
+    if (p.hsCode) productRows.push(["HS / Commodity code", p.hsCode]);
+    if (p.categories && p.categories.length > 1) productRows.push(["Categories", p.categories.join(", ")]);
+    var packRows = [];
+    if (p.cartonDimensions) packRows.push(["Carton dimensions", p.cartonDimensions + (/[a-z]/i.test(p.cartonDimensions) ? "" : " cm")]);
+    if (p.unitsPerCarton) packRows.push(["Qty per carton", p.unitsPerCarton + " pcs / carton"]);
+    if (p.cartonWeight) packRows.push(["Carton gross weight", p.cartonWeight + (/[a-z]/i.test(p.cartonWeight) ? "" : " kgs / carton")]);
+    if (p.cartonVolume) packRows.push(["Carton volume", p.cartonVolume + (/[a-z³]/i.test(p.cartonVolume) ? "" : " m³")]);
+    var specsHtml = "";
+    if (productRows.length) specsHtml += '<div class="spec-table__group">Product</div>' + specRows(productRows);
+    if (packRows.length) specsHtml += '<div class="spec-table__group">Packing</div>' + specRows(packRows);
+    els.specs.innerHTML = specsHtml;
+    els.specsSection.hidden = !specsHtml;
 
     /* actions: qty + add, or notify; printing manual when the supplier provides it */
     var canOrder = p.stock && p.stock.available > 0;
@@ -213,6 +256,73 @@
     els.loading.hidden = true;
     els.loading.style.display = "none";
     els.missing.hidden = false;
+  }
+
+  /* ---------- fullscreen viewer: swipe, thumbnails, zoom ---------- */
+  var lbImages = [];
+  var lb = {
+    root: document.getElementById("pdp-lightbox"),
+    track: document.getElementById("pdp-lightbox-track"),
+    count: document.getElementById("pdp-lightbox-count"),
+    close: document.querySelector("#pdp-lightbox .lightbox__close"),
+    prev: document.querySelector("#pdp-lightbox .lightbox__nav--prev"),
+    next: document.querySelector("#pdp-lightbox .lightbox__nav--next"),
+    zoom: document.querySelector("#pdp-lightbox .lightbox__zoom")
+  };
+
+  function lbIndex() {
+    return Math.max(0, Math.min(lbImages.length - 1,
+      Math.round(lb.track.scrollLeft / Math.max(1, lb.track.clientWidth))));
+  }
+  function lbUpdate() {
+    if (lb.count) lb.count.textContent = (lbIndex() + 1) + " / " + lbImages.length;
+  }
+  function lbOpen(i) {
+    if (!lb.root || !lbImages.length) return;
+    lb.track.innerHTML = lbImages.map(function (src, k) {
+      return '<div class="lightbox__slide"><img src="' + EM.escapeHtml(src) + '" alt="Product image ' + (k + 1) + '" draggable="false"></div>';
+    }).join("");
+    lb.root.hidden = false;
+    document.body.style.overflow = "hidden";
+    var multi = lbImages.length > 1;
+    if (lb.prev) lb.prev.hidden = !multi;
+    if (lb.next) lb.next.hidden = !multi;
+    lb.track.querySelectorAll("img").forEach(function (img) {
+      img.addEventListener("click", function (e) { e.stopPropagation(); img.classList.toggle("is-zoomed"); });
+    });
+    lb.track.querySelectorAll(".lightbox__slide").forEach(function (slide) {
+      slide.addEventListener("click", function (e) { if (e.target === slide) lbClose(); });
+    });
+    lb.track.scrollTo({ left: i * lb.track.clientWidth, behavior: "auto" });
+    lbUpdate();
+    if (lb.close) lb.close.focus();
+  }
+  function lbClose() {
+    if (!lb.root || lb.root.hidden) return;
+    lb.root.hidden = true;
+    document.body.style.overflow = "";
+    lb.track.innerHTML = "";
+  }
+  function lbGo(delta) {
+    var i = Math.max(0, Math.min(lbImages.length - 1, lbIndex() + delta));
+    lb.track.scrollTo({ left: i * lb.track.clientWidth, behavior: EM.reducedMotion() ? "auto" : "smooth" });
+  }
+  if (lb.root) {
+    lb.close.addEventListener("click", lbClose);
+    lb.prev.addEventListener("click", function () { lbGo(-1); });
+    lb.next.addEventListener("click", function () { lbGo(1); });
+    lb.zoom.addEventListener("click", function () {
+      var slide = lb.track.querySelectorAll(".lightbox__slide")[lbIndex()];
+      var img = slide && slide.querySelector("img");
+      if (img) img.classList.toggle("is-zoomed");
+    });
+    lb.track.addEventListener("scroll", lbUpdate, { passive: true });
+    document.addEventListener("keydown", function (e) {
+      if (lb.root.hidden) return;
+      if (e.key === "Escape") { e.preventDefault(); lbClose(); }
+      else if (e.key === "ArrowLeft") lbGo(-1);
+      else if (e.key === "ArrowRight") lbGo(1);
+    });
   }
 
   /* ---------- availability notification ---------- */

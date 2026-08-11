@@ -1,633 +1,701 @@
 {
-  "state": "preview",
-  "products": [
+ "state": "preview",
+ "products": [
+  {
+   "id": "prev-hoodie-ksa",
+   "code": "EM-G-101",
+   "barcode": "",
+   "name": "Signature Orange Hoodie",
+   "brand": "Elite Collection",
+   "description": "Heavyweight cotton-blend hoodie with embroidered brand mark — a giveaway people actually wear.",
+   "categories": [
+    "Apparel"
+   ],
+   "tags": [
+    "new",
+    "premium"
+   ],
+   "market": "ksa",
+   "color": "Orange",
+   "options": [
+    "Size: S",
+    "Size: M",
+    "Size: L",
+    "Size: XL"
+   ],
+   "image": "/assets/services/gift-hoodie.webp",
+   "images": [
+    "/assets/services/gift-hoodie.webp",
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 8,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "61101190",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 320,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [
     {
-      "id": "prev-hoodie-ksa",
-      "code": "EM-G-101",
-      "barcode": "",
-      "name": "Signature Orange Hoodie",
-      "brand": "Elite Collection",
-      "description": "Heavyweight cotton-blend hoodie with embroidered brand mark — a giveaway people actually wear.",
-      "categories": [
-        "Apparel"
-      ],
-      "tags": [
-        "new",
-        "premium"
-      ],
-      "market": "ksa",
-      "color": "Orange",
-      "options": [],
-      "image": "/assets/services/gift-hoodie.webp",
-      "images": [
-        "/assets/services/gift-hoodie.webp",
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-collection.webp"
-      ],
-      "sequence": 8,
-      "isNew": true,
-      "sustainable": false,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 320,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
+     "id": "prev-cap-ksa",
+     "name": "Two-Tone Cap",
+     "color": "Navy",
+     "image": "/assets/services/gift-cap.webp"
     },
     {
-      "id": "prev-bag-ksa",
-      "code": "EM-G-102",
-      "barcode": "",
-      "name": "Executive Gift Bag",
-      "brand": "Elite Collection",
-      "description": "Rigid laminated gift bag with rope handles — the presentation layer for premium gifting programs.",
-      "categories": [
-        "Packaging"
-      ],
-      "tags": [
-        "luxury"
-      ],
-      "market": "ksa",
-      "color": "Navy",
-      "options": [],
-      "image": "/assets/services/gift-bag.webp",
-      "images": [
-        "/assets/services/gift-bag.webp",
-        "/assets/services/gift-collection.webp"
-      ],
-      "sequence": 7,
-      "isNew": false,
-      "sustainable": false,
-      "luxury": true,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 800,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-cap-ksa",
-      "code": "EM-G-103",
-      "barcode": "",
-      "name": "Two-Tone Cap",
-      "brand": "Elite Collection",
-      "description": "Structured six-panel cap in brand two-tone with adjustable strap — embroidery-ready front panel.",
-      "categories": [
-        "Apparel"
-      ],
-      "tags": [
-        "new"
-      ],
-      "market": "ksa",
-      "color": "Navy / Orange",
-      "options": [],
-      "image": "/assets/services/gift-cap.webp",
-      "images": [
-        "/assets/services/gift-cap.webp",
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-bag.webp"
-      ],
-      "sequence": 6,
-      "isNew": true,
-      "sustainable": false,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 540,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-desk-set-ksa",
-      "code": "EM-G-104",
-      "barcode": "",
-      "name": "Branded Desk Collection",
-      "brand": "Elite Collection",
-      "description": "A coordinated desk set — notebook, bottle, tech accessories and organiser — delivered as one branded suite.",
-      "categories": [
-        "Office & Desk"
-      ],
-      "tags": [
-        "luxury",
-        "premium"
-      ],
-      "market": "ksa",
-      "color": "Orange",
-      "options": [],
-      "image": "/assets/portfolio/branded-collection.webp",
-      "images": [
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-collection.webp",
-        "/assets/services/gift-bag.webp"
-      ],
-      "sequence": 5,
-      "isNew": false,
-      "sustainable": false,
-      "luxury": true,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 150,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-eco-notebook-ksa",
-      "code": "EM-G-105",
-      "barcode": "",
-      "name": "Recycled Notebook & Pen",
-      "brand": "EcoLine",
-      "description": "A5 notebook with recycled paper and kraft cover, paired with a recycled-material pen.",
-      "categories": [
-        "Office & Desk"
-      ],
-      "tags": [
-        "sustainable",
-        "eco"
-      ],
-      "market": "ksa",
-      "color": "Kraft",
-      "options": [],
-      "image": "/assets/services/gift-collection.webp",
-      "images": [
-        "/assets/services/gift-collection.webp",
-        "/assets/portfolio/branded-collection.webp"
-      ],
-      "sequence": 4,
-      "isNew": false,
-      "sustainable": true,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 1200,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-ramadan-box-ksa",
-      "code": "EM-G-106",
-      "barcode": "",
-      "name": "Ramadan Gift Box",
-      "brand": "Elite Collection",
-      "description": "A curated Ramadan gifting box — dates, artisanal sweets and a personalised card in premium packaging.",
-      "categories": [
-        "Seasonal"
-      ],
-      "tags": [
-        "ramadan",
-        "luxury"
-      ],
-      "market": "ksa",
-      "color": "Gold",
-      "options": [],
-      "image": "/assets/about/hospitality-catering.webp",
-      "images": [
-        "/assets/about/hospitality-catering.webp",
-        "/assets/services/gift-bag.webp"
-      ],
-      "sequence": 3,
-      "isNew": false,
-      "sustainable": false,
-      "luxury": true,
-      "ramadan": true,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 0,
-        "blocked": 0,
-        "incoming": 150,
-        "incomingDate": "2026-09-15"
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-drinkware-ksa",
-      "code": "EM-G-107",
-      "barcode": "",
-      "name": "Thermal Travel Tumbler",
-      "brand": "EcoLine",
-      "description": "Double-wall stainless tumbler that keeps drinks hot for six hours — laser engraving recommended.",
-      "categories": [
-        "Drinkware"
-      ],
-      "tags": [
-        "sustainable",
-        "new"
-      ],
-      "market": "ksa",
-      "color": "Steel",
-      "options": [],
-      "image": "/assets/services/gift-collection.webp",
-      "images": [
-        "/assets/services/gift-collection.webp",
-        "/assets/services/gift-cap.webp",
-        "/assets/services/gift-hoodie.webp"
-      ],
-      "sequence": 2,
-      "isNew": true,
-      "sustainable": true,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 950,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-tech-kit-ksa",
-      "code": "EM-G-108",
-      "barcode": "",
-      "name": "Wireless Charging Desk Kit",
-      "brand": "TechLine",
-      "description": "Wireless charger, cable set and stand in a single branded kit — the giveaway that stays on the desk.",
-      "categories": [
-        "Technology"
-      ],
-      "tags": [
-        "premium",
-        "new"
-      ],
-      "market": "ksa",
-      "color": "Black",
-      "options": [],
-      "image": "/assets/portfolio/branded-collection.webp",
-      "images": [
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-collection.webp"
-      ],
-      "sequence": 1,
-      "isNew": true,
-      "sustainable": false,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 75,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-hoodie-uae",
-      "code": "EM-G-101",
-      "barcode": "",
-      "name": "Signature Orange Hoodie",
-      "brand": "Elite Collection",
-      "description": "Heavyweight cotton-blend hoodie with embroidered brand mark — a giveaway people actually wear.",
-      "categories": [
-        "Apparel"
-      ],
-      "tags": [
-        "new",
-        "premium"
-      ],
-      "market": "uae",
-      "color": "Orange",
-      "options": [],
-      "image": "/assets/services/gift-hoodie.webp",
-      "images": [
-        "/assets/services/gift-hoodie.webp",
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-collection.webp"
-      ],
-      "sequence": 8,
-      "isNew": true,
-      "sustainable": false,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 320,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-bag-uae",
-      "code": "EM-G-102",
-      "barcode": "",
-      "name": "Executive Gift Bag",
-      "brand": "Elite Collection",
-      "description": "Rigid laminated gift bag with rope handles — the presentation layer for premium gifting programs.",
-      "categories": [
-        "Packaging"
-      ],
-      "tags": [
-        "luxury"
-      ],
-      "market": "uae",
-      "color": "Navy",
-      "options": [],
-      "image": "/assets/services/gift-bag.webp",
-      "images": [
-        "/assets/services/gift-bag.webp",
-        "/assets/services/gift-collection.webp"
-      ],
-      "sequence": 7,
-      "isNew": false,
-      "sustainable": false,
-      "luxury": true,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 800,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-cap-uae",
-      "code": "EM-G-103",
-      "barcode": "",
-      "name": "Two-Tone Cap",
-      "brand": "Elite Collection",
-      "description": "Structured six-panel cap in brand two-tone with adjustable strap — embroidery-ready front panel.",
-      "categories": [
-        "Apparel"
-      ],
-      "tags": [
-        "new"
-      ],
-      "market": "uae",
-      "color": "Navy / Orange",
-      "options": [],
-      "image": "/assets/services/gift-cap.webp",
-      "images": [
-        "/assets/services/gift-cap.webp",
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-bag.webp"
-      ],
-      "sequence": 6,
-      "isNew": true,
-      "sustainable": false,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 540,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-desk-set-uae",
-      "code": "EM-G-104",
-      "barcode": "",
-      "name": "Branded Desk Collection",
-      "brand": "Elite Collection",
-      "description": "A coordinated desk set — notebook, bottle, tech accessories and organiser — delivered as one branded suite.",
-      "categories": [
-        "Office & Desk"
-      ],
-      "tags": [
-        "luxury",
-        "premium"
-      ],
-      "market": "uae",
-      "color": "Orange",
-      "options": [],
-      "image": "/assets/portfolio/branded-collection.webp",
-      "images": [
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-collection.webp",
-        "/assets/services/gift-bag.webp"
-      ],
-      "sequence": 5,
-      "isNew": false,
-      "sustainable": false,
-      "luxury": true,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 150,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-eco-notebook-uae",
-      "code": "EM-G-105",
-      "barcode": "",
-      "name": "Recycled Notebook & Pen",
-      "brand": "EcoLine",
-      "description": "A5 notebook with recycled paper and kraft cover, paired with a recycled-material pen.",
-      "categories": [
-        "Office & Desk"
-      ],
-      "tags": [
-        "sustainable",
-        "eco"
-      ],
-      "market": "uae",
-      "color": "Kraft",
-      "options": [],
-      "image": "/assets/services/gift-collection.webp",
-      "images": [
-        "/assets/services/gift-collection.webp",
-        "/assets/portfolio/branded-collection.webp"
-      ],
-      "sequence": 4,
-      "isNew": false,
-      "sustainable": true,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 1200,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-ramadan-box-uae",
-      "code": "EM-G-106",
-      "barcode": "",
-      "name": "Ramadan Gift Box",
-      "brand": "Elite Collection",
-      "description": "A curated Ramadan gifting box — dates, artisanal sweets and a personalised card in premium packaging.",
-      "categories": [
-        "Seasonal"
-      ],
-      "tags": [
-        "ramadan",
-        "luxury"
-      ],
-      "market": "uae",
-      "color": "Gold",
-      "options": [],
-      "image": "/assets/about/hospitality-catering.webp",
-      "images": [
-        "/assets/about/hospitality-catering.webp",
-        "/assets/services/gift-bag.webp"
-      ],
-      "sequence": 3,
-      "isNew": false,
-      "sustainable": false,
-      "luxury": true,
-      "ramadan": true,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 0,
-        "blocked": 0,
-        "incoming": 150,
-        "incomingDate": "2026-09-15"
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-drinkware-uae",
-      "code": "EM-G-107",
-      "barcode": "",
-      "name": "Thermal Travel Tumbler",
-      "brand": "EcoLine",
-      "description": "Double-wall stainless tumbler that keeps drinks hot for six hours — laser engraving recommended.",
-      "categories": [
-        "Drinkware"
-      ],
-      "tags": [
-        "sustainable",
-        "new"
-      ],
-      "market": "uae",
-      "color": "Steel",
-      "options": [],
-      "image": "/assets/services/gift-collection.webp",
-      "images": [
-        "/assets/services/gift-collection.webp",
-        "/assets/services/gift-cap.webp",
-        "/assets/services/gift-hoodie.webp"
-      ],
-      "sequence": 2,
-      "isNew": true,
-      "sustainable": true,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 950,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
-    },
-    {
-      "id": "prev-tech-kit-uae",
-      "code": "EM-G-108",
-      "barcode": "",
-      "name": "Wireless Charging Desk Kit",
-      "brand": "TechLine",
-      "description": "Wireless charger, cable set and stand in a single branded kit — the giveaway that stays on the desk.",
-      "categories": [
-        "Technology"
-      ],
-      "tags": [
-        "premium",
-        "new"
-      ],
-      "market": "uae",
-      "color": "Black",
-      "options": [],
-      "image": "/assets/portfolio/branded-collection.webp",
-      "images": [
-        "/assets/portfolio/branded-collection.webp",
-        "/assets/services/gift-collection.webp"
-      ],
-      "sequence": 1,
-      "isNew": true,
-      "sustainable": false,
-      "luxury": false,
-      "ramadan": false,
-      "hsCode": "",
-      "unitsPerCarton": 25,
-      "cartonDimensions": "60 × 40 × 40 cm",
-      "cartonWeight": "12 kg",
-      "stock": {
-        "available": 75,
-        "blocked": 0,
-        "incoming": 0,
-        "incomingDate": null
-      },
-      "printingManual": null
+     "id": "prev-bag-ksa",
+     "name": "Executive Gift Bag",
+     "color": "Sand",
+     "image": "/assets/services/gift-bag.webp"
     }
-  ]
+   ],
+   "cartonVolume": "0.096"
+  },
+  {
+   "id": "prev-bag-ksa",
+   "code": "EM-G-102",
+   "barcode": "",
+   "name": "Executive Gift Bag",
+   "brand": "Elite Collection",
+   "description": "Rigid laminated gift bag with rope handles — the presentation layer for premium gifting programs.",
+   "categories": [
+    "Packaging"
+   ],
+   "tags": [
+    "luxury"
+   ],
+   "market": "ksa",
+   "color": "Navy",
+   "options": [],
+   "image": "/assets/services/gift-bag.webp",
+   "images": [
+    "/assets/services/gift-bag.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 7,
+   "isNew": false,
+   "sustainable": false,
+   "luxury": true,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 800,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-cap-ksa",
+   "code": "EM-G-103",
+   "barcode": "",
+   "name": "Two-Tone Cap",
+   "brand": "Elite Collection",
+   "description": "Structured six-panel cap in brand two-tone with adjustable strap — embroidery-ready front panel.",
+   "categories": [
+    "Apparel"
+   ],
+   "tags": [
+    "new"
+   ],
+   "market": "ksa",
+   "color": "Navy / Orange",
+   "options": [],
+   "image": "/assets/services/gift-cap.webp",
+   "images": [
+    "/assets/services/gift-cap.webp",
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-bag.webp"
+   ],
+   "sequence": 6,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 540,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-desk-set-ksa",
+   "code": "EM-G-104",
+   "barcode": "",
+   "name": "Branded Desk Collection",
+   "brand": "Elite Collection",
+   "description": "A coordinated desk set — notebook, bottle, tech accessories and organiser — delivered as one branded suite.",
+   "categories": [
+    "Office & Desk"
+   ],
+   "tags": [
+    "luxury",
+    "premium"
+   ],
+   "market": "ksa",
+   "color": "Orange",
+   "options": [],
+   "image": "/assets/portfolio/branded-collection.webp",
+   "images": [
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp",
+    "/assets/services/gift-bag.webp"
+   ],
+   "sequence": 5,
+   "isNew": false,
+   "sustainable": false,
+   "luxury": true,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 150,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-eco-notebook-ksa",
+   "code": "EM-G-105",
+   "barcode": "",
+   "name": "Recycled Notebook & Pen",
+   "brand": "EcoLine",
+   "description": "A5 notebook with recycled paper and kraft cover, paired with a recycled-material pen.",
+   "categories": [
+    "Office & Desk"
+   ],
+   "tags": [
+    "sustainable",
+    "eco"
+   ],
+   "market": "ksa",
+   "color": "Kraft",
+   "options": [],
+   "image": "/assets/services/gift-collection.webp",
+   "images": [
+    "/assets/services/gift-collection.webp",
+    "/assets/portfolio/branded-collection.webp"
+   ],
+   "sequence": 4,
+   "isNew": false,
+   "sustainable": true,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 1200,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-ramadan-box-ksa",
+   "code": "EM-G-106",
+   "barcode": "",
+   "name": "Ramadan Gift Box",
+   "brand": "Elite Collection",
+   "description": "A curated Ramadan gifting box — dates, artisanal sweets and a personalised card in premium packaging.",
+   "categories": [
+    "Seasonal"
+   ],
+   "tags": [
+    "ramadan",
+    "luxury"
+   ],
+   "market": "ksa",
+   "color": "Gold",
+   "options": [],
+   "image": "/assets/about/hospitality-catering.webp",
+   "images": [
+    "/assets/about/hospitality-catering.webp",
+    "/assets/services/gift-bag.webp"
+   ],
+   "sequence": 3,
+   "isNew": false,
+   "sustainable": false,
+   "luxury": true,
+   "ramadan": true,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 0,
+    "blocked": 0,
+    "incoming": 150,
+    "incomingDate": "2026-09-15"
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-drinkware-ksa",
+   "code": "EM-G-107",
+   "barcode": "",
+   "name": "Thermal Travel Tumbler",
+   "brand": "EcoLine",
+   "description": "Double-wall stainless tumbler that keeps drinks hot for six hours — laser engraving recommended.",
+   "categories": [
+    "Drinkware"
+   ],
+   "tags": [
+    "sustainable",
+    "new"
+   ],
+   "market": "ksa",
+   "color": "Steel",
+   "options": [],
+   "image": "/assets/services/gift-collection.webp",
+   "images": [
+    "/assets/services/gift-collection.webp",
+    "/assets/services/gift-cap.webp",
+    "/assets/services/gift-hoodie.webp"
+   ],
+   "sequence": 2,
+   "isNew": true,
+   "sustainable": true,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 950,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-tech-kit-ksa",
+   "code": "EM-G-108",
+   "barcode": "",
+   "name": "Wireless Charging Desk Kit",
+   "brand": "TechLine",
+   "description": "Wireless charger, cable set and stand in a single branded kit — the giveaway that stays on the desk.",
+   "categories": [
+    "Technology"
+   ],
+   "tags": [
+    "premium",
+    "new"
+   ],
+   "market": "ksa",
+   "color": "Black",
+   "options": [],
+   "image": "/assets/portfolio/branded-collection.webp",
+   "images": [
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 1,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 75,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-hoodie-uae",
+   "code": "EM-G-101",
+   "barcode": "",
+   "name": "Signature Orange Hoodie",
+   "brand": "Elite Collection",
+   "description": "Heavyweight cotton-blend hoodie with embroidered brand mark — a giveaway people actually wear.",
+   "categories": [
+    "Apparel"
+   ],
+   "tags": [
+    "new",
+    "premium"
+   ],
+   "market": "uae",
+   "color": "Orange",
+   "options": [
+    "Size: S",
+    "Size: M",
+    "Size: L",
+    "Size: XL"
+   ],
+   "image": "/assets/services/gift-hoodie.webp",
+   "images": [
+    "/assets/services/gift-hoodie.webp",
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 8,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "61101190",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 320,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [
+    {
+     "id": "prev-cap-uae",
+     "name": "Two-Tone Cap",
+     "color": "Navy",
+     "image": "/assets/services/gift-cap.webp"
+    },
+    {
+     "id": "prev-bag-uae",
+     "name": "Executive Gift Bag",
+     "color": "Sand",
+     "image": "/assets/services/gift-bag.webp"
+    }
+   ],
+   "cartonVolume": "0.096"
+  },
+  {
+   "id": "prev-bag-uae",
+   "code": "EM-G-102",
+   "barcode": "",
+   "name": "Executive Gift Bag",
+   "brand": "Elite Collection",
+   "description": "Rigid laminated gift bag with rope handles — the presentation layer for premium gifting programs.",
+   "categories": [
+    "Packaging"
+   ],
+   "tags": [
+    "luxury"
+   ],
+   "market": "uae",
+   "color": "Navy",
+   "options": [],
+   "image": "/assets/services/gift-bag.webp",
+   "images": [
+    "/assets/services/gift-bag.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 7,
+   "isNew": false,
+   "sustainable": false,
+   "luxury": true,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 800,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-cap-uae",
+   "code": "EM-G-103",
+   "barcode": "",
+   "name": "Two-Tone Cap",
+   "brand": "Elite Collection",
+   "description": "Structured six-panel cap in brand two-tone with adjustable strap — embroidery-ready front panel.",
+   "categories": [
+    "Apparel"
+   ],
+   "tags": [
+    "new"
+   ],
+   "market": "uae",
+   "color": "Navy / Orange",
+   "options": [],
+   "image": "/assets/services/gift-cap.webp",
+   "images": [
+    "/assets/services/gift-cap.webp",
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-bag.webp"
+   ],
+   "sequence": 6,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 540,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-desk-set-uae",
+   "code": "EM-G-104",
+   "barcode": "",
+   "name": "Branded Desk Collection",
+   "brand": "Elite Collection",
+   "description": "A coordinated desk set — notebook, bottle, tech accessories and organiser — delivered as one branded suite.",
+   "categories": [
+    "Office & Desk"
+   ],
+   "tags": [
+    "luxury",
+    "premium"
+   ],
+   "market": "uae",
+   "color": "Orange",
+   "options": [],
+   "image": "/assets/portfolio/branded-collection.webp",
+   "images": [
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp",
+    "/assets/services/gift-bag.webp"
+   ],
+   "sequence": 5,
+   "isNew": false,
+   "sustainable": false,
+   "luxury": true,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 150,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-eco-notebook-uae",
+   "code": "EM-G-105",
+   "barcode": "",
+   "name": "Recycled Notebook & Pen",
+   "brand": "EcoLine",
+   "description": "A5 notebook with recycled paper and kraft cover, paired with a recycled-material pen.",
+   "categories": [
+    "Office & Desk"
+   ],
+   "tags": [
+    "sustainable",
+    "eco"
+   ],
+   "market": "uae",
+   "color": "Kraft",
+   "options": [],
+   "image": "/assets/services/gift-collection.webp",
+   "images": [
+    "/assets/services/gift-collection.webp",
+    "/assets/portfolio/branded-collection.webp"
+   ],
+   "sequence": 4,
+   "isNew": false,
+   "sustainable": true,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 1200,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-ramadan-box-uae",
+   "code": "EM-G-106",
+   "barcode": "",
+   "name": "Ramadan Gift Box",
+   "brand": "Elite Collection",
+   "description": "A curated Ramadan gifting box — dates, artisanal sweets and a personalised card in premium packaging.",
+   "categories": [
+    "Seasonal"
+   ],
+   "tags": [
+    "ramadan",
+    "luxury"
+   ],
+   "market": "uae",
+   "color": "Gold",
+   "options": [],
+   "image": "/assets/about/hospitality-catering.webp",
+   "images": [
+    "/assets/about/hospitality-catering.webp",
+    "/assets/services/gift-bag.webp"
+   ],
+   "sequence": 3,
+   "isNew": false,
+   "sustainable": false,
+   "luxury": true,
+   "ramadan": true,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 0,
+    "blocked": 0,
+    "incoming": 150,
+    "incomingDate": "2026-09-15"
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-drinkware-uae",
+   "code": "EM-G-107",
+   "barcode": "",
+   "name": "Thermal Travel Tumbler",
+   "brand": "EcoLine",
+   "description": "Double-wall stainless tumbler that keeps drinks hot for six hours — laser engraving recommended.",
+   "categories": [
+    "Drinkware"
+   ],
+   "tags": [
+    "sustainable",
+    "new"
+   ],
+   "market": "uae",
+   "color": "Steel",
+   "options": [],
+   "image": "/assets/services/gift-collection.webp",
+   "images": [
+    "/assets/services/gift-collection.webp",
+    "/assets/services/gift-cap.webp",
+    "/assets/services/gift-hoodie.webp"
+   ],
+   "sequence": 2,
+   "isNew": true,
+   "sustainable": true,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 950,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  },
+  {
+   "id": "prev-tech-kit-uae",
+   "code": "EM-G-108",
+   "barcode": "",
+   "name": "Wireless Charging Desk Kit",
+   "brand": "TechLine",
+   "description": "Wireless charger, cable set and stand in a single branded kit — the giveaway that stays on the desk.",
+   "categories": [
+    "Technology"
+   ],
+   "tags": [
+    "premium",
+    "new"
+   ],
+   "market": "uae",
+   "color": "Black",
+   "options": [],
+   "image": "/assets/portfolio/branded-collection.webp",
+   "images": [
+    "/assets/portfolio/branded-collection.webp",
+    "/assets/services/gift-collection.webp"
+   ],
+   "sequence": 1,
+   "isNew": true,
+   "sustainable": false,
+   "luxury": false,
+   "ramadan": false,
+   "hsCode": "",
+   "unitsPerCarton": 25,
+   "cartonDimensions": "60 × 40 × 40 cm",
+   "cartonWeight": "12 kg",
+   "stock": {
+    "available": 75,
+    "blocked": 0,
+    "incoming": 0,
+    "incomingDate": null
+   },
+   "printingManual": null,
+   "colorOptions": [],
+   "cartonVolume": null
+  }
+ ]
 }

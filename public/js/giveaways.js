@@ -201,7 +201,11 @@
       return true;
     });
     var sort = els.sort ? els.sort.value : "featured";
-    if (sort === "newest") out.sort(function (a, b) { return (b.sequence || 0) - (a.sequence || 0); });
+    /* Featured mirrors the supplier's site: lowest website_sequence first */
+    if (sort === "featured") out.sort(function (a, b) { return (a.sequence || 1e9) - (b.sequence || 1e9); });
+    else if (sort === "newest") out.sort(function (a, b) {
+      return (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0) || (a.sequence || 1e9) - (b.sequence || 1e9);
+    });
     else if (sort === "name-asc") out.sort(function (a, b) { return a.name.localeCompare(b.name); });
     else if (sort === "name-desc") out.sort(function (a, b) { return b.name.localeCompare(a.name); });
     else if (sort === "stock") out.sort(function (a, b) { return ((b.stock && b.stock.available) || 0) - ((a.stock && a.stock.available) || 0); });
@@ -240,13 +244,10 @@
     if (p.categories && p.categories.length) badges += '<span class="chip">' + EM.escapeHtml(p.categories[0]) + "</span>";
     if (p.isNew) badges += '<span class="chip chip--violet">New</span>';
     if (p.sustainable) badges += '<span class="chip chip--orange">Sustainable</span>';
-    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []));
-    var slides = imgs.map(function (src, i) {
-      return '<img src="' + EM.escapeHtml(src) + '" alt="" loading="lazy" width="480" height="480"' + (i > 0 ? ' draggable="false"' : "") + ">";
-    }).join("");
+    /* the card shows the primary image; the full gallery lives on the product page */
     return (
-      '<div class="product-card__media carousel">' +
-        '<div class="carousel__track">' + slides + "</div>" +
+      '<div class="product-card__media">' +
+        (p.image ? '<img src="' + EM.escapeHtml(p.image) + '" alt="" loading="lazy" width="480" height="480">' : "") +
         '<div class="product-card__badges">' + badges + "</div>" +
       "</div>" +
       '<div class="product-card__body">' +
@@ -283,7 +284,7 @@
       bindCard(card, p);
       /* the whole card opens the product page — except its own controls */
       card.addEventListener("click", function (e) {
-        if (e.target.closest("button, input, a, .qty-control, .carousel__dots")) return;
+        if (e.target.closest("button, input, a, .qty-control")) return;
         location.href = productUrl(p);
       });
       card.addEventListener("keydown", function (e) {
@@ -292,8 +293,6 @@
           location.href = productUrl(p);
         }
       });
-      var mediaEl = card.querySelector(".product-card__media");
-      if (mediaEl && EM.carousel) EM.carousel(mediaEl);
       grid.appendChild(card);
     });
     if (els.count) els.count.textContent = list.length + " product" + (list.length === 1 ? "" : "s");

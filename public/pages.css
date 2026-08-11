@@ -439,3 +439,102 @@
 
 /* product description — readable, multi-line supplier text */
 .pdp__desc p { white-space: pre-line; color: var(--text-soft); margin: 0; line-height: 1.75; }
+
+/* ---------- product specifications (grouped spec sheet) ---------- */
+.spec-table {
+  border: 1px solid var(--border); border-radius: 16px; overflow: hidden;
+  background: var(--surface);
+}
+.spec-table__group {
+  padding: 11px 18px; font-size: 0.76rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text); background: var(--panel-2);
+  border-top: 1px solid var(--border);
+}
+.spec-table__group:first-child { border-top: 0; }
+.spec-table__row {
+  display: grid; grid-template-columns: minmax(140px, 38%) 1fr;
+  gap: 14px; padding: 11px 18px; border-top: 1px solid var(--border);
+  font-size: 0.92rem;
+}
+.spec-table__label { color: var(--text-muted); font-weight: 600; }
+.spec-table__value { color: var(--text-soft); overflow-wrap: anywhere; }
+@media (max-width: 460px) {
+  .spec-table__row { grid-template-columns: 1fr; gap: 2px; }
+}
+
+/* ---------- alternative colours ---------- */
+.pdp__colors { display: flex; flex-wrap: wrap; gap: 12px; }
+.pdp__color {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  width: 72px; text-decoration: none;
+}
+.pdp__color img {
+  width: 64px; height: 64px; border-radius: 12px; object-fit: cover;
+  border: 2px solid var(--border-strong); background: var(--panel-2);
+  transition: border-color var(--dur-1) linear, transform var(--dur-1) var(--ease-out);
+}
+.pdp__color:hover img { border-color: var(--orange-2); transform: translateY(-2px); }
+.pdp__color span { font-size: 0.72rem; color: var(--text-muted); text-align: center; line-height: 1.25; }
+
+/* ---------- fullscreen image viewer ---------- */
+.pdp__zoomable { cursor: zoom-in; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 320;
+  background: rgba(6, 8, 12, 0.94);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.lightbox[hidden] { display: none; }
+.lightbox__track {
+  position: absolute; inset: 0;
+  display: flex; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.lightbox__track::-webkit-scrollbar { display: none; }
+.lightbox__slide {
+  flex: 0 0 100%; width: 100%; scroll-snap-align: center;
+  display: flex; overflow: auto; padding: 64px 18px 84px;
+}
+.lightbox__slide img {
+  margin: auto; max-width: min(1100px, 92vw); max-height: 78vh;
+  width: auto; height: auto; object-fit: contain;
+  border-radius: 10px; cursor: zoom-in; user-select: none;
+}
+.lightbox__slide img.is-zoomed {
+  max-width: none; max-height: none; width: 180%;
+  border-radius: 0; cursor: zoom-out;
+}
+.lightbox__close {
+  position: absolute; top: 18px; right: 18px; z-index: 4;
+}
+.lightbox__nav {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
+  width: 46px; height: 46px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem; line-height: 1; padding-bottom: 4px;
+}
+.lightbox__nav--prev { left: 16px; }
+.lightbox__nav--next { right: 16px; }
+.lightbox__bar {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 4;
+  display: flex; align-items: center; gap: 14px;
+  padding: 9px 18px; border-radius: 999px; font-size: 0.85rem;
+}
+/* the viewer backdrop is always dark — force light chrome in both themes */
+.lightbox .lightbox__close, .lightbox__nav, .lightbox__bar {
+  color: #fff; background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.lightbox__nav:hover, .lightbox .lightbox__close:hover { background: rgba(255, 255, 255, 0.2); color: #fff; }
+.lightbox__count { letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+.lightbox__zoom {
+  background: transparent; border: 0; color: #fff; cursor: pointer;
+  font-weight: 700; font-size: 0.75rem; letter-spacing: 0.09em; text-transform: uppercase;
+}
+.lightbox__zoom:hover { color: var(--orange-2); }
+@media (max-width: 640px) {
+  .lightbox__nav { width: 40px; height: 40px; }
+  .lightbox__slide { padding: 56px 10px 76px; }
+}
