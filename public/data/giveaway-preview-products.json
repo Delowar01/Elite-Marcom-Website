@@ -37,7 +37,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 320,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -95,7 +94,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 210,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -153,7 +151,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 0,
-    "blocked": 0,
     "incoming": 60,
     "incomingDate": "2026-09-01"
    },
@@ -211,7 +208,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 45,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -265,7 +261,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 800,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -307,7 +302,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 540,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -350,7 +344,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 150,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -392,7 +385,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 1200,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -434,7 +426,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 0,
-    "blocked": 0,
     "incoming": 150,
     "incomingDate": "2026-09-15"
    },
@@ -477,7 +468,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 950,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -519,7 +509,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 75,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -567,7 +556,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 320,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -621,7 +609,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 800,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -663,7 +650,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 540,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -706,7 +692,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 150,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -748,7 +733,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 1200,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -790,7 +774,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 0,
-    "blocked": 0,
     "incoming": 150,
     "incomingDate": "2026-09-15"
    },
@@ -833,7 +816,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 950,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },
@@ -875,7 +857,6 @@
    "cartonWeight": "12 kg",
    "stock": {
     "available": 75,
-    "blocked": 0,
     "incoming": 0,
     "incomingDate": null
    },

@@ -493,7 +493,11 @@ def test_jasani_normalizes_real_odoo_record():
         "qty_available": "36",
         "website_sequence": 7,
         "brand_id": [3, "Giftology"],
+        "public_categ_ids": [[9, "Writing Instruments"], [12, "Executive Gifts"]],
+        "product_template_tags": [{"display_name": "New Arrivals"}],
         "product_template_attribute_value_ids": [{"display_name": "Size: M"}, {"display_name": "Color: Grey"}],
+        "configurable": False,
+        "parent_id": 4800,
         "color_options": [4822, 4823],
         "image": "https://www.jasani.ae/web/image/product.product/4821/image_1024?unique=abc123",
         "images": ["https://www.jasani.ae/web/image/product.image/91/image_1024",
@@ -504,9 +508,14 @@ def test_jasani_normalizes_real_odoo_record():
     assert p["id"] == "4821"
     assert p["code"] == "LAM-PEN-01"
     assert p["brand"] == "Giftology"
+    assert p["categories"] == ["Writing Instruments", "Executive Gifts"]
+    assert p["tags"] == ["New Arrivals"] and p["isNew"] is True
     assert p["options"] == ["Size: M", "Color: Grey"]
     assert p["cartonVolume"] == "0.054"
     assert p["sequence"] == 7
+    assert p["templateId"] is None  # parent_id only groups when configurable
+    assert p["_parentId"] == "4800"
+    assert "blocked" not in p["stock"]
     assert p["_colorOptionIds"] == ["4822", "4823"]
     assert p["color"] == ""          # Odoo false must not surface as "False"
     assert p["barcode"] == ""
@@ -526,7 +535,8 @@ def test_jasani_flattens_nested_images_array():
 
     rec = {
         "id": 4502, "code": "6311", "name": "XDDESIGN Komo Travel Wallet",
-        "product_tmpl_id": [4400, "XDDESIGN Komo Travel Wallet"],
+        "configurable": True,
+        "parent_id": [4400, "XDDESIGN Komo Travel Wallet"],
         "image_url": "https://www.jasani.ae/web/image/product.product/4502/image_1024",
         "images": [[
             {"id": 1954, "image_url": "https://www.jasani.ae/web/image/product.image/1954/image_1024"},
@@ -545,19 +555,37 @@ def test_jasani_flattens_nested_images_array():
     assert p["image"] == "https://www.jasani.ae/web/image/product.product/4502/image_1024"
 
 
-def test_jasani_resolves_color_options_against_catalog():
+def test_jasani_resolves_color_options_as_template_ids():
+    """color_options carries product TEMPLATE ids (parent_id), not variant ids."""
     from server import jasani
 
-    mk = lambda i, color: jasani.normalize_product(
-        {"id": i, "code": "C" + i, "name": "Mug " + color, "color": color,
-         "color_options": [int(j) for j in ("1", "2", "3") if j != i],
-         "image": "https://www.giftsksa.com/img/" + i + ".jpg"}, "ksa")
-    products = [mk("1", "Red"), mk("2", "Blue")]  # id 3 not in catalog
+    red = jasani.normalize_product(
+        {"id": 1, "code": "C1", "name": "Mug Red", "color": "Red",
+         "parent_id": 10, "color_options": [20, 30],  # 30 is unknown → dropped
+         "image": "https://www.giftsksa.com/img/1.jpg"}, "ksa")
+    blue = jasani.normalize_product(
+        {"id": 2, "code": "C2", "name": "Mug Blue", "color": "Blue",
+         "parent_id": 20, "color_options": [10],
+         "image": "https://www.giftsksa.com/img/2.jpg"}, "ksa")
+    products = [red, blue]
     jasani._resolve_color_options(products)
-    assert "_colorOptionIds" not in products[0]
-    assert [o["id"] for o in products[0]["colorOptions"]] == ["2"]
+    assert "_colorOptionIds" not in products[0] and "_parentId" not in products[0]
+    assert [o["id"] for o in products[0]["colorOptions"]] == ["2"]  # template 20 → variant 2
     assert products[0]["colorOptions"][0]["color"] == "Blue"
     assert [o["id"] for o in products[1]["colorOptions"]] == ["1"]
+
+
+def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):
+    """At most SUPPLIER_DAILY_BUDGET primary calls per UAE day; a 403 parks
+    the budget until the day resets."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
+    assert all(jasani._budget_ok() for _ in range(5))
+    assert jasani._budget_ok() is False
+    jasani._budget_exhaust()
+    assert jasani._budget_ok() is False
 
 
 def test_jasani_stock_merge_matches_on_any_identifier():
@@ -570,8 +598,8 @@ def test_jasani_stock_merge_matches_on_any_identifier():
         {"Default_Code": "SKU-9", "net_available_qty": "120", "total_qty": "200",
          "blocked_qty": "80", "incoming_qty": "40", "incoming_date": False},
     ])
-    assert products[0]["stock"]["available"] == 120
-    assert products[0]["stock"]["blocked"] == 80
+    assert products[0]["stock"]["available"] == 120  # net_available_qty, never total_qty
+    assert "blocked" not in products[0]["stock"]     # blocked_qty stays internal
     assert products[0]["stock"]["incoming"] == 40
     assert products[0]["stock"]["incomingDate"] is None
 
@@ -585,7 +613,7 @@ def test_jasani_cache_roundtrips_non_ascii_names(tmp_path, monkeypatch):
     p = jasani.normalize_product(
         {"id": "77", "code": "OF-1", "name": "Oﬃce Desk Set — Arabic هدية",
          "image": "https://www.giftsksa.com/img/o.jpg"}, "ksa")
-    jasani._write_cache("ksa", [p])
+    jasani._write_cache("ksa", [p], fetched_at=1000, stock_at=1000)
     cached = jasani._read_cache("ksa")
     assert cached and cached["products"][0]["name"] == "Oﬃce Desk Set — Arabic هدية"
 

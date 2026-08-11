@@ -31,8 +31,12 @@ JASANI_HOSTS = {"ksa": "www.giftsksa.com", "uae": "www.jasani.ae"}
 SUPPLIER_TIMEOUT_S = 20.0
 SUPPLIER_MAX_BYTES = 5 * 1024 * 1024
 SUPPLIER_MAX_RECORDS = 5000
-SUPPLIER_DAILY_BUDGET = int(os.environ.get("EM_SUPPLIER_DAILY_BUDGET", "400"))
-CATALOG_REFRESH_MINUTES = 60
+# Jasani documents at most 5 primary GET calls (products/price/stock) per day,
+# measured in UAE time; branding endpoints are documented outside that limit.
+SUPPLIER_DAILY_BUDGET = int(os.environ.get("EM_SUPPLIER_DAILY_BUDGET", "5"))
+# refresh cadence sized to the documented budget: products daily, stock twice daily
+PRODUCT_REFRESH_HOURS = float(os.environ.get("EM_PRODUCT_REFRESH_HOURS", "22"))
+STOCK_REFRESH_HOURS = float(os.environ.get("EM_STOCK_REFRESH_HOURS", "11"))
 BRANDING_CACHE_HOURS = 24
 BRANDING_CACHE_MAX_ENTRIES = 500
 

@@ -488,12 +488,16 @@
   };
 
   /* ---------- corporate gifts: variant grouping ----------
-     The supplier lists every size/colour variant as its own product row.
-     Rows sharing a template id (or, failing that, name + brand) are one
-     product with selectable attributes. */
+     The supplier lists every size/colour variant of a configurable product
+     as its own row sharing a template id (parent_id). Only those group; a
+     name+brand fallback applies solely to garments that carry a Size
+     attribute without a template id. Distinct colour products stay separate
+     — they are linked through colorOptions instead. */
   EM.giftKey = function (p) {
     if (p.templateId) return "t:" + p.templateId;
-    return "n:" + (String(p.name || "") + "|" + String(p.brand || "")).toLowerCase();
+    var hasSize = (p.options || []).some(function (o) { return /^size\s*:/i.test(String(o)); });
+    if (hasSize) return "n:" + (String(p.name || "") + "|" + String(p.brand || "")).toLowerCase();
+    return "v:" + String(p.id);
   };
 
   EM.giftGroups = function (products) {
