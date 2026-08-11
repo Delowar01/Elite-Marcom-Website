@@ -387,9 +387,16 @@ async def _fetch_catalog(market: str) -> list[dict]:
         raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{token}", host)
         stock_records = _parse_records(raw_s, ctype_s)[: config.SUPPLIER_MAX_RECORDS]
         matched = _merge_stock(products, stock_records)
+        in_stock = sum(1 for p in products if p["stock"]["available"] > 0)
         print(f"[jasani] {market}: {len(products)} products, {len(stock_records)} stock rows, "
-              f"{matched} matched, {sum(1 for p in products if p['stock']['available'] > 0)} with stock > 0",
-              flush=True)
+              f"{matched} matched, {in_stock} with stock > 0", flush=True)
+        if stock_records and not in_stock:
+            # every quantity parsed to zero — show the raw row so the actual
+            # field names (or supplier-side zeros) are visible in the console
+            print(f"[jasani] {market} raw stock sample: "
+                  f"{json.dumps(stock_records[0], ensure_ascii=False, default=str)[:400]}", flush=True)
+            print(f"[jasani] {market} sample product codes: "
+                  f"{[p['code'] for p in products[:5]]}", flush=True)
     except SupplierUnavailable as exc:
         # stock merge is best-effort; product payload often carries stock already
         print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
