@@ -452,6 +452,54 @@ def test_jasani_parses_json_and_xml():
     assert norm[0]["image"] == ""  # http image rejected
 
 
+def test_jasani_normalizes_real_odoo_record():
+    """Shape observed in the live KSA feed: boolean false for empty fields,
+    float artifacts in carton weight, Odoo field names, one image per product."""
+    from server import jasani
+
+    rec = {
+        "Id": 4821,
+        "Default_Code": "LAM-PEN-01",
+        "ItemName": "Lamborghini Metal Pen",
+        "description_sale": "Premium <b>metal pen</b> with laser engraving.<br>Gift boxed.",
+        "color": False,
+        "barcode": False,
+        "hs_code": False,
+        "incoming_date": False,
+        "brand": "",
+        "categories": [],
+        "carton_weight": 14.200000000000001,
+        "qty_available": "36",
+        "image": "https://www.jasani.ae/web/image/product.product/4821/image_1024?unique=abc123",
+    }
+    p = jasani.normalize_product(rec, "ksa")
+    assert p is not None
+    assert p["id"] == "4821"
+    assert p["code"] == "LAM-PEN-01"
+    assert p["color"] == ""          # Odoo false must not surface as "False"
+    assert p["barcode"] == ""
+    assert p["hsCode"] == ""
+    assert p["stock"]["incomingDate"] is None
+    assert p["cartonWeight"] == "14.2"
+    assert p["stock"]["available"] == 36
+    assert "metal pen" in p["description"] and "<b>" not in p["description"]
+    assert p["images"] == ["https://www.jasani.ae/web/image/product.product/4821/image_1024?unique=abc123"]
+
+
+def test_jasani_stock_merge_matches_on_any_identifier():
+    from server import jasani
+
+    products = [jasani.normalize_product(
+        {"id": "9", "default_code": "SKU-9", "name": "Notebook",
+         "image": "https://www.giftsksa.com/img/n.jpg"}, "ksa")]
+    jasani._merge_stock(products, [
+        {"Default_Code": "SKU-9", "Free_Qty": "120", "incoming_stock": "40", "incoming_date": False},
+    ])
+    assert products[0]["stock"]["available"] == 120
+    assert products[0]["stock"]["incoming"] == 40
+    assert products[0]["stock"]["incomingDate"] is None
+
+
 def test_jasani_rejects_foreign_image_hosts():
     from server import jasani
 

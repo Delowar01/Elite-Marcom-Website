@@ -165,16 +165,21 @@ def _normalize_keys(rec: dict) -> dict:
     return out
 
 
+# Odoo-style empty markers: the supplier serializes blank fields as boolean
+# false, which some payloads stringify to "False"/"None".
+_EMPTY_MARKERS = frozenset({"false", "none", "null", "n/a", "na", "-"})
+
+
 def _s(rec: dict, *keys: str) -> str:
     for k in keys:
         v = rec.get(k)
         if v is None:
             v = rec.get(k.replace("_", ""))
-        if v is None:
+        if v is None or isinstance(v, bool):
             continue
         if isinstance(v, (str, int, float)):
             s = str(v).strip()
-            if s:
+            if s and s.lower() not in _EMPTY_MARKERS:
                 return s
     return ""
 
@@ -196,6 +201,22 @@ def _clean_description(raw: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n", text)
     return text.strip()[:2500]
+
+
+def _weight(rec: dict, *keys: str) -> str:
+    """Weight-ish numeric strings: trim float artifacts like 14.200000000000001."""
+    raw = _s(rec, *keys)
+    m = re.match(r"^(-?\d+(?:\.\d+)?)(.*)$", raw)
+    if not m:
+        return raw[:40]
+    try:
+        num = float(m.group(1))
+    except ValueError:
+        return raw[:40]
+    if num <= 0:
+        return ""
+    trimmed = f"{num:.2f}".rstrip("0").rstrip(".")
+    return (trimmed + m.group(2))[:40]
 
 
 def _list(rec: dict, *keys: str) -> list[str]:
@@ -238,7 +259,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
     try:
         rec = _normalize_keys(rec)
         pid = _s(rec, "id", "product_id", "internal_id", "item_id", "itemid")
-        code = _s(rec, "code", "product_code", "item_code", "sku", "itemcode", "model")
+        code = _s(rec, "code", "product_code", "item_code", "sku", "default_code", "itemcode", "model")
         name = _s(rec, "name", "product_name", "title", "item_name", "itemname")
         if not (pid or code) or not name:
             return None
@@ -259,7 +280,8 @@ def normalize_product(rec: dict, market: str) -> dict | None:
         tags = _list(rec, "tags", "collections", "labels")
         cats = _list(rec, "categories", "category", "product_category")
         lower = " ".join(tags + cats).lower()
-        available = max(0, _i(rec, "net_stock", "available_stock", "stock", "net_available", "qty_available"))
+        available = max(0, _i(rec, "net_stock", "available_stock", "stock", "net_available",
+                              "qty_available", "free_qty", "available_qty", "quantity_available"))
         blocked = max(0, _i(rec, "blocked_stock", "blocked", "reserved"))
         incoming = max(0, _i(rec, "incoming_stock", "incoming", "expected_stock"))
         return {
@@ -269,9 +291,10 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "name": name[:200],
             "brand": _s(rec, "brand", "brand_name")[:100],
             "description": _clean_description(_s(
-                rec, "description", "product_description", "long_description",
-                "web_description", "item_description", "short_description",
-                "details", "specification", "specifications", "desc")),
+                rec, "description", "product_description", "description_sale",
+                "website_description", "long_description", "web_description",
+                "item_description", "short_description", "details",
+                "specification", "specifications", "desc")),
             "categories": cats,
             "tags": tags,
             "market": market,
@@ -288,7 +311,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "hsCode": _s(rec, "hs_code", "hscode")[:30],
             "unitsPerCarton": _i(rec, "units_per_carton", "carton_qty") or None,
             "cartonDimensions": _s(rec, "carton_dimensions", "carton_size")[:80] or None,
-            "cartonWeight": _s(rec, "carton_weight")[:40] or None,
+            "cartonWeight": _weight(rec, "carton_weight", "carton_weight_kg") or None,
             "stock": {
                 "available": available,
                 "blocked": blocked,
@@ -305,13 +328,18 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> None:
     by_key: dict[str, dict] = {}
     for rec in stock_records:
         rec = _normalize_keys(rec)
-        key = _s(rec, "id", "product_id", "code", "product_code", "sku", "item_code", "itemcode")
-        if key:
-            by_key[key] = rec
+        # a stock row may carry both an id and an item code — index it under every
+        # identifier so products can match on either
+        for key_name in ("id", "product_id", "code", "product_code", "sku",
+                         "default_code", "item_code", "itemcode", "model"):
+            key = _s(rec, key_name)
+            if key:
+                by_key.setdefault(key, rec)
     for p in products:
         rec = by_key.get(p["id"]) or by_key.get(p["code"])
         if rec:
-            p["stock"]["available"] = max(0, _i(rec, "net_stock", "available_stock", "stock", "net_available", "qty_available"))
+            p["stock"]["available"] = max(0, _i(rec, "net_stock", "available_stock", "stock", "net_available",
+                                                "qty_available", "free_qty", "available_qty", "quantity_available"))
             p["stock"]["blocked"] = max(0, _i(rec, "blocked_stock", "blocked", "reserved"))
             p["stock"]["incoming"] = max(0, _i(rec, "incoming_stock", "incoming", "expected_stock"))
             inc = _s(rec, "incoming_date", "expected_date")[:30]
