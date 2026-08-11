@@ -280,10 +280,13 @@ def normalize_product(rec: dict, market: str) -> dict | None:
         tags = _list(rec, "tags", "collections", "labels")
         cats = _list(rec, "categories", "category", "product_category")
         lower = " ".join(tags + cats).lower()
-        available = max(0, _i(rec, "net_stock", "available_stock", "stock", "net_available",
-                              "qty_available", "free_qty", "available_qty", "quantity_available"))
-        blocked = max(0, _i(rec, "blocked_stock", "blocked", "reserved"))
-        incoming = max(0, _i(rec, "incoming_stock", "incoming", "expected_stock"))
+        # net_available_qty is Jasani's guaranteed-sellable quantity; the rest
+        # are fallbacks seen in other payload variants
+        available = max(0, _i(rec, "net_available_qty", "net_stock", "available_stock", "stock",
+                              "net_available", "qty_available", "free_qty", "available_qty",
+                              "quantity_available"))
+        blocked = max(0, _i(rec, "blocked_qty", "blocked_stock", "blocked", "reserved"))
+        incoming = max(0, _i(rec, "incoming_qty", "incoming_stock", "incoming", "expected_stock"))
         return {
             "id": pid or code,
             "code": code or pid,
@@ -341,10 +344,11 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> int:
         rec = by_key.get(p["id"]) or by_key.get(p["code"])
         if rec:
             matched += 1
-            p["stock"]["available"] = max(0, _i(rec, "net_stock", "available_stock", "stock", "net_available",
-                                                "qty_available", "free_qty", "available_qty", "quantity_available"))
-            p["stock"]["blocked"] = max(0, _i(rec, "blocked_stock", "blocked", "reserved"))
-            p["stock"]["incoming"] = max(0, _i(rec, "incoming_stock", "incoming", "expected_stock"))
+            p["stock"]["available"] = max(0, _i(rec, "net_available_qty", "net_stock", "available_stock",
+                                                "stock", "net_available", "qty_available", "free_qty",
+                                                "available_qty", "quantity_available"))
+            p["stock"]["blocked"] = max(0, _i(rec, "blocked_qty", "blocked_stock", "blocked", "reserved"))
+            p["stock"]["incoming"] = max(0, _i(rec, "incoming_qty", "incoming_stock", "incoming", "expected_stock"))
             inc = _s(rec, "incoming_date", "expected_date")[:30]
             if inc:
                 p["stock"]["incomingDate"] = inc

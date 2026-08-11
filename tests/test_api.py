@@ -493,9 +493,11 @@ def test_jasani_stock_merge_matches_on_any_identifier():
         {"id": "9", "default_code": "SKU-9", "name": "Notebook",
          "image": "https://www.giftsksa.com/img/n.jpg"}, "ksa")]
     jasani._merge_stock(products, [
-        {"Default_Code": "SKU-9", "Free_Qty": "120", "incoming_stock": "40", "incoming_date": False},
+        {"Default_Code": "SKU-9", "net_available_qty": "120", "total_qty": "200",
+         "blocked_qty": "80", "incoming_qty": "40", "incoming_date": False},
     ])
     assert products[0]["stock"]["available"] == 120
+    assert products[0]["stock"]["blocked"] == 80
     assert products[0]["stock"]["incoming"] == 40
     assert products[0]["stock"]["incomingDate"] is None
 
