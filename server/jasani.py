@@ -154,9 +154,22 @@ def _parse_records(raw: bytes, ctype: str) -> list[dict]:
     return records
 
 
+def _normalize_keys(rec: dict) -> dict:
+    """Case/format-insensitive access: 'ProductDescription' → 'productdescription',
+    'image-url' → 'image_url' → 'imageurl'. Original values are kept as-is."""
+    out: dict = {}
+    for k, v in rec.items():
+        key = str(k).strip().lower().replace("-", "_")
+        out.setdefault(key, v)
+        out.setdefault(key.replace("_", ""), v)
+    return out
+
+
 def _s(rec: dict, *keys: str) -> str:
     for k in keys:
         v = rec.get(k)
+        if v is None:
+            v = rec.get(k.replace("_", ""))
         if v is None:
             continue
         if isinstance(v, (str, int, float)):
@@ -170,6 +183,19 @@ def _i(rec: dict, *keys: str) -> int:
     raw = _s(rec, *keys)
     m = re.search(r"-?\d+", raw.replace(",", ""))
     return int(m.group()) if m else 0
+
+
+def _clean_description(raw: str) -> str:
+    """Strip markup and entities from supplier descriptions; keep readable text."""
+    import html as _html
+
+    text = re.sub(r"<\s*(br|/p|/li|/div)\s*/?\s*>", "\n", raw, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = _html.unescape(text)
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n", text)
+    return text.strip()[:2500]
 
 
 def _list(rec: dict, *keys: str) -> list[str]:
@@ -210,9 +236,10 @@ def _safe_image(url: str, host: str) -> str:
 def normalize_product(rec: dict, market: str) -> dict | None:
     """Map one supplier record to the public catalog shape (no cost fields)."""
     try:
-        pid = _s(rec, "id", "product_id", "productId", "internal_id", "ItemId")
-        code = _s(rec, "code", "product_code", "item_code", "sku", "ItemCode")
-        name = _s(rec, "name", "product_name", "title", "ItemName")
+        rec = _normalize_keys(rec)
+        pid = _s(rec, "id", "product_id", "internal_id", "item_id", "itemid")
+        code = _s(rec, "code", "product_code", "item_code", "sku", "itemcode", "model")
+        name = _s(rec, "name", "product_name", "title", "item_name", "itemname")
         if not (pid or code) or not name:
             return None
         host = config.JASANI_HOSTS[market]
@@ -241,7 +268,10 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "barcode": _s(rec, "barcode", "ean")[:40],
             "name": name[:200],
             "brand": _s(rec, "brand", "brand_name")[:100],
-            "description": re.sub(r"<[^>]+>", " ", _s(rec, "description", "details"))[:1200].strip(),
+            "description": _clean_description(_s(
+                rec, "description", "product_description", "long_description",
+                "web_description", "item_description", "short_description",
+                "details", "specification", "specifications", "desc")),
             "categories": cats,
             "tags": tags,
             "market": market,
@@ -274,7 +304,8 @@ def normalize_product(rec: dict, market: str) -> dict | None:
 def _merge_stock(products: list[dict], stock_records: list[dict]) -> None:
     by_key: dict[str, dict] = {}
     for rec in stock_records:
-        key = _s(rec, "id", "product_id", "productId", "code", "product_code", "sku", "ItemCode")
+        rec = _normalize_keys(rec)
+        key = _s(rec, "id", "product_id", "code", "product_code", "sku", "item_code", "itemcode")
         if key:
             by_key[key] = rec
     for p in products:
@@ -367,10 +398,11 @@ async def get_branding(market: str, product_id: str) -> list[dict]:
     records = _parse_records(raw, ctype)[:50]
     branding = []
     for rec in records:
+        rec = _normalize_keys(rec)
         entry = {
-            "area": _s(rec, "area", "branding_area", "position")[:120],
-            "method": _s(rec, "method", "branding_method", "technique")[:120],
-            "dimensions": _s(rec, "dimensions", "size", "max_size")[:120],
+            "area": _s(rec, "area", "branding_area", "position", "location")[:120],
+            "method": _s(rec, "method", "branding_method", "technique", "branding_type")[:120],
+            "dimensions": _s(rec, "dimensions", "size", "max_size", "area_size")[:120],
         }
         if any(entry.values()):
             branding.append(entry)

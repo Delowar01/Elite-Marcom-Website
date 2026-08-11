@@ -26,6 +26,7 @@
     code: document.getElementById("pdp-code"),
     availability: document.getElementById("pdp-availability"),
     description: document.getElementById("pdp-description"),
+    descSection: document.getElementById("pdp-desc-section"),
     facts: document.getElementById("pdp-facts"),
     brandingSection: document.getElementById("pdp-branding-section"),
     branding: document.getElementById("pdp-branding"),
@@ -139,7 +140,13 @@
     var av = availability(p);
     els.availability.className = "availability " + av.cls;
     els.availability.textContent = av.label;
-    els.description.textContent = p.description || "";
+    /* description straight from the supplier API — shown whenever it exists */
+    if (p.description) {
+      els.description.textContent = p.description;
+      els.descSection.hidden = false;
+    } else {
+      els.descSection.hidden = true;
+    }
 
     var facts = [];
     if (p.color) facts.push(["Colour", p.color]);

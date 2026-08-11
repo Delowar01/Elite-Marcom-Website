@@ -436,3 +436,6 @@
 .pdp__back:hover { color: var(--orange-2); }
 .btn--manual { gap: 10px; }
 .btn--manual svg { width: 17px; height: 17px; }
+
+/* product description — readable, multi-line supplier text */
+.pdp__desc p { white-space: pre-line; color: var(--text-soft); margin: 0; line-height: 1.75; }
