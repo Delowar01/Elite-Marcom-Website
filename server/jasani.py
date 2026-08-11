@@ -471,6 +471,11 @@ async def _fetch_catalog(market: str) -> list[dict]:
     records = _parse_records(raw, ctype)[: config.SUPPLIER_MAX_RECORDS]
     products = [p for p in (normalize_product(r, market) for r in records) if p]
     _resolve_color_options(products)
+    if products and not any(p["description"] for p in products):
+        # no description in the whole catalog — dump one raw row so the actual
+        # supplier field names are visible in the console
+        print(f"[jasani] {market} no descriptions mapped; raw product sample: "
+              f"{json.dumps(records[0], ensure_ascii=False, default=str)[:600]}", flush=True)
     try:
         raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{token}", host)
         stock_records = _parse_records(raw_s, ctype_s)[: config.SUPPLIER_MAX_RECORDS]
