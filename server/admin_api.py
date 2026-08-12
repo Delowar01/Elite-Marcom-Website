@@ -378,6 +378,187 @@ async def admin_settings_save(request: Request, body: SettingsBody,
     return {"saved": saved}
 
 
+# ---------------- requests inbox (Phase 1) ----------------
+# The encrypted submissions live in the public records store; decryption is
+# an explicit admin action and every view/download lands in the audit log.
+
+REQUEST_KINDS = ("giveaway_enquiry", "rental_enquiry", "contact", "career",
+                 "giveaway_notification", "rental_notification")
+
+_LIST_FIELDS = ("fullName", "company", "email", "market", "enquiryType", "service",
+                "roleTitle", "eventCity")
+
+
+def _decrypt_payload(record: dict) -> dict:
+    import json as _json
+
+    from . import storage as st
+    try:
+        return _json.loads(st.decrypt(record["payload"]).decode())
+    except Exception:
+        return {}
+
+
+@router.get("/api/admin/requests")
+async def admin_requests(request: Request, kind: str = "", q: str = "",
+                         limit: int = 30, offset: int = 0):
+    session = require_perm(request, "requests.view")
+    from . import storage as st
+
+    kinds = [kind] if kind in REQUEST_KINDS else list(REQUEST_KINDS)
+    rows, total = st.list_records(kinds, limit=limit, offset=offset, q=q[:40])
+    meta = aa.request_meta_bulk([r["reference"] for r in rows])
+    out = []
+    for r in rows:
+        payload = _decrypt_payload(r)
+        summary = {k: payload[k] for k in _LIST_FIELDS if payload.get(k)}
+        summary["items"] = len(payload.get("items") or [])
+        m = meta.get(r["reference"], {})
+        out.append({"reference": r["reference"], "kind": r["kind"],
+                    "createdAt": r["createdAt"], "hasFile": r["hasFile"],
+                    "status": m.get("status", "new"), "assignee": m.get("assignee", ""),
+                    "noteCount": m.get("noteCount", 0), "summary": summary})
+    aa.audit(session, "requests.listed", "requests",
+             {"kind": kind or "all", "count": len(out), "offset": offset}, _ip_hash(request))
+    # requests without a workflow row yet are implicitly "new"
+    counts = aa.request_status_counts()
+    all_total = st.list_records(list(REQUEST_KINDS), limit=1)[1]
+    counts["new"] = counts.get("new", 0) + max(0, all_total - sum(counts.values()))
+    return {"requests": out, "total": total,
+            "statuses": list(aa.REQUEST_STATUSES),
+            "statusCounts": counts}
+
+
+@router.get("/api/admin/requests/{reference}")
+async def admin_request_detail(request: Request, reference: str):
+    session = require_perm(request, "requests.view")
+    from . import storage as st
+
+    record = st.get_record(reference.strip().upper()[:20])
+    if record is None or record["kind"] not in REQUEST_KINDS:
+        raise HTTPException(status_code=404, detail="Unknown request reference.")
+    aa.audit(session, "request.viewed", "requests", {"reference": record["reference"]},
+             _ip_hash(request))
+    return {"reference": record["reference"], "kind": record["kind"],
+            "createdAt": record["createdAt"], "expiresAt": record["expiresAt"],
+            "hasFile": bool(record["cvPath"]),
+            "payload": _decrypt_payload(record),
+            "meta": aa.request_meta_get(record["reference"])}
+
+
+class RequestMetaBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str | None = Field(default=None, max_length=30)
+    assignee: str | None = Field(default=None, max_length=200)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/api/admin/requests/{reference}")
+async def admin_request_update(request: Request, reference: str, body: RequestMetaBody,
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "requests.manage")
+    require_csrf(request, session, x_csrf)
+    from . import storage as st
+
+    record = st.get_record(reference.strip().upper()[:20])
+    if record is None or record["kind"] not in REQUEST_KINDS:
+        raise HTTPException(status_code=404, detail="Unknown request reference.")
+    if body.status is not None and body.status not in aa.REQUEST_STATUSES:
+        raise HTTPException(status_code=400, detail="Unknown status.")
+    note = (body.note or "").strip() or None
+    meta = aa.request_meta_set(record["reference"], by=session["email"],
+                               status=body.status, assignee=body.assignee, note=note)
+    aa.audit(session, "request.updated", "requests",
+             {"reference": record["reference"], "status": body.status,
+              "noteAdded": bool(note)}, _ip_hash(request))
+    return {"meta": meta}
+
+
+_FILE_TYPES = {"pdf": "application/pdf", "png": "image/png",
+               "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+
+
+@router.get("/api/admin/requests/{reference}/file")
+async def admin_request_file(request: Request, reference: str):
+    session = require_perm(request, "requests.view")
+    from . import storage as st
+
+    record = st.get_record(reference.strip().upper()[:20])
+    if record is None or record["kind"] not in REQUEST_KINDS or not record["cvPath"]:
+        raise HTTPException(status_code=404, detail="No file attached to this request.")
+    data = st.read_attachment(record["cvPath"])
+    if data is None:
+        raise HTTPException(status_code=404, detail="The attached file is no longer available.")
+    # stored name is {reference}-{hex}.{ext}.enc — recover the real extension
+    parts = record["cvPath"].split(".")
+    ext = parts[-2].lower() if len(parts) >= 3 else "pdf"
+    ctype = _FILE_TYPES.get(ext, "application/octet-stream")
+    aa.audit(session, "request.file_downloaded", "requests",
+             {"reference": record["reference"], "ext": ext}, _ip_hash(request))
+    label = "cv" if record["kind"] == "career" else "logo"
+    return Response(content=data, media_type=ctype, headers={
+        "Content-Disposition": f'attachment; filename="{record["reference"]}-{label}.{ext}"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+# ---------------- Jasani console (Phase 1) ----------------
+# Status is read-only; refresh actions consume the documented daily budget
+# and are therefore permission-gated, CSRF-protected and audited. The
+# supplier token never appears in any response.
+
+@router.get("/api/admin/jasani")
+async def admin_jasani(request: Request):
+    require_perm(request, "jasani.view")
+    from . import jasani
+
+    return {"budget": jasani.budget_status(),
+            "markets": {m: jasani.cache_status(m) for m in config.JASANI_HOSTS},
+            "manuals": jasani.manuals_status(),
+            "refreshHours": {"products": config.PRODUCT_REFRESH_HOURS,
+                             "stock": config.STOCK_REFRESH_HOURS},
+            "tokenConfigured": bool(config.JASANI_API_TOKEN)}
+
+
+class JasaniRefreshBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market: str = Field(max_length=10)
+    what: str = Field(max_length=20)  # "products" (2 calls) or "stock" (1 call)
+
+
+@router.post("/api/admin/jasani/refresh")
+async def admin_jasani_refresh(request: Request, body: JasaniRefreshBody,
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "jasani.refresh")
+    require_csrf(request, session, x_csrf)
+    from . import jasani
+
+    if body.market not in config.JASANI_HOSTS:
+        raise HTTPException(status_code=400, detail="Unknown market.")
+    if body.what not in ("products", "stock"):
+        raise HTTPException(status_code=400, detail="Refresh either products or stock.")
+    try:
+        result = await jasani.force_refresh(body.market, body.what)
+    except jasani.SupplierUnavailable as exc:
+        aa.audit(session, "jasani.refresh_failed", "jasani",
+                 {"market": body.market, "what": body.what, "reason": str(exc)[:200]},
+                 _ip_hash(request))
+        raise HTTPException(status_code=503, detail=f"Refresh failed: {exc}")
+    aa.audit(session, "jasani.refreshed", "jasani",
+             {"market": body.market, "what": body.what, "products": result.get("products")},
+             _ip_hash(request))
+    return {**result, "budget": jasani.budget_status()}
+
+
+@router.get("/api/admin/jasani/products")
+async def admin_jasani_products(request: Request, market: str = "ksa", q: str = ""):
+    require_perm(request, "jasani.view")
+    from . import jasani
+
+    if market not in config.JASANI_HOSTS:
+        raise HTTPException(status_code=400, detail="Unknown market.")
+    return {"products": jasani.search_cached(market, q[:80])}
+
+
 # ---------------- dashboard ----------------
 
 @router.get("/api/admin/dashboard")

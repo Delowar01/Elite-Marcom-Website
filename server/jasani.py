@@ -687,6 +687,116 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
         return products, "cache"
 
 
+# ---------------- admin console (Phase 1) ----------------
+# Read-only status plus explicitly guarded refresh actions for the admin
+# panel. Everything here respects the same daily budget and never exposes
+# the supplier token.
+
+def budget_status() -> dict:
+    """Primary-call budget snapshot without consuming a call."""
+    day = _uae_day()
+    with _lock:
+        budget = _read_budget()
+    used = budget["count"] if budget["day"] == day else 0
+    # seconds until the UAE day rolls over
+    uae_now = time.time() + 4 * 3600
+    reset_in = int(86400 - (uae_now % 86400))
+    return {"day": day, "used": used, "limit": config.SUPPLIER_DAILY_BUDGET,
+            "remaining": max(0, config.SUPPLIER_DAILY_BUDGET - used),
+            "resetInSeconds": reset_in}
+
+
+def cache_status(market: str) -> dict:
+    cached = _read_cache(market)
+    if not cached:
+        return {"market": market, "cached": False, "products": 0, "inStock": 0,
+                "fetchedAt": None, "stockAt": None, "productsFresh": False, "stockFresh": False}
+    now = time.time()
+    products = cached.get("products", [])
+    fetched_at = cached.get("fetchedAt", 0)
+    stock_at = cached.get("stockAt", fetched_at)
+    return {
+        "market": market, "cached": True, "products": len(products),
+        "inStock": sum(1 for p in products if (p.get("stock") or {}).get("available", 0) > 0),
+        "fetchedAt": fetched_at or None, "stockAt": stock_at or None,
+        "productsFresh": now - fetched_at < config.PRODUCT_REFRESH_HOURS * 3600,
+        "stockFresh": now - stock_at < config.STOCK_REFRESH_HOURS * 3600,
+    }
+
+
+def manuals_status() -> dict:
+    d = _CACHE_DIR / "manuals"
+    pdfs = valid = failed = 0
+    size = 0
+    if d.exists():
+        for f in d.glob("*.pdf"):
+            pdfs += 1
+            try:
+                size += f.stat().st_size
+            except OSError:
+                pass
+        for f in d.glob("*.json"):
+            try:
+                verdict = json.loads(f.read_text(encoding="utf-8"))
+                if verdict.get("valid"):
+                    valid += 1
+                else:
+                    failed += 1
+            except (OSError, ValueError):
+                pass
+    return {"cachedPdfs": pdfs, "validVerdicts": valid, "failedVerdicts": failed,
+            "bytes": size}
+
+
+async def force_refresh(market: str, what: str) -> dict:
+    """Admin-triggered refresh. what='products' does a full products+stock
+    refetch (2 primary calls); what='stock' refreshes stock onto the cached
+    products (1 primary call). Raises SupplierUnavailable when the budget is
+    exhausted or upstream fails — the cached snapshot is left untouched."""
+    now = time.time()
+    if what == "products":
+        products = await _fetch_products(market)
+        stock_at = 0.0
+        try:
+            await _apply_stock(market, products)
+            stock_at = now
+        except SupplierUnavailable as exc:
+            print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
+        _write_cache(market, products, fetched_at=now, stock_at=stock_at)
+        return {"refreshed": "products", "products": len(products),
+                "stockApplied": stock_at > 0}
+    if what == "stock":
+        cached = _read_cache(market)
+        if not cached or not cached.get("products"):
+            raise SupplierUnavailable("no cached products — run a full product refresh first")
+        products = cached["products"]
+        await _apply_stock(market, products)
+        _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
+        return {"refreshed": "stock", "products": len(products), "stockApplied": True}
+    raise ValueError("unknown refresh target")
+
+
+def search_cached(market: str, q: str, limit: int = 30) -> list[dict]:
+    """Search the cached snapshot by name / SKU / id — internal admin view."""
+    cached = _read_cache(market)
+    if not cached:
+        return []
+    needle = (q or "").strip().lower()
+    out = []
+    for p in cached.get("products", []):
+        hay = f"{p.get('name', '')} {p.get('code', '')} {p.get('id', '')}".lower()
+        if needle and needle not in hay:
+            continue
+        out.append({"id": p.get("id"), "code": p.get("code"), "name": p.get("name"),
+                    "brand": p.get("brand"), "color": p.get("color"),
+                    "image": p.get("image"),
+                    "available": (p.get("stock") or {}).get("available", 0),
+                    "incoming": (p.get("stock") or {}).get("incoming", 0)})
+        if len(out) >= max(1, min(100, limit)):
+            break
+    return out
+
+
 # ---------------- printing manuals ----------------
 # The supplier's /preview_product?product_id={template_id} endpoint returns a
 # printing-manual PDF for many products. parent_id is only a CANDIDATE manual

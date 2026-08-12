@@ -111,6 +111,14 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         value TEXT NOT NULL,
         updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS request_meta (
+        reference TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'new',
+        assignee TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL,
+        updated_by TEXT NOT NULL DEFAULT ''
+    );
     """)
     conn.commit()
 
@@ -371,6 +379,77 @@ def audit_verify_chain() -> dict:
             return {"ok": False, "checked": len(rows), "brokenAt": row["id"]}
         prev_hash = row["hash"]
     return {"ok": True, "checked": len(rows), "brokenAt": None}
+
+
+# ---------------- request workflow metadata ----------------
+# Status/assignee/notes for customer requests live here (admin.db); the
+# encrypted submissions themselves stay in the public records store untouched.
+
+REQUEST_STATUSES = ("new", "in_progress", "quoted", "won", "lost", "closed")
+
+
+def request_meta_get(reference: str) -> dict:
+    row = _connect().execute(
+        "SELECT * FROM request_meta WHERE reference=?", (reference,)).fetchone()
+    if row is None:
+        return {"reference": reference, "status": "new", "assignee": "",
+                "notes": [], "updatedAt": None, "updatedBy": ""}
+    try:
+        notes = json.loads(row["notes"])
+    except ValueError:
+        notes = []
+    return {"reference": row["reference"], "status": row["status"],
+            "assignee": row["assignee"], "notes": notes,
+            "updatedAt": row["updated_at"], "updatedBy": row["updated_by"]}
+
+
+def request_meta_bulk(references: list[str]) -> dict[str, dict]:
+    """Status + note count for a page of references (list view)."""
+    if not references:
+        return {}
+    marks = ",".join("?" * len(references))
+    rows = _connect().execute(
+        f"SELECT reference, status, assignee, notes FROM request_meta WHERE reference IN ({marks})",
+        references).fetchall()
+    out = {}
+    for r in rows:
+        try:
+            n = len(json.loads(r["notes"]))
+        except ValueError:
+            n = 0
+        out[r["reference"]] = {"status": r["status"], "assignee": r["assignee"], "noteCount": n}
+    return out
+
+
+def request_meta_set(reference: str, by: str, status: str | None = None,
+                     assignee: str | None = None, note: str | None = None) -> dict:
+    if status is not None and status not in REQUEST_STATUSES:
+        raise ValueError("unknown status")
+    with _lock:
+        conn = _connect()
+        current = request_meta_get(reference)
+        if status is not None:
+            current["status"] = status
+        if assignee is not None:
+            current["assignee"] = assignee[:200]
+        if note:
+            current["notes"] = (current["notes"] + [
+                {"ts": int(time.time()), "by": by[:200], "text": note[:2000]}])[-100:]
+        conn.execute(
+            "INSERT INTO request_meta (reference, status, assignee, notes, updated_at, updated_by) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(reference) DO UPDATE SET "
+            "status=excluded.status, assignee=excluded.assignee, notes=excluded.notes, "
+            "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+            (reference, current["status"], current["assignee"],
+             json.dumps(current["notes"], ensure_ascii=False), int(time.time()), by[:200]))
+        conn.commit()
+    return request_meta_get(reference)
+
+
+def request_status_counts() -> dict[str, int]:
+    rows = _connect().execute(
+        "SELECT status, COUNT(*) AS c FROM request_meta GROUP BY status").fetchall()
+    return {r["status"]: r["c"] for r in rows}
 
 
 # ---------------- settings ----------------

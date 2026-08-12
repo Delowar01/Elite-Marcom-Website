@@ -7,7 +7,7 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="stylesheet" href="/styles.css?v=4">
-<link rel="stylesheet" href="/admin/assets/admin.css?v=1">
+<link rel="stylesheet" href="/admin/assets/admin.css?v=2">
 <script src="/js/theme-init.js?v=1"></script>
 </head>
 <body class="admin-body">
@@ -20,8 +20,8 @@
     </div>
     <nav class="admin-nav" id="admin-nav" aria-label="Admin sections">
       <a href="#dashboard" data-view="dashboard">Dashboard</a>
-      <a href="#requests" class="soon" aria-disabled="true">Requests <span>Phase 1</span></a>
-      <a href="#jasani" class="soon" aria-disabled="true">Jasani <span>Phase 1</span></a>
+      <a href="#requests" data-view="requests" data-perm="requests.view">Requests</a>
+      <a href="#jasani" data-view="jasani" data-perm="jasani.view">Jasani</a>
       <a href="#media" class="soon" aria-disabled="true">Media <span>Phase 2</span></a>
       <a href="#brand" class="soon" aria-disabled="true">Website &amp; Brand <span>Phase 2</span></a>
       <a href="#pages" class="soon" aria-disabled="true">Pages <span>Phase 3</span></a>
@@ -54,6 +54,6 @@
   </main>
 </div>
 <div class="admin-toast" id="admin-toast" role="status" aria-live="polite" hidden></div>
-<script src="/admin/assets/app.js?v=1" defer></script>
+<script src="/admin/assets/app.js?v=2" defer></script>
 </body>
 </html>

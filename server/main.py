@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import config, jasani, security, storage
+from . import config, jasani, notify, security, storage
 
 config.validate_startup()
 
@@ -294,6 +294,7 @@ async def careers_apply(
         scan_malware(cv_bytes)
     reference = storage.save_record("career", payload, ip_hash,
                                     config.RETENTION_CAREERS_DAYS, cv_bytes=cv_bytes)
+    notify.notify_new_request("career", reference)
     return {"reference": reference}
 
 
@@ -347,6 +348,7 @@ async def contact_enquiry(request: Request, body: ContactEnquiry):
         "sourcePage": check_source_page(body.sourcePage),
     }
     reference = storage.save_record("contact", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
+    notify.notify_new_request("contact", reference)
     return {"reference": reference}
 
 
@@ -464,6 +466,7 @@ async def rentals_enquiry(request: Request, body: RentalEnquiry):
         "sourcePage": check_source_page(body.sourcePage),
     }
     reference = storage.save_record("rental_enquiry", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
+    notify.notify_new_request("rental_enquiry", reference)
     return {"reference": reference}
 
 
@@ -723,6 +726,7 @@ async def giveaways_enquiry(
     reference = storage.save_record("giveaway_enquiry", payload, ip_hash,
                                     config.RETENTION_SUBMISSIONS_DAYS,
                                     cv_bytes=logo_bytes, file_ext=logo_ext)
+    notify.notify_new_request("giveaway_enquiry", reference)
     return {"reference": reference}
 
 

@@ -83,6 +83,7 @@ def save_record(kind: str, payload: dict, ip_hash: str,
     blob = encrypt(json.dumps(payload, ensure_ascii=False).encode())
     cv_path = None
     if cv_bytes is not None:
+        _CV_DIR.mkdir(parents=True, exist_ok=True)
         cv_name = f"{reference}-{secrets.token_hex(6)}.{file_ext}.enc"
         cv_file = _CV_DIR / cv_name
         cv_file.write_bytes(encrypt(cv_bytes))
@@ -96,6 +97,57 @@ def save_record(kind: str, payload: dict, ip_hash: str,
         )
         conn.commit()
     return reference
+
+
+def list_records(kinds: list[str] | None = None, limit: int = 50, offset: int = 0,
+                 q: str = "") -> tuple[list[dict], int]:
+    """Admin inbox listing: rows with the payload still encrypted.
+
+    Returns (rows, total). Decryption happens at the admin layer so every
+    decrypt-on-view is an explicit, audited step."""
+    sql = "FROM records"
+    where, params = [], []
+    if kinds:
+        where.append(f"kind IN ({','.join('?' * len(kinds))})")
+        params.extend(kinds)
+    if q:
+        where.append("reference LIKE ?")
+        params.append(f"%{q.upper()}%")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    with _lock:
+        conn = _connect()
+        total = conn.execute(f"SELECT COUNT(*) {sql}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT id, kind, reference, created_at, expires_at, payload, cv_path {sql}"
+            " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            params + [max(1, min(200, limit)), max(0, offset)]).fetchall()
+    out = []
+    for r in rows:
+        out.append({"id": r[0], "kind": r[1], "reference": r[2], "createdAt": r[3],
+                    "expiresAt": r[4], "payload": r[5], "hasFile": bool(r[6])})
+    return out, total
+
+
+def get_record(reference: str) -> dict | None:
+    """One record by reference — payload still encrypted (see list_records)."""
+    with _lock:
+        row = _connect().execute(
+            "SELECT id, kind, reference, created_at, expires_at, payload, cv_path "
+            "FROM records WHERE reference=?", (reference,)).fetchone()
+    if row is None:
+        return None
+    return {"id": row[0], "kind": row[1], "reference": row[2], "createdAt": row[3],
+            "expiresAt": row[4], "payload": row[5], "cvPath": row[6]}
+
+
+def read_attachment(cv_path: str) -> bytes | None:
+    """Decrypt a stored attachment (CV / logo) by its stored file name."""
+    try:
+        blob = (_CV_DIR / Path(cv_path).name).read_bytes()
+        return decrypt(blob)
+    except Exception:
+        return None
 
 
 def cleanup_expired() -> int:
