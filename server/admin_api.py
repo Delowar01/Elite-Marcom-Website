@@ -931,6 +931,194 @@ async def admin_hero_save(request: Request, body: HeroBody,
     return {"saved": saved}
 
 
+# ---------------- pages, SEO & publishing (Phase 3) ----------------
+
+def _content_err(exc: Exception) -> HTTPException:
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    raise exc
+
+
+@router.get("/api/admin/pages")
+async def admin_pages(request: Request):
+    require_perm(request, "content.edit")
+    from . import content
+
+    last = content.last_publish()
+    pages = []
+    for page, cfg in content.PAGES.items():
+        edited = content.last_edit_ts(page)
+        pages.append({"page": page, "label": cfg["label"], "file": cfg["file"],
+                      "regions": len(cfg["regions"]),
+                      "dirty": bool(edited and (last is None or edited > last["ts"]))})
+    return {"pages": pages,
+            "globalRegions": len(content.GLOBAL_REGIONS),
+            "lastPublish": last, "history": content.publish_history(),
+            "published": content.PUBLISHED_DIR.joinpath("index.html").is_file(),
+            "languages": aa.setting_get("site.languages") or ["en"]}
+
+
+@router.get("/api/admin/pages/{page}")
+async def admin_page_get(request: Request, page: str, lang: str = "en"):
+    require_perm(request, "content.edit")
+    from . import content
+
+    if lang not in content.LANGS:
+        raise HTTPException(status_code=400, detail="Unknown language.")
+    if page == "_global":
+        regions, seo, label = content.GLOBAL_REGIONS, [], "Header & Footer"
+        originals = content.original_values("index")
+    elif page in content.PAGES:
+        cfg = content.PAGES[page]
+        regions, seo, label = cfg["regions"], content.SEO_FIELDS, cfg["label"]
+        originals = content.original_values(page)
+    else:
+        raise HTTPException(status_code=404, detail="Unknown page.")
+    values = content.get_values(page, lang)
+    return {"page": page, "label": label, "lang": lang,
+            "regions": [{**r, "original": originals.get(r["key"], ""),
+                         "value": values.get(r["key"], "")} for r in regions],
+            "seo": [{**f, "original": originals.get(f["key"], ""),
+                     "value": values.get(f["key"], "")} for f in seo]}
+
+
+class PageSaveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lang: str = Field(default="en", max_length=5)
+    values: dict
+
+
+@router.post("/api/admin/pages/{page}")
+async def admin_page_save(request: Request, page: str, body: PageSaveBody,
+                          x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    try:
+        saved = content.set_values(page, body.values, body.lang, session["email"])
+    except Exception as exc:
+        raise _content_err(exc)
+    aa.audit(session, "content.saved", "pages",
+             {"page": page, "lang": body.lang, "keys": sorted(saved)}, _ip_hash(request))
+    return {"saved": saved}
+
+
+@router.get("/admin/preview/{page}", include_in_schema=False)
+async def admin_page_preview(request: Request, page: str, lang: str = "en"):
+    require_perm(request, "content.edit")
+    from . import content
+
+    if page not in content.PAGES or lang not in content.LANGS:
+        raise HTTPException(status_code=404, detail="Unknown page.")
+    return Response(content=content.bake_page(page, lang),
+                    media_type="text/html; charset=utf-8",
+                    headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
+@router.post("/api/admin/pages-publish")
+async def admin_pages_publish(request: Request, x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    result = content.publish_all(session["email"])
+    aa.audit(session, "site.published", "pages", result, _ip_hash(request))
+    return result
+
+
+class RollbackBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+
+
+@router.post("/api/admin/pages-rollback")
+async def admin_pages_rollback(request: Request, body: RollbackBody,
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    try:
+        result = content.rollback(body.id, session["email"])
+    except Exception as exc:
+        raise _content_err(exc)
+    aa.audit(session, "site.rolledback", "pages", {"to": body.id, **result}, _ip_hash(request))
+    return result
+
+
+@router.post("/api/admin/pages-unpublish")
+async def admin_pages_unpublish(request: Request, x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    removed = content.unpublish_all()
+    aa.audit(session, "site.unpublished", "pages", {"removed": removed}, _ip_hash(request))
+    return {"ok": True, "removed": removed}
+
+
+# ---------------- rental inventory (Phase 3) ----------------
+
+@router.get("/api/admin/rentals")
+async def admin_rentals(request: Request):
+    require_perm(request, "rentals.manage")
+    from . import content
+
+    products, source = content.rentals_load()
+    return {"products": products, "source": source}
+
+
+class RentalSaveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product: dict
+
+
+@router.post("/api/admin/rentals/save")
+async def admin_rentals_save(request: Request, body: RentalSaveBody,
+                             x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "rentals.manage")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    try:
+        item = content.rentals_save_item(body.product)
+    except Exception as exc:
+        raise _content_err(exc)
+    aa.audit(session, "rental.saved", "rentals", {"id": item["id"], "name": item["name"]},
+             _ip_hash(request))
+    return {"product": item}
+
+
+class RentalIdBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(max_length=80)
+
+
+@router.post("/api/admin/rentals/delete")
+async def admin_rentals_delete(request: Request, body: RentalIdBody,
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "rentals.manage")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    if not content.rentals_delete_item(body.id):
+        raise HTTPException(status_code=404, detail="Unknown rental item.")
+    aa.audit(session, "rental.deleted", "rentals", {"id": body.id}, _ip_hash(request))
+    return {"ok": True}
+
+
+@router.post("/api/admin/rentals/reset")
+async def admin_rentals_reset(request: Request, x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "rentals.manage")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    removed = content.rentals_reset()
+    aa.audit(session, "rentals.reset", "rentals", {"removed": removed}, _ip_hash(request))
+    return {"ok": True, "removed": removed}
+
+
 # ---------------- dashboard ----------------
 
 @router.get("/api/admin/dashboard")

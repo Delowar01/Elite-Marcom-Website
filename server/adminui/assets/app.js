@@ -96,11 +96,35 @@
         pop.appendChild(sep);
         return;
       }
-      if (en.heading) {
-        var h = document.createElement("div");
-        h.className = "menu-heading";
-        h.textContent = en.heading;
-        pop.appendChild(h);
+      if (en.children) {
+        var wrap = document.createElement("div");
+        wrap.className = "menu-item has-sub";
+        var parent = document.createElement("button");
+        parent.type = "button";
+        parent.innerHTML = esc(en.label) + '<span class="sub-caret">▸</span>';
+        var sub = document.createElement("div");
+        sub.className = "menu-sub-pop";
+        en.children.forEach(function (child) {
+          var cel = document.createElement("button");
+          cel.type = "button";
+          cel.textContent = child.label;
+          if (child.danger) cel.className = "menu-danger";
+          cel.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            closeMenu();
+            child.action();
+          });
+          sub.appendChild(cel);
+        });
+        parent.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var was = wrap.classList.contains("open");
+          pop.querySelectorAll(".has-sub.open").forEach(function (o) { o.classList.remove("open"); });
+          if (!was) wrap.classList.add("open");
+        });
+        wrap.appendChild(parent);
+        wrap.appendChild(sub);
+        pop.appendChild(wrap);
         return;
       }
       var el = document.createElement("button");
@@ -119,6 +143,13 @@
     pop.style.top = Math.max(10, Math.min(window.innerHeight - pop.offsetHeight - 10, r.bottom + 4)) + "px";
     pop.style.left = Math.max(10, r.right - pop.offsetWidth) + "px";
     openMenuEl = pop;
+  }
+
+  function exportChildren(urlFor) {
+    return ["csv", "xlsx", "pdf"].map(function (fmt) {
+      var names = { csv: "CSV (spreadsheet)", xlsx: "Excel (.xlsx)", pdf: "PDF (branded)" };
+      return { label: names[fmt], action: function () { location.href = urlFor(fmt); } };
+    });
   }
 
   function requestAction(ref, body, after) {
@@ -197,6 +228,66 @@
     });
   }
 
+  /* ---------- page editor ---------- */
+  var pageLang = "en";
+
+  function pageEditor(page) {
+    api("/api/admin/pages/" + encodeURIComponent(page) + "?lang=" + pageLang).then(function (r) {
+      if (!r.ok) { apiErr(r); location.hash = "#pages"; return; }
+      var d = r.data;
+      function fieldHtml(f, idx, group) {
+        var id = group + "-" + idx;
+        var input = f.kind === "multiline"
+          ? '<textarea id="' + id + '" rows="3" maxlength="2000" placeholder="' + esc(f.original) + '">' + esc(f.value) + "</textarea>"
+          : '<input id="' + id + '" maxlength="' + (f.max || 300) + '" placeholder="' + esc(f.original) + '" value="' + esc(f.value) + '">';
+        return '<div class="full page-field" data-key="' + esc(f.key) + '" data-group="' + group + '">' +
+          '<label for="' + id + '">' + esc(f.label) +
+          (f.value ? ' <span class="badge-ok">edited</span>' : "") + "</label>" + input +
+          '<span class="admin-inline-note">Original: ' + esc(f.original || "—") + "</span></div>";
+      }
+      main.innerHTML =
+        '<p><a href="#pages" class="btn btn--ghost btn--small">&larr; All pages</a></p>' +
+        '<h1 class="admin-h1">' + esc(d.label) + "</h1>" +
+        '<p class="admin-sub">Leave a field empty to keep the original design text. Saved changes go live only when you publish.</p>' +
+        '<div class="lang-tabs">' +
+        '<button class="btn btn--small ' + (pageLang === "en" ? "btn--primary" : "btn--ghost") + '" data-lang="en">English</button>' +
+        '<button class="btn btn--small ' + (pageLang === "ar" ? "btn--primary" : "btn--ghost") + '" data-lang="ar">العربية (Arabic)</button>' +
+        (pageLang === "ar" ? '<span class="admin-inline-note">Arabic is saved as a draft and publishes once Arabic is enabled in Settings.</span>' : "") +
+        "</div>" +
+        '<form id="page-form">' +
+        (d.regions.length
+          ? '<div class="admin-panel"><h2>Content</h2><div class="admin-form">' +
+            d.regions.map(function (f, i) { return fieldHtml(f, i, "rg"); }).join("") + "</div></div>" : "") +
+        (d.seo.length
+          ? '<div class="admin-panel"><h2>SEO &amp; sharing</h2><div class="admin-form">' +
+            d.seo.map(function (f, i) { return fieldHtml(f, i, "seo"); }).join("") + "</div></div>" : "") +
+        '<div class="admin-actions"><button class="btn btn--primary btn--small" type="submit">Save draft</button>' +
+        (d.page !== "_global"
+          ? '<a class="btn btn--ghost btn--small" href="/admin/preview/' + esc(d.page) + "?lang=" + pageLang + '" target="_blank" rel="noopener">Preview</a>' : "") +
+        '<span class="admin-inline-note">Publish from the Pages overview when you are ready.</span></div></form>';
+
+      main.querySelectorAll("[data-lang]").forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          pageLang = btn.getAttribute("data-lang");
+          pageEditor(page);
+        });
+      });
+      document.getElementById("page-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var values = {};
+        main.querySelectorAll(".page-field").forEach(function (wrap) {
+          values[wrap.getAttribute("data-key")] =
+            wrap.querySelector("input, textarea").value.trim();
+        });
+        api("/api/admin/pages/" + encodeURIComponent(page), { lang: pageLang, values: values })
+          .then(function (r2) {
+            r2.ok ? (toast("Draft saved."), pageEditor(page)) : apiErr(r2);
+          });
+      });
+    });
+  }
+
   /* ---------- views ---------- */
   var views = {
     dashboard: function () {
@@ -254,15 +345,9 @@
           '<select id="rq-status"><option value="">All statuses</option>' + statusOpts + "</select>" +
           '<input id="rq-q" placeholder="Search reference (e.g. GV-XXXX)" maxlength="20" value="' + esc(reqState.q) + '">' +
           '<span class="admin-inline-note">' + esc(d.total) + " request(s)</span>" +
-          '<span class="req-export">Export list: ' +
-          '<button class="btn btn--ghost btn--small" data-export="csv">CSV</button>' +
-          '<button class="btn btn--ghost btn--small" data-export="xlsx">Excel</button>' +
-          '<button class="btn btn--ghost btn--small" data-export="pdf">PDF</button></span></div>' +
+          '<span class="req-export"><button class="btn btn--ghost btn--small" id="rq-export">Export ▾</button></span></div>' +
           '<div class="bulk-bar" id="bulk-bar"' + (selCount ? "" : " hidden") + '><b id="bulk-count">' + selCount +
-          "</b> selected — download " +
-          '<button class="btn btn--ghost btn--small" data-bulk="csv">CSV</button>' +
-          '<button class="btn btn--ghost btn--small" data-bulk="xlsx">Excel</button>' +
-          '<button class="btn btn--ghost btn--small" data-bulk="pdf">PDF</button>' +
+          '</b> selected — use <b>Export</b> to download them ' +
           '<button class="btn btn--ghost btn--small" id="bulk-clear">Clear selection</button></div>' +
           '<div class="table-scroll"><table class="admin-table"><thead>' +
           '<tr><th class="cell-check"><input type="checkbox" id="sel-all" aria-label="Select all"></th>' +
@@ -295,6 +380,8 @@
           var n = Object.keys(reqState.sel).length;
           document.getElementById("bulk-bar").hidden = !n;
           document.getElementById("bulk-count").textContent = n;
+          document.getElementById("rq-export").textContent =
+            n ? "Export " + n + " selected ▾" : "Export ▾";
         }
         document.getElementById("rq-kind").addEventListener("change", function () {
           reqState.kind = this.value; reqState.offset = 0; views.requests();
@@ -311,18 +398,13 @@
             reqState.offset = 0; views.requests();
           });
         });
-        main.querySelectorAll("[data-export]").forEach(function (btn) {
-          btn.addEventListener("click", function () {
-            location.href = "/api/admin/requests/export?format=" + btn.getAttribute("data-export") + filterQs();
-          });
-        });
-        main.querySelectorAll("[data-bulk]").forEach(function (btn) {
-          btn.addEventListener("click", function () {
+        document.getElementById("rq-export").addEventListener("click", function (e) {
+          e.stopPropagation();
+          showMenu(this, exportChildren(function (fmt) {
             var refs = Object.keys(reqState.sel);
-            if (!refs.length) return;
-            location.href = "/api/admin/requests/export?format=" + btn.getAttribute("data-bulk") +
-              "&refs=" + encodeURIComponent(refs.join(","));
-          });
+            return "/api/admin/requests/export?format=" + fmt +
+              (refs.length ? "&refs=" + encodeURIComponent(refs.join(",")) : filterQs());
+          }));
         });
         document.getElementById("bulk-clear").addEventListener("click", function () {
           reqState.sel = {};
@@ -348,21 +430,19 @@
             e.stopPropagation();
             var entries = [{ label: "View", action: function () { location.hash = "#requests/" + ref; } }];
             if (manage) {
-              entries.push({ heading: "Set status" });
-              Object.keys(STATUS_LABELS).forEach(function (s) {
-                entries.push({ label: STATUS_LABELS[s], action: function () {
+              entries.push({ label: "Set status", children: Object.keys(STATUS_LABELS).map(function (s) {
+                return { label: STATUS_LABELS[s], action: function () {
                   requestAction(ref, { status: s }, views.requests);
-                } });
-              });
-              entries.push("-", { label: "Assign…", action: function () {
+                } };
+              }) });
+              entries.push({ label: "Assign…", action: function () {
                 var who = prompt("Assign this request to:");
                 if (who !== null) requestAction(ref, { assignee: who.trim() }, views.requests);
               } });
             }
-            entries.push("-",
-              { label: "Download PDF", action: function () { location.href = "/api/admin/requests/" + encodeURIComponent(ref) + "/export?format=pdf"; } },
-              { label: "Download Excel", action: function () { location.href = "/api/admin/requests/" + encodeURIComponent(ref) + "/export?format=xlsx"; } },
-              { label: "Download CSV", action: function () { location.href = "/api/admin/requests/" + encodeURIComponent(ref) + "/export?format=csv"; } });
+            entries.push({ label: "Download", children: exportChildren(function (fmt) {
+              return "/api/admin/requests/" + encodeURIComponent(ref) + "/export?format=" + fmt;
+            }) });
             if (manage) {
               entries.push("-", { label: "Delete request", danger: true, action: function () {
                 if (!confirm("Delete " + ref + " permanently? The submission and any attached file are removed and cannot be recovered.")) return;
@@ -462,6 +542,176 @@
         document.getElementById("jz-search").addEventListener("click", search);
         document.getElementById("jz-q").addEventListener("keydown", function (e) {
           if (e.key === "Enter") { e.preventDefault(); search(); }
+        });
+      });
+    },
+
+    pages: function (param) {
+      if (param) return pageEditor(param);
+      api("/api/admin/pages").then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        var lp = d.lastPublish;
+        main.innerHTML =
+          '<h1 class="admin-h1">Pages &amp; SEO</h1>' +
+          '<p class="admin-sub">Edit text and SEO per page, preview privately, then publish the whole site in one click. The original design always stays safe in the code.</p>' +
+          '<div class="admin-panel"><h2>Publishing</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">' +
+          (d.published
+            ? "The site is serving your published version" + (lp ? " (published " + esc(when(lp.ts)) + " by " + esc(lp.by) + ")" : "") + "."
+            : "The site is serving the original design — nothing published yet.") + "</p>" +
+          '<div class="admin-actions">' +
+          '<button class="btn btn--primary btn--small" id="pub-btn">Publish site</button>' +
+          (d.published ? '<button class="btn btn--ghost btn--small" id="unpub-btn">Unpublish (serve original)</button>' : "") +
+          "</div>" +
+          ((d.history || []).length
+            ? '<h2 style="margin-top:22px;">Version history</h2><div class="table-scroll"><table class="admin-table"><thead>' +
+              "<tr><th>Version</th><th>Published</th><th>By</th><th>Pages</th><th></th></tr></thead><tbody>" +
+              d.history.map(function (h, i) {
+                return "<tr><td>#" + h.id + "</td><td class=\"muted\">" + esc(when(h.ts)) + "</td>" +
+                  "<td class=\"muted\">" + esc(h.by) + "</td><td class=\"muted\">" + h.pages + "</td>" +
+                  "<td>" + (i === 0 ? '<span class="badge-ok">current</span>'
+                    : '<button class="btn btn--ghost btn--small" data-rollback="' + h.id + '">Restore</button>') + "</td></tr>";
+              }).join("") + "</tbody></table></div>" : "") + "</div>" +
+          '<div class="admin-panel"><h2>Header &amp; Footer</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:10px;">Menu labels, header button, footer text and contact details — applied to every page.</p>' +
+          '<a class="btn btn--ghost btn--small" href="#pages/_global">Edit (' + esc(d.globalRegions) + " fields)</a></div>" +
+          '<div class="admin-panel"><h2>Pages</h2><div class="table-scroll"><table class="admin-table"><thead>' +
+          "<tr><th>Page</th><th>Text fields</th><th>State</th><th></th></tr></thead><tbody>" +
+          (d.pages || []).map(function (p) {
+            return "<tr><td>" + esc(p.label) + ' <span class="muted">(' + esc(p.file) + ")</span></td>" +
+              '<td class="muted">' + (p.regions ? p.regions + " + SEO" : "SEO only") + "</td>" +
+              "<td>" + (p.dirty ? '<span class="badge-bad">unpublished edits</span>' : '<span class="muted">up to date</span>') + "</td>" +
+              '<td class="cell-actions"><a class="btn btn--ghost btn--small" href="#pages/' + esc(p.page) + '">Edit</a> ' +
+              '<a class="btn btn--ghost btn--small" href="/admin/preview/' + esc(p.page) + '" target="_blank" rel="noopener">Preview</a></td></tr>';
+          }).join("") + "</tbody></table></div></div>";
+        document.getElementById("pub-btn").addEventListener("click", function () {
+          if (!confirm("Publish all pages to the live site now?")) return;
+          api("/api/admin/pages-publish", {}).then(function (r2) {
+            r2.ok ? (toast("Published " + r2.data.pages + " pages — live now."), views.pages()) : apiErr(r2);
+          });
+        });
+        var unpub = document.getElementById("unpub-btn");
+        if (unpub) unpub.addEventListener("click", function () {
+          if (!confirm("Serve the original design again? Your drafts are kept and can be re-published any time.")) return;
+          api("/api/admin/pages-unpublish", {}).then(function (r2) {
+            r2.ok ? (toast("Original design restored."), views.pages()) : apiErr(r2);
+          });
+        });
+        main.querySelectorAll("[data-rollback]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var id = btn.getAttribute("data-rollback");
+            if (!confirm("Restore version #" + id + " and publish it now?")) return;
+            api("/api/admin/pages-rollback", { id: parseInt(id, 10) }).then(function (r2) {
+              r2.ok ? (toast("Version #" + id + " restored and published."), views.pages()) : apiErr(r2);
+            });
+          });
+        });
+      });
+    },
+
+    rentals: function () {
+      api("/api/admin/rentals").then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        main.innerHTML =
+          '<h1 class="admin-h1">Rental inventory</h1>' +
+          '<p class="admin-sub">Items shown on the public Rental page. ' +
+          (d.source === "custom" ? 'You are editing a custom inventory. <button class="btn btn--ghost btn--small" id="rent-reset">Restore shipped list</button>'
+                                 : "Currently showing the shipped list — saving any change creates your editable copy.") + "</p>" +
+          '<div class="admin-panel"><h2>Items (' + (d.products || []).length + ')</h2>' +
+          '<div class="admin-actions" style="margin-bottom:14px;"><button class="btn btn--primary btn--small" id="rent-new">Add new item</button></div>' +
+          '<div class="table-scroll"><table class="admin-table"><thead>' +
+          "<tr><th></th><th>Name</th><th>Category</th><th>Stock KSA</th><th>Stock UAE</th><th>Featured</th><th></th></tr></thead><tbody>" +
+          (d.products || []).map(function (p) {
+            return '<tr data-id="' + esc(p.id) + '"><td>' +
+              (p.image ? '<img class="jz-thumb" src="' + esc(p.image) + '" alt="" loading="lazy">' : "") + "</td>" +
+              "<td>" + esc(p.name) + ' <span class="muted">' + esc(p.code || "") + "</span></td>" +
+              '<td class="muted">' + esc(p.category) + "</td>" +
+              "<td>" + esc(p.stockByMarket.ksa) + "</td><td>" + esc(p.stockByMarket.uae) + "</td>" +
+              "<td>" + (p.featured ? '<span class="badge-ok">yes</span>' : '<span class="muted">no</span>') + "</td>" +
+              '<td class="cell-actions"><button class="btn btn--ghost btn--small" data-edit>Edit</button> ' +
+              '<button class="btn btn--ghost btn--small" data-del>Delete</button></td></tr>';
+          }).join("") + "</tbody></table></div></div>" +
+          '<div class="admin-panel" id="rent-form-panel" hidden><h2 id="rent-form-title">Edit item</h2>' +
+          '<form class="admin-form" id="rent-form">' +
+          '<div><label for="rf-id">ID (lowercase-with-dashes, fixed once created)</label><input id="rf-id" required maxlength="60" pattern="[a-z0-9][a-z0-9\\-]+"></div>' +
+          '<div><label for="rf-code">Code</label><input id="rf-code" maxlength="40"></div>' +
+          '<div><label for="rf-name">Name</label><input id="rf-name" required maxlength="160"></div>' +
+          '<div><label for="rf-category">Category</label><input id="rf-category" required maxlength="80"></div>' +
+          '<div class="full"><label for="rf-images">Images — one path per line (/assets/… or /media/…, first is the card image)</label><textarea id="rf-images" rows="3"></textarea></div>' +
+          '<div class="full"><label for="rf-desc">Description</label><textarea id="rf-desc" rows="3" maxlength="2000"></textarea></div>' +
+          '<div class="full"><label for="rf-specs">Specifications — one per line</label><textarea id="rf-specs" rows="4"></textarea></div>' +
+          '<div><label for="rf-tags">Search tags (comma separated)</label><input id="rf-tags" maxlength="300"></div>' +
+          '<div><label for="rf-featured">Featured</label><select id="rf-featured"><option value="no">No</option><option value="yes">Yes — show first</option></select></div>' +
+          '<div><label for="rf-ksa">Stock — Saudi Arabia</label><input id="rf-ksa" type="number" min="0" max="100000" value="0"></div>' +
+          '<div><label for="rf-uae">Stock — UAE</label><input id="rf-uae" type="number" min="0" max="100000" value="0"></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save item</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" id="rent-cancel">Cancel</button>' +
+          '<span class="admin-inline-note">Changes appear on the public Rental page immediately.</span></div></form></div>';
+
+        var byId = {};
+        (d.products || []).forEach(function (p) { byId[p.id] = p; });
+        function openForm(p) {
+          document.getElementById("rent-form-panel").hidden = false;
+          document.getElementById("rent-form-title").textContent = p ? "Edit — " + p.name : "Add new item";
+          document.getElementById("rf-id").value = p ? p.id : "";
+          document.getElementById("rf-id").readOnly = !!p;
+          document.getElementById("rf-code").value = p ? p.code || "" : "";
+          document.getElementById("rf-name").value = p ? p.name : "";
+          document.getElementById("rf-category").value = p ? p.category : "";
+          document.getElementById("rf-images").value = p ? (p.images || []).join("\n") : "";
+          document.getElementById("rf-desc").value = p ? p.description || "" : "";
+          document.getElementById("rf-specs").value = p ? (p.specs || []).join("\n") : "";
+          document.getElementById("rf-tags").value = p ? (p.tags || []).join(", ") : "";
+          document.getElementById("rf-featured").value = p && p.featured ? "yes" : "no";
+          document.getElementById("rf-ksa").value = p ? p.stockByMarket.ksa : 0;
+          document.getElementById("rf-uae").value = p ? p.stockByMarket.uae : 0;
+          document.getElementById("rent-form-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        document.getElementById("rent-new").addEventListener("click", function () { openForm(null); });
+        document.getElementById("rent-cancel").addEventListener("click", function () {
+          document.getElementById("rent-form-panel").hidden = true;
+        });
+        main.querySelectorAll("tr[data-id]").forEach(function (row) {
+          var id = row.getAttribute("data-id");
+          row.querySelector("[data-edit]").addEventListener("click", function () { openForm(byId[id]); });
+          row.querySelector("[data-del]").addEventListener("click", function () {
+            if (!confirm("Delete this rental item from the public site?")) return;
+            api("/api/admin/rentals/delete", { id: id }).then(function (r2) {
+              r2.ok ? (toast("Item deleted."), views.rentals()) : apiErr(r2);
+            });
+          });
+        });
+        var reset = document.getElementById("rent-reset");
+        if (reset) reset.addEventListener("click", function () {
+          if (!confirm("Discard your custom inventory and restore the shipped list?")) return;
+          api("/api/admin/rentals/reset", {}).then(function (r2) {
+            r2.ok ? (toast("Shipped list restored."), views.rentals()) : apiErr(r2);
+          });
+        });
+        document.getElementById("rent-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var images = document.getElementById("rf-images").value.split("\n")
+            .map(function (x) { return x.trim(); }).filter(Boolean);
+          api("/api/admin/rentals/save", { product: {
+            id: document.getElementById("rf-id").value.trim(),
+            code: document.getElementById("rf-code").value.trim(),
+            name: document.getElementById("rf-name").value.trim(),
+            category: document.getElementById("rf-category").value.trim(),
+            image: images[0] || "",
+            images: images,
+            description: document.getElementById("rf-desc").value.trim(),
+            specs: document.getElementById("rf-specs").value.split("\n")
+              .map(function (x) { return x.trim(); }).filter(Boolean),
+            tags: document.getElementById("rf-tags").value.split(",")
+              .map(function (x) { return x.trim(); }).filter(Boolean),
+            featured: document.getElementById("rf-featured").value === "yes",
+            stockByMarket: { ksa: document.getElementById("rf-ksa").value,
+                             uae: document.getElementById("rf-uae").value }
+          } }).then(function (r2) {
+            r2.ok ? (toast("Item saved — live on the site."), views.rentals()) : apiErr(r2);
+          });
         });
       });
     },

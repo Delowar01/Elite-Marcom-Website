@@ -35,18 +35,18 @@
     </a>
     <nav class="site-nav" aria-label="Primary">
       <ul>
-        <li><a href="/">Home</a></li>
-        <li><a href="/about.html">About</a></li>
-        <li><a href="/services.html">Services</a></li>
-        <li><a href="/projects.html">Projects</a></li>
-        <li><a href="/giveaways.html" aria-current="page">Corporate Gifts</a></li>
-        <li><a href="/rental.html">Rental</a></li>
-        <li><a href="/careers.html">Careers</a></li>
-        <li><a href="/contact.html">Contact</a></li>
+        <li><a href="/" data-em="nav.home">Home</a></li>
+        <li><a href="/about.html" data-em="nav.about">About</a></li>
+        <li><a href="/services.html" data-em="nav.services">Services</a></li>
+        <li><a href="/projects.html" data-em="nav.projects">Projects</a></li>
+        <li><a href="/giveaways.html" aria-current="page" data-em="nav.gifts">Corporate Gifts</a></li>
+        <li><a href="/rental.html" data-em="nav.rental">Rental</a></li>
+        <li><a href="/careers.html" data-em="nav.careers">Careers</a></li>
+        <li><a href="/contact.html" data-em="nav.contact">Contact</a></li>
       </ul>
     </nav>
     <div class="site-header__side">
-      <span class="site-header__cities">Riyadh · Dubai · Worldwide</span>
+      <span class="site-header__cities" data-em="header.cities">Riyadh · Dubai · Worldwide</span>
       <a class="btn btn--primary site-header__cta" href="#catalog" data-magnetic>Request quote</a>
       <button class="icon-btn theme-toggle" type="button" aria-label="Switch to light theme">
         <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
@@ -93,12 +93,12 @@
     <div class="container">
       <div class="grid-2 grid-2--wide-left">
         <div>
-          <p class="eyebrow reveal" data-reveal="fade-up">Corporate merchandise · KSA &amp; UAE</p>
+          <p class="eyebrow reveal" data-reveal="fade-up" data-em="hero.eyebrow">Corporate merchandise · KSA &amp; UAE</p>
           <h1 id="give-h1">
-            <span class="mask-clip"><span class="reveal" data-reveal="mask-title">Give something worth</span></span>
-            <span class="mask-clip"><span class="reveal accent-i" data-reveal="mask-title" data-reveal-delay="120">remembering.</span></span>
+            <span class="mask-clip"><span class="reveal" data-reveal="mask-title" data-em="hero.title1">Give something worth</span></span>
+            <span class="mask-clip"><span class="reveal accent-i" data-reveal="mask-title" data-reveal-delay="120" data-em="hero.title2">remembering.</span></span>
           </h1>
-          <p class="lede reveal" data-reveal="fade-up" data-reveal-delay="220">Premium corporate merchandise with sustainable options, custom branding, sampling and packaging — browsed live, requested in one list, quoted privately across Saudi Arabia and the UAE.</p>
+          <p class="lede reveal" data-reveal="fade-up" data-reveal-delay="220" data-em="hero.lead">Premium corporate merchandise with sustainable options, custom branding, sampling and packaging — browsed live, requested in one list, quoted privately across Saudi Arabia and the UAE.</p>
           <div class="page-hero__actions reveal" data-reveal="fade-up" data-reveal-delay="300">
             <a class="btn btn--primary" href="#catalog" data-magnetic>Browse products</a>
             <button class="btn btn--ghost" type="button" data-open-request>Start an enquiry</button>
@@ -293,7 +293,7 @@
       <div class="site-footer__brand">
         <img src="/assets/logo-light.svg" alt="Elite Marcom" width="140" height="47" class="logo-dark-only">
         <img src="/assets/logo.svg" alt="Elite Marcom" width="140" height="47" class="logo-light-only">
-        <p>A global experiential marketing, exhibitions, events, production and creative-solutions company — crafting extraordinary experiences from Riyadh and Dubai to the world.</p>
+        <p data-em="footer.about">A global experiential marketing, exhibitions, events, production and creative-solutions company — crafting extraordinary experiences from Riyadh and Dubai to the world.</p>
       </div>
       <nav aria-label="Footer — pages">
         <h3>Pages</h3>
@@ -316,9 +316,9 @@
       <div>
         <h3>Reach us</h3>
         <ul>
-          <li>Riyadh · Dubai · Worldwide</li>
-          <li><a href="mailto:info@elitemarcom.com">info@elitemarcom.com</a></li>
-          <li><a href="tel:+966599255995">+966 59 925 5995</a></li>
+          <li data-em="footer.cities">Riyadh · Dubai · Worldwide</li>
+          <li><a href="mailto:info@elitemarcom.com" data-em="footer.email">info@elitemarcom.com</a></li>
+          <li><a href="tel:+966599255995" data-em="footer.phone">+966 59 925 5995</a></li>
           <li><a href="https://wa.me/966599255995" rel="noopener" target="_blank">WhatsApp</a></li>
         </ul>
       </div>

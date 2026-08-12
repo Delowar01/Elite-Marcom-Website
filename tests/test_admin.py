@@ -49,6 +49,19 @@ def media_dirs(tmp_path_factory):
     media.MEDIA_DIR, media.GLB_DIR, media.OVERRIDES_DIR = old
 
 
+@pytest.fixture(scope="module", autouse=True)
+def content_dirs(tmp_path_factory):
+    """Isolated publish dir + rental runtime file for Phase 3 tests."""
+    from server import content
+
+    d = tmp_path_factory.mktemp("contentstore")
+    old = (content.PUBLISHED_DIR, content.RENTAL_RUNTIME)
+    content.PUBLISHED_DIR = d / "published" / "site"
+    content.RENTAL_RUNTIME = d / "data" / "rental-inventory.json"
+    yield
+    content.PUBLISHED_DIR, content.RENTAL_RUNTIME = old
+
+
 @pytest.fixture(autouse=True)
 def reset_limiter():
     security.limiter._hits.clear()
@@ -606,3 +619,148 @@ def test_media_and_brand_permissions():
     assert editor.get("/api/admin/media").status_code == 200
     assert editor.get("/api/admin/brand").status_code == 200
     assert "media.manage" in editor_me["permissions"]
+
+
+# ---------------- Phase 3: pages, publish, rollback, rentals ----------------
+
+def test_pages_list_and_editor_originals():
+    res = client.get("/api/admin/pages")
+    assert res.status_code == 200
+    data = res.json()
+    assert any(p["page"] == "index" for p in data["pages"])
+    assert data["published"] is False
+    editor = client.get("/api/admin/pages/index").json()
+    fields = {f["key"]: f for f in editor["regions"]}
+    assert fields["hero.title1"]["original"] == "Experiences made"
+    assert fields["hero.title1"]["value"] == ""
+    seo = {f["key"]: f for f in editor["seo"]}
+    assert "Elite Marcom" in seo["seo.title"]["original"]
+    glob = client.get("/api/admin/pages/_global").json()
+    gfields = {f["key"]: f for f in glob["regions"]}
+    assert gfields["nav.about"]["original"] == "About"
+    assert gfields["footer.email"]["original"] == "info@elitemarcom.com"
+
+
+def test_content_save_preview_publish_and_rollback():
+    me = client.get("/api/admin/me").json()
+    ok = client.post("/api/admin/pages/index",
+                     json={"lang": "en", "values": {"hero.title1": "Bold experiences",
+                                                    "seo.title": "Elite Marcom — New Title"}},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200, ok.text
+    # preview shows the draft; the public site does not (nothing published yet)
+    prev = client.get("/admin/preview/index")
+    assert prev.status_code == 200
+    assert "Bold experiences" in prev.text
+    assert "<title>Elite Marcom — New Title</title>" in prev.text
+    assert "Bold experiences" not in client.get("/").text
+    # publish v1
+    pub = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert pub.status_code == 200 and pub.json()["pages"] >= 11
+    v1 = pub.json()["id"]
+    assert "Bold experiences" in client.get("/").text
+    assert "Bold experiences" in client.get("/index.html").text
+    assert client.get("/sitemap.xml").text.startswith("<?xml")
+    # second edit + publish v2
+    client.post("/api/admin/pages/index",
+                json={"lang": "en", "values": {"hero.title1": "Even bolder"}},
+                headers={"X-CSRF": me["csrf"]})
+    pub2 = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert pub2.status_code == 200
+    assert "Even bolder" in client.get("/").text
+    # rollback to v1 restores content and republishes
+    rb = client.post("/api/admin/pages-rollback", json={"id": v1},
+                     headers={"X-CSRF": me["csrf"]})
+    assert rb.status_code == 200, rb.text
+    assert "Bold experiences" in client.get("/").text
+    editor = client.get("/api/admin/pages/index").json()
+    fields = {f["key"]: f for f in editor["regions"]}
+    assert fields["hero.title1"]["value"] == "Bold experiences"
+    actions = {e["action"] for e in aa.audit_list(limit=15)}
+    assert "site.published" in actions and "site.rolledback" in actions
+
+
+def test_global_header_footer_bake_applies_everywhere():
+    me = client.get("/api/admin/me").json()
+    ok = client.post("/api/admin/pages/_global",
+                     json={"lang": "en", "values": {"nav.about": "Our Story",
+                                                    "footer.email": "hello@elitemarcom.com"}},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200, ok.text
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    about = client.get("/about.html").text
+    assert ">Our Story</a>" in about
+    assert 'href="mailto:hello@elitemarcom.com"' in about
+    assert ">hello@elitemarcom.com</a>" in about
+    # unknown fields are rejected
+    bad = client.post("/api/admin/pages/_global",
+                      json={"lang": "en", "values": {"nav.evil": "x"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+
+
+def test_arabic_saved_as_draft_english_publishes():
+    me = client.get("/api/admin/me").json()
+    ok = client.post("/api/admin/pages/index",
+                     json={"lang": "ar", "values": {"hero.title1": "تجارب استثنائية"}},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    ar = client.get("/api/admin/pages/index?lang=ar").json()
+    fields = {f["key"]: f for f in ar["regions"]}
+    assert fields["hero.title1"]["value"] == "تجارب استثنائية"
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert "تجارب" not in client.get("/").text  # english publishes, arabic waits
+
+
+def test_unpublish_restores_original_site():
+    me = client.get("/api/admin/me").json()
+    res = client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200
+    home = client.get("/").text
+    assert "Bold experiences" not in home and "Experiences made" in home
+
+
+def test_rentals_admin_crud_reflects_on_public_api():
+    me = client.get("/api/admin/me").json()
+    before = client.get("/api/admin/rentals").json()
+    assert before["source"] == "default" and before["products"]
+    item = {"id": "rent-test-truss", "code": "EM-R-099", "name": "Test Truss Tower 4m",
+            "category": "Staging", "image": "/assets/services/led-display.webp",
+            "images": ["/assets/services/led-display.webp", "https://evil.example/x.png"],
+            "description": "A test item.", "tags": ["truss"], "specs": ["4 m height"],
+            "featured": True, "stockByMarket": {"ksa": "12", "uae": 3}}
+    res = client.post("/api/admin/rentals/save", json={"product": item},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    saved = res.json()["product"]
+    assert saved["stockByMarket"] == {"ksa": 12, "uae": 3}
+    assert saved["images"] == ["/assets/services/led-display.webp"]  # external URL dropped
+    pub = client.get("/api/rentals/products").json()["products"]
+    assert any(p["id"] == "rent-test-truss" for p in pub)
+    assert client.get("/api/admin/rentals").json()["source"] == "custom"
+    # bad id rejected
+    bad = client.post("/api/admin/rentals/save",
+                      json={"product": {**item, "id": "Bad ID!"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    # delete + reset to shipped list
+    ok = client.post("/api/admin/rentals/delete", json={"id": "rent-test-truss"},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    assert not any(p["id"] == "rent-test-truss"
+                   for p in client.get("/api/rentals/products").json()["products"])
+    client.post("/api/admin/rentals/reset", headers={"X-CSRF": me["csrf"]})
+    assert client.get("/api/admin/rentals").json()["source"] == "default"
+    actions = {e["action"] for e in aa.audit_list(limit=10)}
+    assert "rental.saved" in actions and "rental.deleted" in actions
+
+
+def test_pages_and_rentals_permissions():
+    sales = TestClient(app)
+    sign_in(sales, "sales@elitemarcom.com", "another-long-pass")
+    assert sales.get("/api/admin/pages").status_code == 403
+    assert sales.get("/api/admin/rentals").status_code == 403
+    editor = TestClient(app)
+    sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
+    assert editor.get("/api/admin/pages").status_code == 200   # content.edit
+    assert editor.get("/api/admin/rentals").status_code == 403  # no rentals.manage

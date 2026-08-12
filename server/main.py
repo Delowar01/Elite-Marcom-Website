@@ -354,14 +354,11 @@ async def contact_enquiry(request: Request, body: ContactEnquiry):
 
 # ---------------- rentals ----------------
 
-_RENTAL_FILE = Path(__file__).parent / "data" / "rental-inventory.json"
-
-
 def load_rentals() -> list[dict]:
-    try:
-        return json.loads(_RENTAL_FILE.read_text(encoding="utf-8")).get("products", [])
-    except (OSError, ValueError):
-        return []
+    # admin-managed runtime inventory wins over the shipped default
+    from . import content
+
+    return content.rentals_load()[0]
 
 
 @app.get("/api/rentals/products")
@@ -849,8 +846,13 @@ _OVERRIDE_TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image
 
 class CachedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):  # type: ignore[override]
-        from . import media
+        from . import content, media
 
+        published = content.published_file(path)
+        if published is not None:
+            ctype = "application/xml" if published.suffix == ".xml" else "text/html; charset=utf-8"
+            return FileResponse(published, media_type=ctype,
+                                headers={"Cache-Control": "no-cache"})
         override = media.override_for(path)
         if override is not None:
             ctype = _OVERRIDE_TYPES.get(override.suffix.lower(), "application/octet-stream")

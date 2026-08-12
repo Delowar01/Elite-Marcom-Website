@@ -119,6 +119,22 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         updated_at INTEGER NOT NULL,
         updated_by TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS content (
+        page TEXT NOT NULL,
+        key TEXT NOT NULL,
+        lang TEXT NOT NULL DEFAULT 'en',
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (page, key, lang)
+    );
+    CREATE TABLE IF NOT EXISTS publishes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        by TEXT NOT NULL,
+        pages INTEGER NOT NULL,
+        snapshot TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS media (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         file TEXT NOT NULL UNIQUE,
