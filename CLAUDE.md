@@ -43,5 +43,12 @@ documentation). Non-negotiable rules from it:
 - Corporate Gifts UI: catalog + product page share variant grouping via
   `EM.giftKey` (`public/js/site.js`); request lists live in localStorage
   (`em-giveaway-request`, per market, max 50 items).
+- After a code change that touches `public/*.html`, the admin must press
+  **Publish site** once: published snapshots in `runtime/published/site/` are
+  served ahead of `public/`, so a stale bake would hide new markup/scripts.
+  The Pages screen detects this and says so.
+- Site Insights is first-party and cookieless: no raw IP or user-agent is
+  stored, visitor keys use a salt that rotates daily, and GA4 only loads when
+  an admin sets a measurement id (`analytics.ga4Id`).
 - Workflow: develop on `claude/markdown-file-instructions-y9jr50`, push, and
   fast-forward `main` (the user pulls from `main` to test locally).

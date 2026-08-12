@@ -344,6 +344,9 @@ SETTINGS_KEYS = {
     "notify.whatsapp": str,      # staff WhatsApp number
     "site.defaultLanguage": str,  # published language (en now, ar later)
     "site.languages": list,
+    "analytics.enabled": bool,       # first-party measurement on/off
+    "analytics.ga4Id": str,          # optional GA4 measurement id (G-XXXXXXX)
+    "analytics.retentionDays": int,  # how long raw events are kept
 }
 
 
@@ -366,8 +369,15 @@ async def admin_settings_save(request: Request, body: SettingsBody,
     saved = []
     for key, value in body.values.items():
         expected = SETTINGS_KEYS.get(key)
-        if expected is None or not isinstance(value, expected):
+        if expected is None or not isinstance(value, expected) or \
+                (expected is int and isinstance(value, bool)) or \
+                (expected is bool and not isinstance(value, bool)):
             raise HTTPException(status_code=400, detail=f"Unknown or invalid setting: {key[:60]}")
+        if key == "analytics.ga4Id" and value and not re.match(r"^G-[A-Z0-9]{4,16}$", str(value)):
+            raise HTTPException(status_code=400,
+                                detail="A GA4 measurement id looks like G-XXXXXXXXXX.")
+        if key == "analytics.retentionDays":
+            value = max(30, min(1000, int(value)))
         if isinstance(value, list):
             value = [str(v)[:200] for v in value][:20]
         elif isinstance(value, str):
@@ -953,7 +963,9 @@ async def admin_pages(request: Request):
         pages.append({"page": page, "label": cfg["label"], "file": cfg["file"],
                       "regions": len(cfg["regions"]),
                       "dirty": bool(edited and (last is None or edited > last["ts"]))})
+    published = content.PUBLISHED_DIR.joinpath("index.html").is_file()
     return {"pages": pages,
+            "staleBuild": bool(published and last and content.source_mtime() > last["ts"]),
             "globalRegions": len(content.GLOBAL_REGIONS),
             "lastPublish": last, "history": content.publish_history(),
             "published": content.PUBLISHED_DIR.joinpath("index.html").is_file(),
@@ -1172,6 +1184,44 @@ async def admin_rentals_reset(request: Request, x_csrf: str | None = Header(defa
     removed = content.rentals_reset()
     aa.audit(session, "rentals.reset", "rentals", {"removed": removed}, _ip_hash(request))
     return {"ok": True, "removed": removed}
+
+
+# ---------------- site insights (Phase 5) ----------------
+
+@router.get("/api/admin/insights")
+async def admin_insights(request: Request, days: int = 30):
+    session = require_perm(request, "insights.view")
+    from . import analytics
+
+    data = analytics.summary(days)
+    data["settings"] = {
+        "enabled": bool(aa.setting_get("analytics.enabled", True)),
+        "ga4Id": aa.setting_get("analytics.ga4Id", "") or "",
+        "retentionDays": int(aa.setting_get("analytics.retentionDays",
+                                            analytics.RETENTION_DAYS_DEFAULT) or
+                             analytics.RETENTION_DAYS_DEFAULT),
+    }
+    data["canManage"] = aa.has_perm(session["role"], "settings.manage")
+    return data
+
+
+@router.get("/api/admin/insights/export")
+async def admin_insights_export(request: Request, days: int = 30):
+    """Daily traffic table as CSV — for board decks and offline analysis."""
+    session = require_perm(request, "insights.view")
+    from . import analytics, exports
+
+    data = analytics.summary(days)
+    rows = [[r["day"], str(r["views"]), str(r["visitors"])] for r in data["series"]]
+    header = ("Date", "Pageviews", "Visitors")
+    buf = ["\ufeff" + ",".join(header)]
+    buf.extend(",".join(r) for r in rows)
+    aa.audit(session, "insights.exported", "insights", {"days": days}, _ip_hash(request))
+    name = exports.export_filename("csv", f"traffic-{days}d")
+    return Response(content="\r\n".join(buf).encode("utf-8"),
+                    media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"',
+                             "Cache-Control": "no-store"})
 
 
 # ---------------- dashboard ----------------

@@ -379,3 +379,36 @@
   .admin-form { grid-template-columns: 1fr; }
   .req-detail, .jz-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- site insights (Phase 5) ---------- */
+.ins-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+.ins-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.ins-grid--tight { gap: 26px; }
+.ins-grid .admin-panel { margin-bottom: 0; }
+.ins-h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted); margin: 0 0 10px; }
+.chart { width: 100%; height: 150px; display: block; margin-bottom: 8px; overflow: visible; }
+.key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; }
+.key--orange { background: var(--orange-2); }
+.key--violet { background: var(--violet-2); }
+.bar-list { display: flex; flex-direction: column; gap: 7px; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(60px, 1fr) auto;
+  gap: 10px; align-items: center; font-size: 0.84rem; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); }
+.bar-track { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.bar-fill { display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--orange), var(--orange-2)); }
+.bar-num { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 0.8rem; }
+.ins-alert { margin: 0 0 8px; padding: 10px 14px; border-radius: 10px; font-size: 0.88rem;
+  border: 1px solid var(--border-strong); }
+.ins-alert:last-child { margin-bottom: 0; }
+.ins-alert--warn { border-color: #d9a441; color: #d9a441; }
+.ins-alert--good { border-color: #63c98c; color: #63c98c; }
+.funnel { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.funnel-step { flex: 1; min-width: 130px; padding: 16px 18px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--panel-2); display: flex;
+  flex-direction: column; gap: 3px; }
+.funnel-step b { font-size: 1.5rem; }
+.funnel-step span { color: var(--text-muted); font-size: 0.8rem; }
+.funnel-rate { color: var(--orange-2) !important; font-weight: 700; }
+.funnel-arrow { color: var(--text-muted); font-size: 1.2rem; }

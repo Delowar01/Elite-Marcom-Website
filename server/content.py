@@ -374,6 +374,17 @@ def publish_history(limit: int = 15) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def source_mtime() -> int:
+    """Newest change to the git-tracked page sources (a code deploy bumps it)."""
+    newest = 0
+    for cfg in PAGES.values():
+        try:
+            newest = max(newest, int((config.PUBLIC_DIR / cfg["file"]).stat().st_mtime))
+        except OSError:
+            continue
+    return newest
+
+
 def last_publish() -> dict | None:
     hist = publish_history(1)
     return hist[0] if hist else None

@@ -62,6 +62,19 @@ def content_dirs(tmp_path_factory):
     content.PUBLISHED_DIR, content.RENTAL_RUNTIME = old
 
 
+@pytest.fixture(scope="module", autouse=True)
+def analytics_db(tmp_path_factory):
+    """Isolated analytics database for Phase 5 tests."""
+    from server import analytics
+
+    analytics._DB_PATH = tmp_path_factory.mktemp("insights") / "analytics.db"
+    if hasattr(analytics._local, "conn"):
+        del analytics._local.conn
+    yield
+    if hasattr(analytics._local, "conn"):
+        del analytics._local.conn
+
+
 @pytest.fixture(autouse=True)
 def reset_limiter():
     security.limiter._hits.clear()
@@ -941,3 +954,154 @@ def test_design_publish_rollback_and_rich_text():
     client.post("/api/admin/pages/index", json={"lang": "en", "values": {"hero.lead": ""}},
                 headers={"X-CSRF": me["csrf"]})
     client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+
+
+# ---------------- Phase 5: site insights ----------------
+
+def test_insights_config_public_and_beacon_collects():
+    cfg = client.get("/api/site/insights-config")
+    assert cfg.status_code == 200
+    assert cfg.json()["enabled"] is True
+    assert cfg.json()["ga4Id"] == ""
+
+    batch = {"events": [
+        {"kind": "pageview", "path": "/", "referrer": "https://google.com/search?q=x",
+         "session": "sess-aaa"},
+        {"kind": "pageview", "path": "/giveaways.html", "session": "sess-aaa"},
+        {"kind": "product_view", "path": "/product.html", "session": "sess-aaa",
+         "meta": "A5 Eco Notebook"},
+        {"kind": "catalog_search", "path": "/giveaways.html", "session": "sess-aaa",
+         "meta": "gifts: notebook"},
+        {"kind": "add_to_request", "path": "/product.html", "session": "sess-aaa",
+         "meta": "A5 Eco Notebook"},
+        {"kind": "vital", "metric": "LCP", "value": 2100.5, "path": "/"},
+        {"kind": "vital", "metric": "CLS", "value": 0.04, "path": "/"},
+        {"kind": "nonsense", "path": "/"},
+        {"kind": "vital", "metric": "FAKE", "value": 1, "path": "/"},
+    ]}
+    res = client.post("/api/insights/collect", json=batch)
+    assert res.status_code == 200
+    assert res.json()["stored"] == 7  # the two invalid entries are dropped
+
+    # a second visitor from another session
+    client.post("/api/insights/collect", json={"events": [
+        {"kind": "pageview", "path": "/", "session": "sess-bbb"},
+        {"kind": "pageview", "path": "/contact.html", "session": "sess-bbb"},
+    ]})
+    # unknown fields are refused outright
+    assert client.post("/api/insights/collect",
+                       json={"events": [{"kind": "pageview", "evil": 1}]}).status_code == 422
+
+
+def test_insights_stores_no_raw_ip_or_user_agent():
+    from server import analytics
+
+    rows = analytics._rows("SELECT * FROM events LIMIT 50")
+    blob = json.dumps(rows)
+    assert "testclient" not in blob.lower()        # no user-agent
+    assert "127.0.0.1" not in blob and "testserver" not in blob  # no raw IP
+    assert all(len(r["visitor"]) == 20 for r in rows)
+    # the visitor key changes every day, so nobody is trackable across days
+    today = analytics.visitor_hash("1.2.3.4", "UA", "2026-08-12")
+    tomorrow = analytics.visitor_hash("1.2.3.4", "UA", "2026-08-13")
+    assert today != tomorrow and len(today) == 20
+    assert analytics.referrer_host("https://www.google.com/x") == "google.com"
+    assert analytics.referrer_host("http://127.0.0.1:8847/page") == ""  # own site is not a referrer
+    assert analytics.clean_path("javascript:alert(1)") == ""
+    assert analytics.device_class("iPhone Mobile Safari") == "mobile"
+
+
+def test_insights_summary_reports_traffic_and_funnel():
+    res = client.get("/api/admin/insights?days=30")
+    assert res.status_code == 200, res.text
+    d = res.json()
+    assert d["totals"]["views"] == 4
+    assert d["totals"]["visitors"] == 1     # same test client = one daily visitor key
+    assert d["totals"]["sessions"] == 2
+    assert len(d["series"]) == 30 and d["series"][-1]["views"] == 4
+    labels = {p["label"] for p in d["topPages"]}
+    assert "/" in labels and "/giveaways.html" in labels
+    assert d["referrers"][0]["label"] == "google.com"
+    assert d["devices"] and d["devices"][0]["count"] >= 1
+    assert d["entryPages"] and d["exitPages"]
+    assert d["products"][0]["label"] == "A5 Eco Notebook"
+    assert d["searches"][0]["label"] == "gifts: notebook"
+    steps = {f["step"]: f["count"] for f in d["funnel"]}
+    assert steps["Product views"] == 1 and steps["Added to request"] == 1
+    assert {v["metric"] for v in d["vitals"]} == {"LCP", "CLS"}
+    assert d["settings"]["enabled"] is True
+
+
+def test_enquiry_records_a_server_side_conversion():
+    before = client.get("/api/admin/insights?days=7").json()["funnel"][2]["count"]
+    challenge = client.get("/api/security/challenge?form=contact").json()["challenge"]
+    res = client.post("/api/contact/enquiries", json={
+        "enquiryType": "New project", "fullName": "Insights Tester",
+        "company": "Test Co", "email": "insights@example.com", "phone": "+966500000000",
+        "market": "Saudi Arabia", "service": "Branding",
+        "message": "Please send a proposal for our stand.", "consent": True,
+        "challenge": challenge, "consentVersion": "2026-01", "sourcePage": "/contact.html"},
+        headers={"Origin": "http://127.0.0.1:8847"})
+    assert res.status_code == 200, res.text
+    after = client.get("/api/admin/insights?days=7").json()
+    assert after["funnel"][2]["count"] == before + 1
+    assert after["funnel"][2]["rate"] >= 0
+
+
+def test_insights_permissions_and_settings_validation():
+    me = client.get("/api/admin/me").json()
+    # analyst may read insights; sales may not
+    client.post("/api/admin/users",
+                json={"email": "analyst@elitemarcom.com", "name": "Data Analyst",
+                      "password": "analyst-long-pass", "role": "analyst"},
+                headers={"X-CSRF": me["csrf"]})
+    analyst = TestClient(app)
+    analyst_me = sign_in(analyst, "analyst@elitemarcom.com", "analyst-long-pass")
+    assert analyst.get("/api/admin/insights").status_code == 200
+    assert analyst.get("/api/admin/insights").json()["canManage"] is False
+    assert analyst.get("/api/admin/insights/export?days=7").status_code == 200
+    assert "insights.view" in analyst_me["permissions"]
+    sales = TestClient(app)
+    sign_in(sales, "sales@elitemarcom.com", "another-long-pass")
+    assert sales.get("/api/admin/insights").status_code == 403
+
+    # settings: GA4 id shape enforced, retention clamped, bool kept a bool
+    bad = client.post("/api/admin/settings", json={"values": {"analytics.ga4Id": "UA-123"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    ok = client.post("/api/admin/settings",
+                     json={"values": {"analytics.ga4Id": "G-ABCD123456",
+                                      "analytics.retentionDays": 5,
+                                      "analytics.enabled": True}},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    assert aa.setting_get("analytics.retentionDays") == 30  # clamped up from 5
+    assert client.get("/api/site/insights-config").json()["ga4Id"] == "G-ABCD123456"
+    bad_type = client.post("/api/admin/settings", json={"values": {"analytics.enabled": "yes"}},
+                           headers={"X-CSRF": me["csrf"]})
+    assert bad_type.status_code == 400
+
+
+def test_insights_can_be_switched_off_completely():
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/settings", json={"values": {"analytics.enabled": False}},
+                headers={"X-CSRF": me["csrf"]})
+    assert client.get("/api/site/insights-config").json()["enabled"] is False
+    res = client.post("/api/insights/collect",
+                      json={"events": [{"kind": "pageview", "path": "/", "session": "off"}]})
+    assert res.status_code == 200 and res.json()["stored"] == 0
+    client.post("/api/admin/settings", json={"values": {"analytics.enabled": True,
+                                                        "analytics.ga4Id": ""}},
+                headers={"X-CSRF": me["csrf"]})
+
+
+def test_insights_retention_prune():
+    from server import analytics
+
+    with analytics._lock:
+        conn = analytics._connect()
+        conn.execute("INSERT INTO events (ts, day, kind, path) VALUES (?,?,?,?)",
+                     (1, "2020-01-01", "pageview", "/old"))
+        conn.commit()
+    assert analytics.prune(30) == 1
+    assert not any(r["path"] == "/old" for r in analytics._rows("SELECT path FROM events"))

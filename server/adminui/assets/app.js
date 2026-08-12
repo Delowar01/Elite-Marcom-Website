@@ -266,6 +266,7 @@
 
   /* ---------- page editor ---------- */
   var pageLang = "en";
+  var edInsightDays = 30;
 
   function pageEditor(page) {
     api("/api/admin/pages/" + encodeURIComponent(page) + "?lang=" + pageLang).then(function (r) {
@@ -592,6 +593,7 @@
           '<h1 class="admin-h1">Pages &amp; SEO</h1>' +
           '<p class="admin-sub">Edit text and SEO per page, preview privately, then publish the whole site in one click. The original design always stays safe in the code.</p>' +
           '<div class="admin-panel"><h2>Publishing</h2>' +
+          (d.staleBuild ? '<p class="ins-alert ins-alert--warn">The site code was updated after your last publish — press <b>Publish site</b> once so the live pages pick up the newest version.</p>' : "") +
           '<p class="admin-inline-note" style="margin-bottom:12px;">' +
           (d.published
             ? "The site is serving your published version" + (lp ? " (published " + esc(when(lp.ts)) + " by " + esc(lp.by) + ")" : "") + "."
@@ -1739,6 +1741,151 @@
           });
         });
         refreshDirty();
+      });
+    },
+
+    insights: function () {
+      var days = edInsightDays;
+      api("/api/admin/insights?days=" + days).then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        var t = d.totals || {};
+        var s = d.settings || {};
+
+        function delta(v) {
+          if (v === null || v === undefined) return "";
+          var cls = v >= 0 ? "badge-ok" : "badge-bad";
+          return ' <span class="' + cls + '" style="font-size:0.72rem;">' +
+                 (v >= 0 ? "+" : "") + esc(v) + "%</span>";
+        }
+        function sparkline(series) {
+          if (!series.length) return "";
+          var w = 720, h = 150, pad = 4;
+          var max = Math.max.apply(null, series.map(function (p) { return p.views; })) || 1;
+          var step = series.length > 1 ? (w - pad * 2) / (series.length - 1) : 0;
+          function pts(key) {
+            return series.map(function (p, i) {
+              var x = pad + i * step;
+              var y = h - pad - (p[key] / max) * (h - pad * 2);
+              return x.toFixed(1) + "," + y.toFixed(1);
+            }).join(" ");
+          }
+          var line = pts("views");
+          var area = line + " " + (pad + (series.length - 1) * step).toFixed(1) + "," + (h - pad) +
+                     " " + pad + "," + (h - pad);
+          return '<svg class="chart" viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="none" role="img" aria-label="Daily pageviews">' +
+            '<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">' +
+            '<stop offset="0%" stop-color="var(--orange)" stop-opacity="0.45"/>' +
+            '<stop offset="100%" stop-color="var(--orange)" stop-opacity="0.02"/></linearGradient></defs>' +
+            '<polygon points="' + area + '" fill="url(#cg)"></polygon>' +
+            '<polyline points="' + line + '" fill="none" stroke="var(--orange-2)" stroke-width="2.5" ' +
+            'stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+            '<polyline points="' + pts("visitors") + '" fill="none" stroke="var(--violet-2)" ' +
+            'stroke-width="2" stroke-dasharray="5 4"></polyline></svg>';
+        }
+        function barList(rows, empty, suffix) {
+          if (!rows || !rows.length) return '<p class="admin-inline-note">' + esc(empty) + "</p>";
+          var max = Math.max.apply(null, rows.map(function (x) { return x.count; })) || 1;
+          return '<div class="bar-list">' + rows.map(function (x) {
+            return '<div class="bar-row"><span class="bar-label" title="' + esc(x.label) + '">' +
+              esc(x.label) + '</span><span class="bar-track"><span class="bar-fill" style="width:' +
+              Math.max(2, Math.round(x.count / max * 100)) + '%"></span></span>' +
+              '<span class="bar-num">' + esc(x.count) + esc(suffix || "") + "</span></div>";
+          }).join("") + "</div>";
+        }
+
+        main.innerHTML =
+          '<h1 class="admin-h1">Site Insights</h1>' +
+          '<p class="admin-sub">Your own measurement — no cookies, no visitor profiles. Visitor counts use a key that changes every day, so nobody can be followed across days or identified.</p>' +
+          '<div class="ins-toolbar">' +
+          [7, 30, 90, 365].map(function (n) {
+            return '<button class="btn btn--small ' + (n === days ? "btn--primary" : "btn--ghost") +
+              '" data-days="' + n + '">' + (n === 365 ? "12 months" : n + " days") + "</button>";
+          }).join("") +
+          '<span class="ed-spacer"></span>' +
+          (s.enabled ? "" : '<span class="badge-bad">measurement is off</span> ') +
+          '<a class="btn btn--ghost btn--small" href="/api/admin/insights/export?days=' + days + '">Export CSV</a></div>' +
+          ((d.alerts || []).length
+            ? '<div class="admin-panel">' + d.alerts.map(function (a) {
+                return '<p class="ins-alert ins-alert--' + esc(a.level) + '">' + esc(a.text) + "</p>";
+              }).join("") + "</div>" : "") +
+          '<div class="stat-row">' +
+          '<div class="stat-card"><b>' + esc(t.views || 0) + delta(t.viewsChange) + "</b><span>Pageviews</span></div>" +
+          '<div class="stat-card"><b>' + esc(t.visitors || 0) + delta(t.visitorsChange) + "</b><span>Visitors</span></div>" +
+          '<div class="stat-card"><b>' + esc(t.sessions || 0) + "</b><span>Visits</span></div>" +
+          '<div class="stat-card"><b>' + esc((d.funnel && d.funnel[2] ? d.funnel[2].count : 0)) + "</b><span>Enquiries sent</span></div>" +
+          '<div class="stat-card"><b>' + esc(d.manualDownloads || 0) + "</b><span>Manuals downloaded</span></div></div>" +
+          '<div class="admin-panel"><h2>Traffic</h2>' +
+          (t.views ? sparkline(d.series || []) : '<p class="admin-inline-note">No visits recorded yet — the beacon starts counting as soon as people browse the site.</p>') +
+          '<p class="admin-inline-note"><span class="key key--orange"></span> Pageviews &nbsp; <span class="key key--violet"></span> Visitors &nbsp;·&nbsp; ' +
+          esc(d.start) + " → " + esc(d.end) + "</p></div>" +
+          '<div class="ins-grid">' +
+          '<div class="admin-panel"><h2>Top pages</h2>' + barList(d.topPages, "No pageviews yet.") + "</div>" +
+          '<div class="admin-panel"><h2>Where visitors come from</h2>' + barList(d.referrers, "All visits are direct or unreferred so far.") + "</div>" +
+          '<div class="admin-panel"><h2>Countries</h2>' + barList(d.countries, "Country data appears once the site runs behind Cloudflare.") + "</div>" +
+          '<div class="admin-panel"><h2>Devices</h2>' + barList(d.devices, "No device data yet.") + "</div>" +
+          '<div class="admin-panel"><h2>Landing pages</h2>' + barList(d.entryPages, "No sessions yet.") + "</div>" +
+          '<div class="admin-panel"><h2>Last page seen</h2>' + barList(d.exitPages, "No sessions yet.") + "</div>" +
+          "</div>" +
+          '<div class="admin-panel"><h2>Catalog interest</h2><div class="ins-grid ins-grid--tight">' +
+          "<div><h3 class=\"ins-h3\">Most viewed products</h3>" + barList(d.products, "No product pages viewed yet.") + "</div>" +
+          "<div><h3 class=\"ins-h3\">What people searched for</h3>" + barList(d.searches, "No catalog searches yet.") + "</div>" +
+          "<div><h3 class=\"ins-h3\">Filters used</h3>" + barList(d.filters, "No filters used yet.") + "</div>" +
+          "</div></div>" +
+          '<div class="admin-panel"><h2>From browsing to enquiry</h2><div class="funnel">' +
+          (d.funnel || []).map(function (f, i) {
+            var base = d.funnel[0].count;
+            var rate = !base ? "—" : (i === 0 ? "starting point" : f.rate + "% of viewers");
+            return '<div class="funnel-step"><b>' + esc(f.count) + "</b><span>" + esc(f.step) +
+              '</span><span class="funnel-rate">' + esc(rate) + "</span></div>";
+          }).join('<span class="funnel-arrow">→</span>') + "</div></div>" +
+          '<div class="admin-panel"><h2>Speed experienced by real visitors</h2>' +
+          ((d.vitals || []).length
+            ? '<div class="stat-row">' + d.vitals.map(function (v) {
+                var good = { LCP: 2500, CLS: 0.1, INP: 200, FCP: 1800, TTFB: 800 }[v.metric];
+                var label = { LCP: "Main content shown", CLS: "Layout stability",
+                              INP: "Response to taps", FCP: "First paint", TTFB: "Server response" }[v.metric];
+                var value = v.metric === "CLS" ? v.p75 : Math.round(v.p75) + " ms";
+                return '<div class="stat-card"><b>' + esc(value) +
+                  (v.p75 <= good ? ' <span class="badge-ok" style="font-size:0.7rem;">good</span>'
+                                 : ' <span class="badge-bad" style="font-size:0.7rem;">slow</span>') +
+                  "</b><span>" + esc(label) + " (" + esc(v.metric) + ")</span></div>";
+              }).join("") + "</div>" +
+              (d.slowPages && d.slowPages.length
+                ? "<h3 class=\"ins-h3\">Slowest pages (average main-content time)</h3>" +
+                  barList(d.slowPages, "", " ms") : "")
+            : '<p class="admin-inline-note">Speed data appears after a few real visits.</p>') + "</div>" +
+          (d.canManage
+            ? '<div class="admin-panel"><h2>Measurement settings</h2><form class="admin-form" id="ins-settings">' +
+              '<div><label for="ins-enabled">First-party measurement</label><select id="ins-enabled">' +
+              '<option value="on"' + (s.enabled ? " selected" : "") + ">On</option>" +
+              '<option value="off"' + (s.enabled ? "" : " selected") + ">Off — collect nothing</option></select></div>" +
+              '<div><label for="ins-ga4">Google Analytics 4 measurement id (optional)</label>' +
+              '<input id="ins-ga4" maxlength="24" placeholder="G-XXXXXXXXXX" value="' + esc(s.ga4Id || "") + '"></div>' +
+              '<div><label for="ins-retention">Keep raw events for (days)</label>' +
+              '<input id="ins-retention" type="number" min="30" max="1000" value="' + esc(s.retentionDays || 400) + '"></div>' +
+              '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save settings</button>' +
+              '<span class="admin-inline-note">GA4 only loads for visitors when an id is set. ' +
+              esc(d.totalEvents) + " events stored in total.</span></div></form></div>"
+            : "");
+
+        main.querySelectorAll("[data-days]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            edInsightDays = parseInt(btn.getAttribute("data-days"), 10);
+            views.insights();
+          });
+        });
+        var form = document.getElementById("ins-settings");
+        if (form) form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          api("/api/admin/settings", { values: {
+            "analytics.enabled": document.getElementById("ins-enabled").value === "on",
+            "analytics.ga4Id": document.getElementById("ins-ga4").value.trim(),
+            "analytics.retentionDays": parseInt(document.getElementById("ins-retention").value, 10) || 400
+          } }).then(function (r2) {
+            r2.ok ? (toast("Measurement settings saved."), views.insights()) : apiErr(r2);
+          });
+        });
       });
     },
 

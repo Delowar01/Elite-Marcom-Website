@@ -45,11 +45,14 @@ MAX_BODY_BYTES = 8 * 1024 * 1024  # generous cap; CV endpoint enforces 5 MB on t
 _SUPPLIER_IMG = "https://*.giftsksa.com https://giftsksa.com https://*.jasani.ae https://jasani.ae"
 CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com; "
+    "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com https://challenges.cloudflare.com "
+    "https://www.googletagmanager.com; "
     "style-src 'self' 'unsafe-inline'; "
-    f"img-src 'self' data: https://i.ytimg.com {_SUPPLIER_IMG}; "
+    f"img-src 'self' data: blob: https://i.ytimg.com https://www.google-analytics.com "
+    f"https://www.googletagmanager.com {_SUPPLIER_IMG}; "
     "font-src 'self'; "
-    "connect-src 'self' blob: https://challenges.cloudflare.com; "
+    "connect-src 'self' blob: https://challenges.cloudflare.com "
+    "https://www.google-analytics.com https://*.google-analytics.com https://www.googletagmanager.com; "
     "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com; "
     "frame-ancestors 'none'; "
     "object-src 'none'; "
@@ -300,6 +303,7 @@ async def careers_apply(
     reference = storage.save_record("career", payload, ip_hash,
                                     config.RETENTION_CAREERS_DAYS, cv_bytes=cv_bytes)
     notify.notify_new_request("career", reference)
+    track_server_event(request, "enquiry", meta="career application")
     return {"reference": reference}
 
 
@@ -354,6 +358,7 @@ async def contact_enquiry(request: Request, body: ContactEnquiry):
     }
     reference = storage.save_record("contact", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
     notify.notify_new_request("contact", reference)
+    track_server_event(request, "enquiry", meta="contact")
     return {"reference": reference}
 
 
@@ -469,6 +474,7 @@ async def rentals_enquiry(request: Request, body: RentalEnquiry):
     }
     reference = storage.save_record("rental_enquiry", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
     notify.notify_new_request("rental_enquiry", reference)
+    track_server_event(request, "enquiry", meta="rental")
     return {"reference": reference}
 
 
@@ -729,6 +735,7 @@ async def giveaways_enquiry(
                                     config.RETENTION_SUBMISSIONS_DAYS,
                                     cv_bytes=logo_bytes, file_ext=logo_ext)
     notify.notify_new_request("giveaway_enquiry", reference)
+    track_server_event(request, "enquiry", meta="corporate gifts")
     return {"reference": reference}
 
 
@@ -789,8 +796,96 @@ async def start_cleanup_task():
                 storage.cleanup_expired()
             except Exception:
                 pass
+            try:
+                from . import adminauth, analytics
+
+                analytics.prune(int(adminauth.setting_get(
+                    "analytics.retentionDays", analytics.RETENTION_DAYS_DEFAULT) or
+                    analytics.RETENTION_DAYS_DEFAULT))
+            except Exception:
+                pass
             await asyncio.sleep(24 * 3600)
     asyncio.get_event_loop().create_task(loop())
+
+
+# ---------------- site insights (first-party analytics) ----------------
+
+class InsightEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(max_length=24)
+    path: str = Field(default="", max_length=140)
+    referrer: str = Field(default="", max_length=300)
+    session: str = Field(default="", max_length=24)
+    meta: str = Field(default="", max_length=120)
+    metric: str = Field(default="", max_length=8)
+    value: float | None = None
+
+
+class InsightBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    events: list[InsightEvent] = Field(default_factory=list, max_length=20)
+
+
+@app.get("/api/site/insights-config")
+async def insights_config():
+    """Public switch read by the beacon: is measuring on, and is GA4 configured?"""
+    from . import adminauth, analytics
+
+    try:
+        enabled = adminauth.setting_get("analytics.enabled", True)
+        ga4 = adminauth.setting_get("analytics.ga4Id", "") or ""
+    except Exception:
+        enabled, ga4 = True, ""
+    return JSONResponse({"enabled": bool(enabled), "ga4Id": str(ga4)[:24],
+                         "kinds": list(analytics.EVENT_KINDS)},
+                        headers={"Cache-Control": "public, max-age=300"})
+
+
+@app.post("/api/insights/collect")
+async def insights_collect(request: Request, body: InsightBatch):
+    """Cookieless beacon intake. Stores no raw IP and no user-agent string."""
+    from . import adminauth, analytics
+
+    ip = security.client_ip(request)
+    ip_hash = security.hash_ip(ip)
+    security.limiter.check("insights", ip_hash, 240, 60)
+    try:
+        if not adminauth.setting_get("analytics.enabled", True):
+            return {"ok": True, "stored": 0}
+    except Exception:
+        pass
+    user_agent = request.headers.get("user-agent", "")
+    visitor = analytics.visitor_hash(ip, user_agent)
+    device = analytics.device_class(user_agent)
+    country = (request.headers.get("cf-ipcountry", "") or "")[:2]
+    stored = 0
+    for event in body.events[:analytics.MAX_BATCH]:
+        if event.kind == "vital":
+            if analytics.record_vital(event.metric, event.value or 0.0, event.path, device):
+                stored += 1
+            continue
+        if analytics.record(event.kind, path=event.path, visitor=visitor,
+                            session=event.session,
+                            referrer=analytics.referrer_host(event.referrer),
+                            country=country, device=device, meta=event.meta,
+                            value=event.value):
+            stored += 1
+    return {"ok": True, "stored": stored}
+
+
+def track_server_event(request: Request, kind: str, meta: str = "", path: str = "") -> None:
+    """Server-side event (never blocked by ad blockers or JS-off browsers)."""
+    from . import analytics
+
+    try:
+        user_agent = request.headers.get("user-agent", "")
+        analytics.record(kind, path=path or str(request.url.path),
+                         visitor=analytics.visitor_hash(security.client_ip(request), user_agent),
+                         device=analytics.device_class(user_agent),
+                         country=(request.headers.get("cf-ipcountry", "") or "")[:2],
+                         meta=meta)
+    except Exception:
+        pass  # analytics must never break a customer submission
 
 
 # ---------------- brand theme, media library & hero config (admin-managed) ----------------
