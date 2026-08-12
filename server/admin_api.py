@@ -1189,11 +1189,11 @@ async def admin_rentals_reset(request: Request, x_csrf: str | None = Header(defa
 # ---------------- site insights (Phase 5) ----------------
 
 @router.get("/api/admin/insights")
-async def admin_insights(request: Request, days: int = 30):
+async def admin_insights(request: Request, days: int = 30, start: str = "", end: str = ""):
     session = require_perm(request, "insights.view")
     from . import analytics
 
-    data = analytics.summary(days)
+    data = analytics.summary(days, start[:10], end[:10])
     data["settings"] = {
         "enabled": bool(aa.setting_get("analytics.enabled", True)),
         "ga4Id": aa.setting_get("analytics.ga4Id", "") or "",
@@ -1205,23 +1205,38 @@ async def admin_insights(request: Request, days: int = 30):
     return data
 
 
-@router.get("/api/admin/insights/export")
-async def admin_insights_export(request: Request, days: int = 30):
-    """Daily traffic table as CSV — for board decks and offline analysis."""
-    session = require_perm(request, "insights.view")
-    from . import analytics, exports
+_INSIGHT_TYPES = {"csv": "text/csv; charset=utf-8",
+                  "pdf": "application/pdf",
+                  "html": "text/html; charset=utf-8"}
 
-    data = analytics.summary(days)
-    rows = [[r["day"], str(r["views"]), str(r["visitors"])] for r in data["series"]]
-    header = ("Date", "Pageviews", "Visitors")
-    buf = ["\ufeff" + ",".join(header)]
-    buf.extend(",".join(r) for r in rows)
-    aa.audit(session, "insights.exported", "insights", {"days": days}, _ip_hash(request))
-    name = exports.export_filename("csv", f"traffic-{days}d")
-    return Response(content="\r\n".join(buf).encode("utf-8"),
-                    media_type="text/csv; charset=utf-8",
+
+@router.get("/api/admin/insights/export")
+async def admin_insights_export(request: Request, days: int = 30, start: str = "",
+                                end: str = "", format: str = "csv"):
+    """The same report as the dashboard, as CSV, a branded PDF or a
+    self-contained HTML file that can be emailed or printed."""
+    session = require_perm(request, "insights.view")
+    from . import analytics, exports, reports
+
+    if format not in _INSIGHT_TYPES:
+        raise HTTPException(status_code=400, detail="Export as csv, pdf or html.")
+    data = analytics.summary(days, start[:10], end[:10])
+    if format == "pdf":
+        payload = reports.insights_pdf(data)
+    elif format == "html":
+        payload = reports.insights_html(data).encode("utf-8")
+    else:
+        buf = ["\ufeff" + ",".join(("Date", "Pageviews", "Visitors"))]
+        buf.extend(f'{r["day"]},{r["views"]},{r["visitors"]}' for r in data["series"])
+        payload = "\r\n".join(buf).encode("utf-8")
+    aa.audit(session, "insights.exported", "insights",
+             {"format": format, "start": data["start"], "end": data["end"]}, _ip_hash(request))
+    name = exports.export_filename(format, f'{data["start"]}-to-{data["end"]}',
+                                   prefix="insights")
+    return Response(content=payload, media_type=_INSIGHT_TYPES[format],
                     headers={"Content-Disposition": f'attachment; filename="{name}"',
-                             "Cache-Control": "no-store"})
+                             "Cache-Control": "no-store",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 # ---------------- dashboard ----------------

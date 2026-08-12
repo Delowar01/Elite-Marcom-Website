@@ -201,10 +201,33 @@ def _pct(now: float, before: float) -> float | None:
     return round((now - before) / before * 100, 1)
 
 
-def summary(days: int = 30) -> dict:
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def parse_range(start: str = "", end: str = "", days: int = 30) -> tuple[str, str, int]:
+    """Explicit start/end win; otherwise fall back to a rolling window."""
+    if _DAY_RE.match(start or "") and _DAY_RE.match(end or ""):
+        try:
+            s = datetime.strptime(start, "%Y-%m-%d")
+            e = datetime.strptime(end, "%Y-%m-%d")
+        except ValueError:
+            return (*_range(30), 30)
+        if e < s:
+            s, e = e, s
+        span = (e - s).days + 1
+        if span > 1100:
+            e = s + timedelta(days=1099)
+            span = 1100
+        return s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d"), span
     days = max(1, min(365, days))
-    start, end = _range(days)
-    prev_start, prev_end = _range(days * 2)
+    s, e = _range(days)
+    return s, e, days
+
+
+def summary(days: int = 30, start: str = "", end: str = "") -> dict:
+    start, end, days = parse_range(start, end, days)
+    span = timedelta(days=days)
+    prev_start = (datetime.strptime(start, "%Y-%m-%d") - span).strftime("%Y-%m-%d")
     prev_end = (datetime.strptime(start, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
 
     totals = _totals(start, end)
@@ -215,7 +238,7 @@ def summary(days: int = 30) -> dict:
         " WHERE kind='pageview' AND day BETWEEN ? AND ? GROUP BY day", (start, end))}
     series = []
     cursor = datetime.strptime(start, "%Y-%m-%d")
-    for _ in range(days):
+    for _ in range(min(days, 400)):
         key = cursor.strftime("%Y-%m-%d")
         row = series_rows.get(key, {})
         series.append({"day": key, "views": row.get("views", 0), "visitors": row.get("visitors", 0)})

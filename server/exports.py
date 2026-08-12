@@ -325,6 +325,6 @@ def to_pdf(items: list[dict]) -> bytes:
     return pdf.done()
 
 
-def export_filename(fmt: str, scope: str) -> str:
+def export_filename(fmt: str, scope: str, prefix: str = "requests") -> str:
     stamp = time.strftime("%Y%m%d-%H%M")
-    return f"elite-marcom-requests-{scope}-{stamp}.{fmt}"
+    return f"elite-marcom-{prefix}-{scope}-{stamp}.{fmt}"

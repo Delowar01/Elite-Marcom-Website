@@ -266,7 +266,7 @@
 
   /* ---------- page editor ---------- */
   var pageLang = "en";
-  var edInsightDays = 30;
+  var edInsightRange = { days: 30, start: '', end: '' };
 
   function pageEditor(page) {
     api("/api/admin/pages/" + encodeURIComponent(page) + "?lang=" + pageLang).then(function (r) {
@@ -1745,8 +1745,14 @@
     },
 
     insights: function () {
-      var days = edInsightDays;
-      api("/api/admin/insights?days=" + days).then(function (r) {
+      var rng = edInsightRange;
+      var days = rng.days;
+      function rangeQs() {
+        return rng.start && rng.end
+          ? "start=" + encodeURIComponent(rng.start) + "&end=" + encodeURIComponent(rng.end)
+          : "days=" + rng.days;
+      }
+      api("/api/admin/insights?" + rangeQs()).then(function (r) {
         if (!r.ok) return apiErr(r);
         var d = r.data;
         var t = d.totals || {};
@@ -1799,12 +1805,20 @@
           '<p class="admin-sub">Your own measurement — no cookies, no visitor profiles. Visitor counts use a key that changes every day, so nobody can be followed across days or identified.</p>' +
           '<div class="ins-toolbar">' +
           [7, 30, 90, 365].map(function (n) {
-            return '<button class="btn btn--small ' + (n === days ? "btn--primary" : "btn--ghost") +
+            var on = !rng.start && n === days;
+            return '<button class="btn btn--small ' + (on ? "btn--primary" : "btn--ghost") +
               '" data-days="' + n + '">' + (n === 365 ? "12 months" : n + " days") + "</button>";
           }).join("") +
+          '<span class="date-range"><label for="ins-from">From</label>' +
+          '<input type="date" id="ins-from" value="' + esc(rng.start || d.start) + '" max="' + esc(d.end) + '">' +
+          '<label for="ins-to">to</label>' +
+          '<input type="date" id="ins-to" value="' + esc(rng.end || d.end) + '" max="' + esc(d.end) + '">' +
+          '<button class="btn btn--ghost btn--small" id="ins-apply">Apply</button>' +
+          (rng.start ? '<button class="btn btn--ghost btn--small" id="ins-clear">Clear</button>' : "") +
+          "</span>" +
           '<span class="ed-spacer"></span>' +
           (s.enabled ? "" : '<span class="badge-bad">measurement is off</span> ') +
-          '<a class="btn btn--ghost btn--small" href="/api/admin/insights/export?days=' + days + '">Export CSV</a></div>' +
+          '<button class="btn btn--ghost btn--small" id="ins-export">Download report ▾</button></div>' +
           ((d.alerts || []).length
             ? '<div class="admin-panel">' + d.alerts.map(function (a) {
                 return '<p class="ins-alert ins-alert--' + esc(a.level) + '">' + esc(a.text) + "</p>";
@@ -1871,9 +1885,33 @@
 
         main.querySelectorAll("[data-days]").forEach(function (btn) {
           btn.addEventListener("click", function () {
-            edInsightDays = parseInt(btn.getAttribute("data-days"), 10);
+            edInsightRange = { days: parseInt(btn.getAttribute("data-days"), 10), start: "", end: "" };
             views.insights();
           });
+        });
+        document.getElementById("ins-apply").addEventListener("click", function () {
+          var from = document.getElementById("ins-from").value;
+          var to = document.getElementById("ins-to").value;
+          if (!from || !to) { toast("Pick both dates.", true); return; }
+          if (from > to) { var swap = from; from = to; to = swap; }
+          edInsightRange = { days: rng.days, start: from, end: to };
+          views.insights();
+        });
+        var clearBtn = document.getElementById("ins-clear");
+        if (clearBtn) clearBtn.addEventListener("click", function () {
+          edInsightRange = { days: 30, start: "", end: "" };
+          views.insights();
+        });
+        document.getElementById("ins-export").addEventListener("click", function (e) {
+          e.stopPropagation();
+          showMenu(this, [
+            { label: "PDF report (branded)", action: function () {
+              location.href = "/api/admin/insights/export?format=pdf&" + rangeQs(); } },
+            { label: "HTML report (share or print)", action: function () {
+              location.href = "/api/admin/insights/export?format=html&" + rangeQs(); } },
+            { label: "CSV (daily traffic)", action: function () {
+              location.href = "/api/admin/insights/export?format=csv&" + rangeQs(); } }
+          ]);
         });
         var form = document.getElementById("ins-settings");
         if (form) form.addEventListener("submit", function (e) {

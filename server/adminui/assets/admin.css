@@ -412,3 +412,11 @@
 .funnel-step span { color: var(--text-muted); font-size: 0.8rem; }
 .funnel-rate { color: var(--orange-2) !important; font-weight: 700; }
 .funnel-arrow { color: var(--text-muted); font-size: 1.2rem; }
+.date-range { display: inline-flex; align-items: center; gap: 7px; font-size: 0.82rem;
+  color: var(--text-muted); padding-left: 6px; flex-wrap: wrap; }
+.date-range input[type="date"] {
+  padding: 7px 10px; border-radius: 9px; border: 1px solid var(--border-strong);
+  background: var(--panel-2); color: var(--text); font: inherit; font-size: 0.82rem;
+  color-scheme: dark;
+}
+[data-theme="light"] .date-range input[type="date"] { color-scheme: light; }

@@ -1105,3 +1105,44 @@ def test_insights_retention_prune():
         conn.commit()
     assert analytics.prune(30) == 1
     assert not any(r["path"] == "/old" for r in analytics._rows("SELECT path FROM events"))
+
+
+def test_insights_custom_date_range_and_reports():
+    from server import analytics
+
+    # explicit range wins over the rolling window and is echoed back
+    res = client.get("/api/admin/insights?start=2026-01-01&end=2026-01-31")
+    assert res.status_code == 200
+    d = res.json()
+    assert d["start"] == "2026-01-01" and d["end"] == "2026-01-31" and d["days"] == 31
+    assert len(d["series"]) == 31 and d["totals"]["views"] == 0  # no traffic back then
+    # reversed dates are corrected, junk falls back to the rolling window
+    assert analytics.parse_range("2026-02-10", "2026-02-01")[0] == "2026-02-01"
+    assert analytics.parse_range("not-a-date", "x", 14)[2] == 14
+    # today's traffic still shows through an explicit range
+    today = analytics._today()
+    live = client.get(f"/api/admin/insights?start={today}&end={today}").json()
+    assert live["totals"]["views"] >= 1
+
+    # branded PDF, standalone HTML and CSV all cover the same window
+    pdf = client.get(f"/api/admin/insights/export?format=pdf&start={today}&end={today}")
+    assert pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF-") and len(pdf.content) > 3000
+    assert "insights" in pdf.headers["content-disposition"]
+
+    html = client.get(f"/api/admin/insights/export?format=html&start={today}&end={today}")
+    assert html.status_code == 200
+    assert html.headers["content-type"].startswith("text/html")
+    body = html.text
+    assert body.startswith("<!DOCTYPE html>") and "Site Insights" in body
+    assert "<script" not in body.lower()          # a report is data, never code
+    assert "http://" not in body.split("</head>")[0]  # fully self-contained styling
+    assert today in body
+
+    csv_res = client.get(f"/api/admin/insights/export?format=csv&start={today}&end={today}")
+    assert csv_res.status_code == 200
+    assert "Date,Pageviews,Visitors" in csv_res.content.decode("utf-8-sig")
+    assert client.get("/api/admin/insights/export?format=exe").status_code == 400
+
+    actions = {e["action"] for e in aa.audit_list(limit=10)}
+    assert "insights.exported" in actions
