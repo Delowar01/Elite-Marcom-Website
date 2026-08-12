@@ -33,6 +33,10 @@
   var isFallback = false;
 
   /* ---------- request lists (separate per market) ---------- */
+  function safeStoredImage(u) {
+    u = String(u || "").slice(0, 500);
+    return (u.indexOf("/") === 0 && u.indexOf("//") !== 0) || u.indexOf("https://") === 0 ? u : "";
+  }
   function loadRequests() {
     var all = EM.store.get(REQUEST_KEY, {});
     if (!all || typeof all !== "object") all = {};
@@ -43,7 +47,7 @@
       }).slice(0, MAX_ITEMS).map(function (it) {
         var days = typeof it.days === "number" ? Math.floor(it.days) : 1;
         return { id: String(it.id).slice(0, 80), code: String(it.code || "").slice(0, 80),
-                 name: String(it.name || "").slice(0, 200), image: String(it.image || "").slice(0, 500),
+                 name: String(it.name || "").slice(0, 200), image: safeStoredImage(it.image),
                  market: m, qty: Math.min(1000, Math.floor(it.qty)),
                  days: Math.max(1, Math.min(365, days)) };
       });

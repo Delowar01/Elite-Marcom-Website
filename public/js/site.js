@@ -510,6 +510,22 @@
     return order.map(function (k) { return map[k]; });
   };
 
+  /* ---------- floating WhatsApp widget (every public page) ---------- */
+  (function () {
+    if (doc.querySelector(".wa-fab")) return;
+    var a = doc.createElement("a");
+    a.className = "wa-fab";
+    a.href = "https://wa.me/966599255995?text=" +
+      encodeURIComponent("Hello Elite Marcom — I would like to ask about your services.");
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.setAttribute("aria-label", "Chat with Elite Marcom on WhatsApp");
+    a.innerHTML =
+      '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C9.4 3 4 8.3 4 14.9c0 2.3.7 4.5 1.9 6.4L4 29l7.9-1.8a12.1 12.1 0 0 0 4.1.7c6.6 0 12-5.3 12-11.9C28 8.3 22.6 3 16 3zm0 21.8c-1.3 0-2.6-.3-3.7-.8l-.6-.3-4.4 1 1.1-4.2-.4-.6a9.6 9.6 0 0 1-1.6-5c0-5.3 4.3-9.7 9.6-9.7s9.6 4.3 9.6 9.7c0 5.3-4.3 9.9-9.6 9.9zm5.4-7.3c-.3-.2-1.7-.9-2-1s-.5-.2-.7.2-.8 1-.9 1.2-.3.2-.6.1a7.8 7.8 0 0 1-2.3-1.5 8.8 8.8 0 0 1-1.6-2.1c-.2-.3 0-.5.1-.6l.4-.5c.2-.2.2-.3.3-.5s.1-.4 0-.5-.7-1.7-.9-2.3c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4s-1.1 1.1-1.1 2.6 1.1 3 1.3 3.2 2.2 3.5 5.4 4.9c.8.3 1.4.5 1.8.7.8.2 1.5.2 2 .1.6-.1 1.7-.7 2-1.4s.3-1.3.2-1.4-.2-.2-.5-.3z"/></svg>' +
+      '<span class="wa-fab__label">WhatsApp us</span>';
+    doc.body.appendChild(a);
+  })();
+
   /* Ordered attribute map for one variant: [["Size","Small"],["Color","Black"]].
      Built from "Label: value" options; the plain colour field fills in when no
      Color attribute exists. */

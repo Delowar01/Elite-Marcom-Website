@@ -249,13 +249,21 @@ Relative size: Phase 0 and 1 are the fastest wins; Phases 3–4 are the largest.
 
 ---
 
-## 6. Decisions to confirm before Phase 0
+## 6. Confirmed decisions (2026-08-12)
 
-1. **Access:** admin at `/admin` on the same domain (recommended) or a separate
-   subdomain?
-2. **2FA mandatory for all users** (recommended) or Owner/Admin only?
-3. **Analytics:** first-party self-hosted only (recommended), or also forward to
-   GA4?
-4. **Languages:** confirm Arabic is wanted so the content model is bilingual from
-   day one (strongly recommended for KSA/UAE even if Arabic content comes later).
-5. **Staff notifications** for new requests: email, WhatsApp, or both?
+1. **Access:** admin at `/admin` on the same domain.
+2. **2FA:** mandatory for every user.
+3. **Analytics:** self-hosted first-party analytics **and** GA4 forwarding.
+4. **Languages:** bilingual content model (English + Arabic) from day one.
+   English publishes now; Arabic stays in draft until the team is ready —
+   the panel must include per-language publish control.
+5. **Staff notifications:** both email and WhatsApp on new requests.
+6. **Workflow:** every saved change goes to a Preview page before deploy;
+   full version history with rollback (as designed in section 3).
+
+## 7. Pre-admin-panel tasks (before Phase 0)
+
+1. Design audit and polish across all pages/viewports/themes.
+2. Security audit of the current site; fix findings.
+3. Code polish (dead code, consistency, comments).
+4. Floating WhatsApp widget on the public site.

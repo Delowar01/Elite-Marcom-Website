@@ -346,7 +346,7 @@
       (canOrder
         ? '<div class="qty-control" aria-label="Quantity">' +
             '<button type="button" data-qty-minus aria-label="Decrease quantity">−</button>' +
-            '<input type="number" inputmode="numeric" value="' + (inReq ? inReq.qty : 1) + '" min="1" max="' + p.stock.available + '" aria-label="Requested quantity">' +
+            '<input type="number" inputmode="numeric" value="' + (inReq ? Math.max(1, parseInt(inReq.qty, 10) || 1) : 1) + '" min="1" max="' + p.stock.available + '" aria-label="Requested quantity">' +
             '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
           "</div>" +
           '<button class="btn btn--primary" type="button" data-add>' + (inReq ? "Update request" : "Add to request") + "</button>"

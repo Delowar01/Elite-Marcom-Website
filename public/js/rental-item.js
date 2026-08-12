@@ -164,13 +164,13 @@
       ? '<div class="labeled-control"><span>Quantity</span>' +
           '<div class="qty-control" aria-label="Quantity">' +
             '<button type="button" data-qty-minus aria-label="Decrease quantity">−</button>' +
-            '<input type="number" inputmode="numeric" value="' + (inReq ? inReq.qty : 1) + '" min="1" max="' + max + '" aria-label="Requested quantity">' +
+            '<input type="number" inputmode="numeric" value="' + (inReq ? Math.max(1, parseInt(inReq.qty, 10) || 1) : 1) + '" min="1" max="' + max + '" aria-label="Requested quantity">' +
             '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
           "</div></div>" +
         '<div class="labeled-control"><span>Days needed</span>' +
           '<div class="qty-control" aria-label="Rental days">' +
             '<button type="button" data-days-minus aria-label="Fewer days">−</button>' +
-            '<input type="number" inputmode="numeric" data-days value="' + (inReq && inReq.days ? inReq.days : 1) + '" min="1" max="365" aria-label="Rental days">' +
+            '<input type="number" inputmode="numeric" data-days value="' + (inReq ? Math.max(1, parseInt(inReq.days, 10) || 1) : 1) + '" min="1" max="365" aria-label="Rental days">' +
             '<button type="button" data-days-plus aria-label="More days">+</button>' +
           "</div></div>" +
         '<button class="btn btn--violet" type="button" data-add>' + (inReq ? "Update rental list" : "Add to rental list") + "</button>"

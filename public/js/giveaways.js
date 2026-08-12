@@ -41,6 +41,10 @@
   var refreshTimer = null;
 
   /* ---------- request list (localStorage, sanitized) ---------- */
+  function safeStoredImage(u) {
+    u = String(u || "").slice(0, 500);
+    return (u.indexOf("/") === 0 && u.indexOf("//") !== 0) || u.indexOf("https://") === 0 ? u : "";
+  }
   function loadRequests() {
     var all = EM.store.get(REQUEST_KEY, {});
     if (!all || typeof all !== "object") all = {};
@@ -56,7 +60,7 @@
         } : null;
         if (b && !b.area && !b.method && !b.note) b = null;
         return { id: String(it.id).slice(0, 80), code: String(it.code || "").slice(0, 80),
-                 name: String(it.name || "").slice(0, 200), image: String(it.image || "").slice(0, 500),
+                 name: String(it.name || "").slice(0, 200), image: safeStoredImage(it.image),
                  market: m, qty: Math.min(100000, Math.floor(it.qty)), branding: b };
       });
     });
