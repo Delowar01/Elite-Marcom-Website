@@ -575,3 +575,29 @@
   transition: border-color var(--dur-1) linear;
 }
 .variant-field select:hover, .variant-field select:focus-visible { border-color: var(--orange-2); }
+
+/* ---------- gallery video slides ---------- */
+.carousel__track > .video-slide {
+  flex: 0 0 100%; width: 100%; height: 100%;
+  scroll-snap-align: start; position: relative;
+}
+.video-slide > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.video-slide iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+.video-slide__play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 64px; height: 64px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 12, 16, 0.62); color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: transform var(--dur-1) var(--ease-out), background-color var(--dur-1) linear;
+}
+.video-slide__play:hover { transform: translate(-50%, -50%) scale(1.08); background: rgba(240, 111, 34, 0.88); color: #fff; }
+.video-slide__play svg { width: 26px; height: 26px; margin-left: 3px; }
+.pdp__thumbs button.is-video { position: relative; }
+.pdp__thumbs button.is-video::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(8, 10, 14, 0.45) 0 40%, transparent 41%),
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fff'%3E%3Cpath d='M8 5.5v13l11-6.5z'/%3E%3C/svg%3E") center / 16px no-repeat;
+}

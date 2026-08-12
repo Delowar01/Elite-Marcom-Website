@@ -173,22 +173,46 @@
     els.carousel.classList.remove("carousel--single");
     els.thumbs.innerHTML = "";
 
-    /* gallery: every image from the API, slideable, with auto-hide arrows */
+    /* gallery: every image from the API, slideable, with auto-hide arrows;
+       supplier videos become play-on-click YouTube slides after the images */
     var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []));
+    var vids = (p.videos || []).filter(function (v) { return v && v.youtubeId; });
+    function videoThumb(v) {
+      return v.thumbnail || ("https://i.ytimg.com/vi/" + encodeURIComponent(v.youtubeId) + "/hqdefault.jpg");
+    }
     els.track.innerHTML = imgs.map(function (src, i) {
       return '<img src="' + EM.escapeHtml(src) + '" alt="' + EM.escapeHtml(p.name) + ' — image ' + (i + 1) + '"' +
              (i > 0 ? ' loading="lazy"' : "") + ' width="800" height="800">';
+    }).join("") + vids.map(function (v) {
+      return '<div class="video-slide" data-youtube="' + EM.escapeHtml(v.youtubeId) + '">' +
+             '<img src="' + EM.escapeHtml(videoThumb(v)) + '" alt="' + EM.escapeHtml(p.name) + ' — video" loading="lazy" width="800" height="800">' +
+             '<button type="button" class="video-slide__play" aria-label="Play product video">' +
+             '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>' +
+             "</button></div>";
     }).join("");
     EM.carousel(els.carousel);
-    lbImages = imgs;
-    els.track.querySelectorAll("img").forEach(function (img, i) {
+    els.track.querySelectorAll(".video-slide__play").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var slide = btn.closest(".video-slide");
+        var vid = slide.getAttribute("data-youtube");
+        slide.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + encodeURIComponent(vid) +
+          '?autoplay=1&rel=0&playsinline=1" title="Product video" loading="lazy" ' +
+          'allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>';
+      });
+    });
+    lbImages = imgs; /* the fullscreen viewer shows images only */
+    els.track.querySelectorAll(":scope > img").forEach(function (img, i) {
       img.classList.add("pdp__zoomable");
       img.addEventListener("click", function () { lbOpen(i); });
     });
-    if (imgs.length > 1) {
+    if (imgs.length + vids.length > 1) {
       els.thumbs.innerHTML = imgs.map(function (src, i) {
         return '<button type="button" class="' + (i === 0 ? "is-active" : "") + '" aria-label="Show image ' + (i + 1) + '">' +
                '<img src="' + EM.escapeHtml(src) + '" alt="" loading="lazy" width="72" height="72"></button>';
+      }).join("") + vids.map(function (v, i) {
+        return '<button type="button" class="is-video" aria-label="Show video ' + (i + 1) + '">' +
+               '<img src="' + EM.escapeHtml(videoThumb(v)) + '" alt="" loading="lazy" width="72" height="72"></button>';
       }).join("");
       var thumbBtns = els.thumbs.querySelectorAll("button");
       thumbBtns.forEach(function (btn, i) {

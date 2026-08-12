@@ -555,6 +555,32 @@ def test_jasani_flattens_nested_images_array():
     assert p["image"] == "https://www.jasani.ae/web/image/product.product/4502/image_1024"
 
 
+def test_jasani_splits_video_entries_from_images():
+    """Image records carrying a video_url are YouTube slides, not gallery
+    images — the thumbnail must not appear as a static image."""
+    from server import jasani
+
+    rec = {
+        "id": 7001, "code": "ITWC 1279", "name": "TRIODE 4 in 1 Charging Station",
+        "image_url": "https://www.jasani.ae/web/image/product.product/7001/image_1024",
+        "images": [[
+            {"id": 1, "image_url": "https://www.jasani.ae/web/image/product.image/1/image_1024", "video_url": False},
+            {"id": 2, "image_url": "https://www.jasani.ae/web/image/product.image/2/image_1024",
+             "video_url": "https://www.youtube.com/shorts/Ab3dE5fGh7I"},
+        ]],
+    }
+    p = jasani.normalize_product(rec, "uae")
+    assert p is not None
+    assert p["videos"] == [{"youtubeId": "Ab3dE5fGh7I",
+                            "thumbnail": "https://www.jasani.ae/web/image/product.image/2/image_1024"}]
+    assert p["images"] == ["https://www.jasani.ae/web/image/product.product/7001/image_1024",
+                           "https://www.jasani.ae/web/image/product.image/1/image_1024"]
+    # watch/short/embed/youtu.be forms all resolve; foreign hosts never do
+    assert jasani._youtube_id("https://youtu.be/Ab3dE5fGh7I") == "Ab3dE5fGh7I"
+    assert jasani._youtube_id("https://www.youtube.com/watch?v=Ab3dE5fGh7I") == "Ab3dE5fGh7I"
+    assert jasani._youtube_id("https://evil.example/watch?v=x") == ""
+
+
 def test_jasani_resolves_color_options_as_template_ids():
     """color_options carries product TEMPLATE ids (parent_id), not variant ids."""
     from server import jasani

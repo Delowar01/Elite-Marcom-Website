@@ -330,15 +330,38 @@ def _list(rec: dict, *keys: str) -> list[str]:
     return []
 
 
+_YT_RE = re.compile(r"(?:youtube\.com/(?:shorts/|watch\?v=|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{6,20})")
+
+
+def _youtube_id(url: Any) -> str:
+    if not isinstance(url, str):
+        return ""
+    m = _YT_RE.search(url.strip())
+    return m.group(1) if m else ""
+
+
+def _entry_video_url(v: dict) -> str:
+    """Truthy video link on an image record (Odoo attaches video_url to the
+    entry and keeps the thumbnail in image_url)."""
+    for k in ("video_url", "videourl", "video"):
+        u = v.get(k)
+        if isinstance(u, str) and u.strip() and u.strip().lower() not in _EMPTY_MARKERS:
+            return u.strip()
+    return ""
+
+
 def _image_urls(v: Any, depth: int = 0) -> list[str]:
     """URLs from the supplier's images field, which nests arbitrarily:
-    images: [[{"id": 1954, "image_url": "..."}, ...]] — flatten everything."""
+    images: [[{"id": 1954, "image_url": "..."}, ...]] — flatten everything.
+    Entries carrying a video link are videos, not gallery images."""
     if depth > 4 or v is None or isinstance(v, bool):
         return []
     if isinstance(v, str):
         s = v.strip()
         return [s] if s and s.lower() not in _EMPTY_MARKERS else []
     if isinstance(v, dict):
+        if _entry_video_url(v):
+            return []
         for k in ("image_url", "imageurl", "url", "src", "href", "image"):
             u = v.get(k)
             if isinstance(u, str) and u.strip():
@@ -351,6 +374,36 @@ def _image_urls(v: Any, depth: int = 0) -> list[str]:
             if len(out) >= 40:
                 break
         return out[:40]
+    return []
+
+
+def _video_entries(v: Any, depth: int = 0) -> list[dict]:
+    """YouTube videos hidden in the images field: {youtubeId, thumbnail}.
+    Only recognized YouTube ids are kept — no raw supplier URLs pass through."""
+    if depth > 4 or v is None or isinstance(v, bool):
+        return []
+    if isinstance(v, str):
+        vid = _youtube_id(v)
+        return [{"youtubeId": vid, "thumbnail": ""}] if vid else []
+    if isinstance(v, dict):
+        url = _entry_video_url(v)
+        vid = _youtube_id(url)
+        if not vid:
+            return []
+        thumb = ""
+        for k in ("image_url", "imageurl", "url", "src", "image"):
+            u = v.get(k)
+            if isinstance(u, str) and u.strip():
+                thumb = u.strip()
+                break
+        return [{"youtubeId": vid, "thumbnail": thumb}]
+    if isinstance(v, (list, tuple)):
+        out: list[dict] = []
+        for item in v:
+            out.extend(_video_entries(item, depth + 1))
+            if len(out) >= 6:
+                break
+        return out[:6]
     return []
 
 
@@ -395,9 +448,16 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             v = _s(rec, key)
             if v:
                 images.append(v)
-        for key in ("images", "image_urls", "gallery", "additional_images", "extra_images"):
-            images.extend(_image_urls(rec.get(key) or rec.get(key.replace("_", ""))))
+        videos: list[dict] = []
+        for key in ("images", "image_urls", "gallery", "additional_images", "extra_images", "videos"):
+            raw_v = rec.get(key) or rec.get(key.replace("_", ""))
+            images.extend(_image_urls(raw_v))
+            videos.extend(_video_entries(raw_v))
         images = [u for u in (_safe_image(u, host) for u in images) if u][:36]
+        seen_vids: set[str] = set()
+        videos = [{"youtubeId": v["youtubeId"], "thumbnail": _safe_image(v["thumbnail"], host)}
+                  for v in videos
+                  if not (v["youtubeId"] in seen_vids or seen_vids.add(v["youtubeId"]))][:4]
         # de-duplicate while preserving order
         seen_imgs: set[str] = set()
         images = [u for u in images if not (u in seen_imgs or seen_imgs.add(u))]
@@ -449,6 +509,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             "options": options,
             "image": images[0] if images else "",
             "images": images,
+            "videos": videos,
             # alternative-colour product ids, resolved against the catalog later
             "_colorOptionIds": _rel_ids(rec.get("color_options") or rec.get("coloroptions")),
             "sequence": _i(rec, "website_sequence", "sequence", "sort_order", "newness"),

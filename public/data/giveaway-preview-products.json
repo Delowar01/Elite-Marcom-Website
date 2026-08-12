@@ -56,7 +56,8 @@
    ],
    "cartonVolume": "0.096",
    "templateId": "prev-tmpl-hoodie-ksa",
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-hoodie-ksa-m",
@@ -113,7 +114,8 @@
    ],
    "cartonVolume": "0.096",
    "templateId": "prev-tmpl-hoodie-ksa",
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-hoodie-ksa-l",
@@ -170,7 +172,8 @@
    ],
    "cartonVolume": "0.096",
    "templateId": "prev-tmpl-hoodie-ksa",
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-hoodie-ksa-xl",
@@ -227,7 +230,8 @@
    ],
    "cartonVolume": "0.096",
    "templateId": "prev-tmpl-hoodie-ksa",
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-bag-ksa",
@@ -267,7 +271,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-cap-ksa",
@@ -308,7 +313,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-desk-set-ksa",
@@ -350,7 +356,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-eco-notebook-ksa",
@@ -391,7 +398,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-ramadan-box-ksa",
@@ -432,7 +440,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-drinkware-ksa",
@@ -474,7 +483,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-tech-kit-ksa",
@@ -515,7 +525,13 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": [
+    {
+     "youtubeId": "M7lc1UVf-VE",
+     "thumbnail": ""
+    }
+   ]
   },
   {
    "id": "prev-hoodie-uae",
@@ -575,7 +591,8 @@
    ],
    "cartonVolume": "0.096",
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-bag-uae",
@@ -615,7 +632,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-cap-uae",
@@ -656,7 +674,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-desk-set-uae",
@@ -698,7 +717,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-eco-notebook-uae",
@@ -739,7 +759,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-ramadan-box-uae",
@@ -780,7 +801,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-drinkware-uae",
@@ -822,7 +844,8 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": []
   },
   {
    "id": "prev-tech-kit-uae",
@@ -863,7 +886,13 @@
    "colorOptions": [],
    "cartonVolume": null,
    "templateId": null,
-   "parentId": null
+   "parentId": null,
+   "videos": [
+    {
+     "youtubeId": "M7lc1UVf-VE",
+     "thumbnail": ""
+    }
+   ]
   }
  ]
 }
