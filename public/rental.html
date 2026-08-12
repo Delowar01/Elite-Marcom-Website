@@ -18,7 +18,7 @@
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
-<link rel="stylesheet" href="/styles.css?v=6">
+<link rel="stylesheet" href="/styles.css?v=7">
 <link rel="stylesheet" href="/pages.css?v=8">
 <script src="/js/theme-init.js?v=1"></script>
 <link rel="stylesheet" href="/theme-custom.css">
@@ -202,7 +202,7 @@
           <div class="form-field"><label for="re-name">Full name <span class="req" aria-hidden="true">*</span></label><input id="re-name" name="fullName" type="text" required minlength="2" maxlength="120" autocomplete="name" data-autofocus><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="re-company">Company <span class="req" aria-hidden="true">*</span></label><input id="re-company" name="company" type="text" required maxlength="160" autocomplete="organization"><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="re-email">Email <span class="req" aria-hidden="true">*</span></label><input id="re-email" name="email" type="email" required maxlength="200" autocomplete="email"><span class="field-error" aria-live="polite"></span></div>
-          <div class="form-field"><label for="re-phone">Phone <span class="req" aria-hidden="true">*</span></label><input id="re-phone" name="phone" type="tel" required pattern="[0-9+()., -]{7,32}" maxlength="32" autocomplete="tel"><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="re-phone">Phone <span class="req" aria-hidden="true">*</span></label><input id="re-phone" name="phone" type="tel" required pattern="[0-9+\(\)., \-]{7,32}" maxlength="32" autocomplete="tel"><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="re-start">Rental start date <span class="req" aria-hidden="true">*</span></label><input id="re-start" name="startDate" type="date" required><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="re-end">Rental end date <span class="req" aria-hidden="true">*</span></label><input id="re-end" name="endDate" type="date" required><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="re-city">Event city <span class="req" aria-hidden="true">*</span></label><input id="re-city" name="eventCity" type="text" required maxlength="120"><span class="field-error" aria-live="polite"></span></div>
@@ -236,7 +236,7 @@
           <div class="form-field"><label for="rn-name">Full name <span class="req" aria-hidden="true">*</span></label><input id="rn-name" name="fullName" type="text" required minlength="2" maxlength="120" data-autofocus><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="rn-company">Company <span class="req" aria-hidden="true">*</span></label><input id="rn-company" name="company" type="text" required maxlength="160"><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="rn-email">Email <span class="req" aria-hidden="true">*</span></label><input id="rn-email" name="email" type="email" required maxlength="200"><span class="field-error" aria-live="polite"></span></div>
-          <div class="form-field"><label for="rn-phone">Phone <span class="req" aria-hidden="true">*</span></label><input id="rn-phone" name="phone" type="tel" required pattern="[0-9+()., -]{7,32}" maxlength="32"><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="rn-phone">Phone <span class="req" aria-hidden="true">*</span></label><input id="rn-phone" name="phone" type="tel" required pattern="[0-9+\(\)., \-]{7,32}" maxlength="32"><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="rn-from">Required from (optional)</label><input id="rn-from" name="requiredFrom" type="date"><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field"><label for="rn-until">Required until (optional)</label><input id="rn-until" name="requiredUntil" type="date"><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field form-field--full"><label for="rn-message">Message <span class="req" aria-hidden="true">*</span></label><textarea id="rn-message" name="message" required minlength="10" maxlength="3000"></textarea><span class="field-error" aria-live="polite"></span></div>

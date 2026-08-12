@@ -267,6 +267,7 @@
   /* ---------- page editor ---------- */
   var pageLang = "en";
   var edInsightRange = { days: 30, start: '', end: '' };
+  var emailForm = "";
 
   function pageEditor(page) {
     api("/api/admin/pages/" + encodeURIComponent(page) + "?lang=" + pageLang).then(function (r) {
@@ -2086,6 +2087,190 @@
           } }).then(function (r2) {
             r2.ok ? (toast("Languages saved — publish to apply."), views.operations()) : apiErr(r2);
           });
+        });
+      });
+    },
+
+    email: function () {
+      api("/api/admin/email").then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        var g = d.general || {};
+        var forms = d.forms || [];
+        if (!emailForm || !forms.some(function (f) { return f.key === emailForm; })) {
+          emailForm = forms.length ? forms[0].key : "";
+        }
+        var current = forms.filter(function (f) { return f.key === emailForm; })[0] || {};
+        var stats = d.stats || {};
+        function vars(list) {
+          return (list || []).map(function (v) {
+            return '<button type="button" class="var-chip" data-var="{{' + esc(v) + '}}">{{' + esc(v) + "}}</button>";
+          }).join("");
+        }
+        main.innerHTML =
+          '<h1 class="admin-h1">Email</h1>' +
+          '<p class="admin-sub">Sender identity, where each form is delivered, and the confirmation your customers receive. ' +
+          "The email service key lives on the server only — it is never shown or stored here.</p>" +
+          (d.configured ? "" :
+            '<p class="ins-alert ins-alert--warn">No email service key is configured on the server yet ' +
+            "(RESEND_API_KEY). Settings can be prepared now; sending starts once the key is in place.</p>") +
+          '<div class="stat-row">' +
+          '<div class="stat-card"><b>' + esc(stats.sent || 0) + "</b><span>Sent (30 days)</span></div>" +
+          '<div class="stat-card"><b>' + esc(stats.failed || 0) + "</b><span>Failed (30 days)</span></div>" +
+          '<div class="stat-card"><b>' + esc(forms.length) + "</b><span>Connected forms</span></div></div>" +
+
+          '<div class="admin-panel"><h2>Sender &amp; branding</h2>' +
+          '<form class="admin-form" id="em-general">' +
+          '<div><label for="eg-name">From name</label><input id="eg-name" maxlength="80" value="' + esc(g.fromName || "") + '"></div>' +
+          '<div><label for="eg-from">From email</label><input id="eg-from" maxlength="120" value="' + esc(g.fromEmail || "") + '">' +
+          '<span class="admin-inline-note">Only verified domains are accepted: ' + esc((d.senderDomains || []).join(", ")) + "</span></div>" +
+          '<div><label for="eg-reply">Reply-to email</label><input id="eg-reply" maxlength="120" value="' + esc(g.replyTo || "") + '"></div>' +
+          '<div><label for="eg-contact">Contact email (shown in the footer)</label><input id="eg-contact" maxlength="120" value="' + esc(g.contactEmail || "") + '"></div>' +
+          '<div><label for="eg-site">Website URL</label><input id="eg-site" maxlength="160" value="' + esc(g.websiteUrl || "") + '"></div>' +
+          '<div class="full"><label for="eg-footer">Footer text</label><textarea id="eg-footer" rows="2" maxlength="300">' + esc(g.footerText || "") + "</textarea></div>" +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save sender settings</button></div>' +
+          "</form></div>" +
+
+          '<div class="admin-panel"><h2>Forms &amp; routing</h2>' +
+          '<div class="table-scroll"><table class="admin-table"><thead><tr><th>Form</th><th>Internal recipient</th>' +
+          "<th>Notify team</th><th>Auto reply</th><th></th></tr></thead><tbody>" +
+          forms.map(function (f) {
+            return '<tr' + (f.key === emailForm ? ' class="is-current"' : "") + '><td><b>' + esc(f.label) + "</b></td>" +
+              '<td class="muted">' + esc(f.recipient) + "</td>" +
+              "<td>" + (f.internalOn ? '<span class="badge-ok">on</span>' : '<span class="muted">off</span>') + "</td>" +
+              "<td>" + (f.customerOn ? '<span class="badge-ok">on</span>' : '<span class="muted">off</span>') + "</td>" +
+              '<td class="cell-actions"><button class="btn btn--ghost btn--small" data-pick="' + esc(f.key) + '">Edit</button></td></tr>';
+          }).join("") + "</tbody></table></div></div>" +
+
+          '<div class="admin-panel"><h2>' + esc(current.label || "") + " — notification &amp; template</h2>" +
+          '<form class="admin-form" id="em-form">' +
+          '<div><label for="ef-recipient">Internal recipient</label><input id="ef-recipient" maxlength="120" value="' + esc(current.recipient || "") + '"></div>' +
+          '<div><label for="ef-internal-on">Internal notification</label><select id="ef-internal-on">' +
+          '<option value="on"' + (current.internalOn ? " selected" : "") + ">On</option>" +
+          '<option value="off"' + (current.internalOn ? "" : " selected") + ">Off</option></select></div>" +
+          '<div class="full"><label for="ef-internal-subject">Internal email subject</label>' +
+          '<input id="ef-internal-subject" maxlength="200" value="' + esc(current.internalSubject || "") + '"></div>' +
+          '<div><label for="ef-customer-on">Customer auto reply</label><select id="ef-customer-on">' +
+          '<option value="on"' + (current.customerOn ? " selected" : "") + ">On</option>" +
+          '<option value="off"' + (current.customerOn ? "" : " selected") + ">Off</option></select></div>" +
+          '<div><label for="ef-button-text">Button text (optional)</label><input id="ef-button-text" maxlength="60" value="' + esc(current.buttonText || "") + '"></div>' +
+          '<div class="full"><label for="ef-customer-subject">Customer email subject</label>' +
+          '<input id="ef-customer-subject" maxlength="200" value="' + esc(current.customerSubject || "") + '"></div>' +
+          '<div class="full"><label for="ef-heading">Heading</label><input id="ef-heading" maxlength="160" value="' + esc(current.heading || "") + '"></div>' +
+          '<div class="full"><label for="ef-body">Main message</label><textarea id="ef-body" rows="8" maxlength="4000">' + esc(current.body || "") + "</textarea>" +
+          '<span class="admin-inline-note">Available for this form — click to insert: </span><span class="var-list">' + vars(current.variables) + "</span></div>" +
+          '<div class="full"><label for="ef-closing">Closing message</label><textarea id="ef-closing" rows="2" maxlength="600">' + esc(current.closing || "") + "</textarea></div>" +
+          '<div class="full"><label for="ef-button-url">Button link (optional)</label><input id="ef-button-url" maxlength="300" value="' + esc(current.buttonUrl || "") + '"></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save this form</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" data-preview="customer">Preview customer email</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" data-preview="internal">Preview internal email</button></div>' +
+          "</form></div>" +
+
+          '<div class="admin-panel"><h2>Send a test email</h2>' +
+          '<form class="admin-form" id="em-test">' +
+          '<div><label for="et-to">Send to</label><input id="et-to" type="email" maxlength="200" placeholder="you@elitemarcom.com" required></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Send test email</button>' +
+          '<span class="admin-inline-note" id="et-result"></span></div></form></div>' +
+
+          '<div class="admin-panel"><h2>Recent deliveries</h2>' +
+          ((d.log || []).length
+            ? '<div class="table-scroll"><table class="admin-table"><thead><tr><th>When</th><th>Form</th><th>Type</th>' +
+              "<th>To</th><th>Status</th></tr></thead><tbody>" +
+              d.log.map(function (l) {
+                var cls = l.status === "sent" ? "badge-ok" : (l.status === "failed" ? "badge-bad" : "muted");
+                return '<tr><td class="muted">' + esc(when(l.ts)) + "</td><td>" + esc(l.form) +
+                  '</td><td class="muted">' + esc(l.kind) + '</td><td class="muted">' + esc(l.recipient) +
+                  '</td><td><span class="' + cls + '">' + esc(l.status) + "</span>" +
+                  (l.detail ? ' <span class="admin-inline-note">' + esc(l.detail) + "</span>" : "") + "</td></tr>";
+              }).join("") + "</tbody></table></div>"
+            : '<p class="admin-inline-note">Nothing sent yet.</p>') + "</div>" +
+          '<div class="picker-overlay" id="em-preview" hidden><div class="picker-box">' +
+          '<div class="picker-head"><div><h2 id="pv-subject">Preview</h2>' +
+          '<p class="admin-inline-note" id="pv-meta"></p></div>' +
+          '<button class="btn btn--ghost btn--small" id="pv-close">Close</button></div>' +
+          '<iframe id="pv-frame" title="Email preview" class="pv-frame"></iframe></div></div>';
+
+        main.querySelectorAll("[data-pick]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            emailForm = btn.getAttribute("data-pick");
+            views.email();
+          });
+        });
+        main.querySelectorAll(".var-chip").forEach(function (chip) {
+          chip.addEventListener("click", function () {
+            var ta = document.getElementById("ef-body");
+            ta.setRangeText(chip.getAttribute("data-var"), ta.selectionStart, ta.selectionEnd, "end");
+            ta.focus();
+          });
+        });
+        document.getElementById("em-general").addEventListener("submit", function (e) {
+          e.preventDefault();
+          api("/api/admin/email/general", { values: {
+            fromName: document.getElementById("eg-name").value.trim(),
+            fromEmail: document.getElementById("eg-from").value.trim(),
+            replyTo: document.getElementById("eg-reply").value.trim(),
+            contactEmail: document.getElementById("eg-contact").value.trim(),
+            websiteUrl: document.getElementById("eg-site").value.trim(),
+            footerText: document.getElementById("eg-footer").value.trim()
+          } }).then(function (r2) {
+            r2.ok ? (toast("Sender settings saved."), views.email()) : apiErr(r2);
+          });
+        });
+        function formValues() {
+          return {
+            recipient: document.getElementById("ef-recipient").value.trim(),
+            internalOn: document.getElementById("ef-internal-on").value === "on",
+            customerOn: document.getElementById("ef-customer-on").value === "on",
+            internalSubject: document.getElementById("ef-internal-subject").value,
+            customerSubject: document.getElementById("ef-customer-subject").value,
+            heading: document.getElementById("ef-heading").value,
+            body: document.getElementById("ef-body").value,
+            closing: document.getElementById("ef-closing").value,
+            buttonText: document.getElementById("ef-button-text").value,
+            buttonUrl: document.getElementById("ef-button-url").value.trim()
+          };
+        }
+        document.getElementById("em-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          api("/api/admin/email/form/" + encodeURIComponent(emailForm), { values: formValues() })
+            .then(function (r2) {
+              r2.ok ? (toast("Saved — new submissions use it immediately."), views.email()) : apiErr(r2);
+            });
+        });
+        main.querySelectorAll("[data-preview]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            api("/api/admin/email/preview", { form: emailForm, values: formValues(),
+                                              audience: btn.getAttribute("data-preview") })
+              .then(function (r2) {
+                if (!r2.ok) return apiErr(r2);
+                document.getElementById("pv-subject").textContent = r2.data.subject;
+                document.getElementById("pv-meta").textContent =
+                  "From " + r2.data.from + " · reply-to " + r2.data.replyTo;
+                document.getElementById("pv-frame").srcdoc = r2.data.html;
+                document.getElementById("em-preview").hidden = false;
+              });
+          });
+        });
+        document.getElementById("pv-close").addEventListener("click", function () {
+          document.getElementById("em-preview").hidden = true;
+        });
+        document.getElementById("em-test").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var out = document.getElementById("et-result");
+          out.textContent = "Sending…";
+          out.className = "admin-inline-note";
+          api("/api/admin/email/test", { to: document.getElementById("et-to").value.trim() })
+            .then(function (r2) {
+              if (r2.ok) {
+                out.textContent = "✓ Sent successfully to " +
+                  document.getElementById("et-to").value.trim() + ".";
+                out.className = "badge-ok";
+                toast("Test email sent.");
+              } else {
+                out.textContent = "✗ Failed — " + ((r2.data && r2.data.detail) || "please check the settings.");
+                out.className = "badge-bad";
+              }
+            });
         });
       });
     },

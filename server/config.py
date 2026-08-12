@@ -69,6 +69,15 @@ EM_ADMIN_SESSION_SECRET = _secret("EM_ADMIN_SESSION_SECRET")  # admin pending-to
 ADMIN_SETUP_CODE = os.environ.get("EM_ADMIN_SETUP_CODE", "").strip()
 ADMIN_SESSION_HOURS = float(os.environ.get("EM_ADMIN_SESSION_HOURS", "12"))
 
+# --- transactional email (Resend) ---
+# The API key is read from the environment ONLY. It is never stored in the
+# admin database, never returned by an endpoint and never sent to a browser.
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
+# sender addresses are restricted to domains verified with Resend
+MAIL_SENDER_DOMAINS = os.environ.get("EM_MAIL_SENDER_DOMAINS", "mail.elitemarcom.com")
+# override only for staging/self-hosted relays; defaults to Resend's API
+RESEND_ENDPOINT = os.environ.get("EM_RESEND_ENDPOINT", "https://api.resend.com/emails").strip()
+
 TURNSTILE_SECRET = os.environ.get("EM_TURNSTILE_SECRET", "").strip()
 TURNSTILE_SITE_KEY = os.environ.get("EM_TURNSTILE_SITE_KEY", "").strip()
 

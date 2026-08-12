@@ -1402,6 +1402,139 @@ async def admin_schedule_publish(request: Request, body: ScheduleBody,
     return schedule
 
 
+# ---------------- email settings & notifications (Resend) ----------------
+# The Resend API key is environment-only: it is never read into, stored in or
+# returned by any of these endpoints.
+
+@router.get("/api/admin/email")
+async def admin_email(request: Request):
+    require_perm(request, "settings.manage")
+    from . import mailer
+
+    data = mailer.all_settings()
+    data["log"] = mailer.log_entries(30)
+    data["stats"] = mailer.log_stats()
+    return data
+
+
+class EmailGeneralBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict
+
+
+@router.post("/api/admin/email/general")
+async def admin_email_general(request: Request, body: EmailGeneralBody,
+                              x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "settings.manage")
+    require_csrf(request, session, x_csrf)
+    from . import mailer
+
+    try:
+        saved = mailer.save_general(body.values)
+    except mailer.MailError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    aa.audit(session, "email.settings_saved", "email",
+             {"fields": sorted(body.values)}, _ip_hash(request))
+    return {"general": saved}
+
+
+class EmailFormBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict
+
+
+@router.post("/api/admin/email/form/{form_key}")
+async def admin_email_form(request: Request, form_key: str, body: EmailFormBody,
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "settings.manage")
+    require_csrf(request, session, x_csrf)
+    from . import mailer
+
+    try:
+        saved = mailer.save_form(form_key, body.values)
+    except mailer.MailError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    aa.audit(session, "email.form_saved", "email",
+             {"form": form_key, "fields": sorted(body.values)}, _ip_hash(request))
+    return {"form": saved}
+
+
+class EmailPreviewBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    form: str = Field(max_length=40)
+    values: dict = Field(default_factory=dict)
+    audience: str = Field(default="customer", max_length=10)
+
+
+@router.post("/api/admin/email/preview")
+async def admin_email_preview(request: Request, body: EmailPreviewBody,
+                              x_csrf: str | None = Header(default=None)):
+    """Render the template with sample data — nothing is saved or sent."""
+    session = require_perm(request, "settings.manage")
+    require_csrf(request, session, x_csrf)
+    from . import mailer
+
+    if body.form not in mailer.FORMS:
+        raise HTTPException(status_code=404, detail="Unknown form.")
+    settings = mailer.form_settings(body.form)
+    for field in ("customerSubject", "internalSubject", "heading", "body",
+                  "closing", "buttonText", "buttonUrl"):
+        if field in body.values:
+            text = str(body.values[field] or "")[:4000]
+            try:
+                mailer._check_variables(text, body.form)
+            except mailer.MailError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            settings[field] = text
+    general = mailer.general_settings()
+    sample = {
+        "fullName": "Amira Hassan", "company": "Falcon Corporate Events",
+        "email": "amira@example.com", "phone": "+966 55 123 4567", "market": "ksa",
+        "service": "Exhibition Stands", "roleTitle": "Senior 3D Designer",
+        "location": "Riyadh", "enquiryType": "New project",
+        "items": [{"name": "A5 Eco Notebook", "code": "ITGL 1291", "quantity": 250}],
+    }
+    reference = "GV-SAMPLE-01"
+    values = mailer.variables_for(body.form, sample, reference)
+    if body.audience == "internal":
+        html = mailer.internal_html(body.form, general, sample, reference)
+        subject = mailer.render(settings["internalSubject"], values, escape=False)
+    else:
+        html = mailer.customer_html(body.form, settings, general, values)
+        subject = mailer.render(settings["customerSubject"], values, escape=False)
+    # the preview is rendered inside the admin origin, where an absolute
+    # elitemarcom.com image is blocked by our own CSP — swap it for the local
+    # copy so the preview looks exactly like the delivered email
+    html = html.replace(f'{general["websiteUrl"]}/assets/logo-email.png',
+                        "/assets/logo-email.png")
+    return {"subject": subject, "html": html,
+            "from": f'{general["fromName"]} <{general["fromEmail"]}>',
+            "replyTo": general["replyTo"]}
+
+
+class EmailTestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    to: str = Field(max_length=200)
+
+
+@router.post("/api/admin/email/test")
+async def admin_email_test(request: Request, body: EmailTestBody,
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "settings.manage")
+    require_csrf(request, session, x_csrf)
+    security.limiter.check("email_test", _ip_hash(request), 10, 600)
+    from . import mailer
+
+    try:
+        mailer.send_test(body.to.strip(), session["email"])
+    except mailer.MailError as exc:
+        aa.audit(session, "email.test_failed", "email", {"to": body.to[:120]}, _ip_hash(request))
+        # friendly wording only — provider detail stays in the server log
+        raise HTTPException(status_code=502, detail=str(exc))
+    aa.audit(session, "email.test_sent", "email", {"to": body.to[:120]}, _ip_hash(request))
+    return {"ok": True}
+
+
 # ---------------- dashboard ----------------
 
 @router.get("/api/admin/dashboard")

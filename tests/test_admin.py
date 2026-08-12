@@ -1315,3 +1315,107 @@ def test_security_centre_and_operations_permissions():
     sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
     assert editor.get("/api/admin/operations").status_code == 403
     assert editor.get("/api/admin/backup").status_code == 403
+
+
+# ---------------- Email settings in the admin panel ----------------
+
+def test_email_settings_screen_and_permissions():
+    res = client.get("/api/admin/email")
+    assert res.status_code == 200
+    d = res.json()
+    assert {f["key"] for f in d["forms"]} == {
+        "general_inquiry", "job_application", "corporate_gifts",
+        "stock_notification", "rental_inquiry"}
+    assert d["general"]["fromEmail"] == "website@mail.elitemarcom.com"
+    assert d["senderDomains"] == ["mail.elitemarcom.com"]
+    # the provider key is never present in any shape
+    blob = json.dumps(d)
+    assert "re_" not in blob
+    for leak in ("apiKey", "api_key", "resend", "secret"):
+        assert leak.lower() not in blob.lower()
+    assert isinstance(d["configured"], bool)
+    # only settings managers reach it
+    editor = TestClient(app)
+    sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
+    assert editor.get("/api/admin/email").status_code == 403
+    assert editor.post("/api/admin/email/test", json={"to": "x@y.com"}).status_code == 403
+
+
+def test_email_routing_and_template_editing_through_the_api():
+    me = client.get("/api/admin/me").json()
+    ok = client.post("/api/admin/email/form/corporate_gifts",
+                     json={"values": {"recipient": "gifts@elitemarcom.com",
+                                      "customerOn": False,
+                                      "heading": "Hello {{customer_name}}"}},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200, ok.text
+    form = ok.json()["form"]
+    assert form["recipient"] == "gifts@elitemarcom.com" and form["customerOn"] is False
+    # unknown variables and unverified sender domains are refused with a clear message
+    bad = client.post("/api/admin/email/form/corporate_gifts",
+                      json={"values": {"body": "Salary is {{salary}}"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400 and "salary" in bad.json()["detail"]
+    bad_from = client.post("/api/admin/email/general",
+                           json={"values": {"fromEmail": "hello@gmail.com"}},
+                           headers={"X-CSRF": me["csrf"]})
+    assert bad_from.status_code == 400 and "verified" in bad_from.json()["detail"]
+    no_csrf = client.post("/api/admin/email/general", json={"values": {"fromName": "X"}})
+    assert no_csrf.status_code == 403
+    # restore defaults
+    client.post("/api/admin/email/form/corporate_gifts",
+                json={"values": {"recipient": "mohammad.hossain@elitemarcom.com",
+                                 "customerOn": True,
+                                 "heading": "Your corporate gifts request is with our team"}},
+                headers={"X-CSRF": me["csrf"]})
+    actions = {e["action"] for e in aa.audit_list(limit=10)}
+    assert "email.form_saved" in actions
+
+
+def test_email_preview_renders_without_saving():
+    me = client.get("/api/admin/me").json()
+    before = client.get("/api/admin/email").json()
+    res = client.post("/api/admin/email/preview",
+                      json={"form": "job_application", "audience": "customer",
+                            "values": {"heading": "Draft heading for {{customer_name}}",
+                                       "customerSubject": "Draft subject {{position}}"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert "Draft heading for Amira Hassan" in data["html"]
+    assert data["subject"] == "Draft subject Senior 3D Designer"
+    assert data["from"] == "Elite Marcom <website@mail.elitemarcom.com>"
+    assert data["replyTo"] == "info@elitemarcom.com"
+    assert "logo-email.png" in data["html"] and "<script" not in data["html"].lower()
+    internal = client.post("/api/admin/email/preview",
+                           json={"form": "job_application", "audience": "internal"},
+                           headers={"X-CSRF": me["csrf"]}).json()
+    assert "New submission" in internal["html"]
+    # nothing was persisted by previewing
+    after = client.get("/api/admin/email").json()
+    assert before["forms"] == after["forms"]
+    bad = client.post("/api/admin/email/preview",
+                      json={"form": "job_application", "values": {"body": "{{quantity}}"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400          # quantity is not valid for a job application
+
+
+def test_email_test_send_reports_failure_without_provider_detail(monkeypatch):
+    me = client.get("/api/admin/me").json()
+    from server import mailer
+
+    monkeypatch.setattr(mailer, "send_test",
+                        lambda to, by: (_ for _ in ()).throw(
+                            mailer.MailError("The email service rejected the message.")))
+    res = client.post("/api/admin/email/test", json={"to": "owner@elitemarcom.com"},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 502
+    detail = res.json()["detail"]
+    assert detail == "The email service rejected the message."
+    assert "re_" not in detail and "401" not in detail
+    monkeypatch.setattr(mailer, "send_test", lambda to, by: {"ok": True})
+    ok = client.post("/api/admin/email/test", json={"to": "owner@elitemarcom.com"},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200 and ok.json()["ok"] is True
+    actions = {e["action"] for e in aa.audit_list(limit=10)}
+    assert "email.test_sent" in actions and "email.test_failed" in actions

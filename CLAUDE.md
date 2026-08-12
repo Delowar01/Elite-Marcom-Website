@@ -50,6 +50,11 @@ documentation). Non-negotiable rules from it:
 - Site Insights is first-party and cookieless: no raw IP or user-agent is
   stored, visitor keys use a salt that rotates daily, and GA4 only loads when
   an admin sets a measurement id (`analytics.ga4Id`).
+- Transactional email goes through Resend (`server/mailer.py`). `RESEND_API_KEY`
+  is environment-only — never in the admin DB, an API response or browser code.
+  Sender addresses are restricted to domains in `EM_MAIL_SENDER_DOMAINS`
+  (default `mail.elitemarcom.com`). Routing, on/off switches, subjects and the
+  five customer templates are edited in the admin Email screen.
 - Backups (Operations) carry content, design, settings, rentals and media —
   never customer submissions, which stay encrypted with their own retention.
 - Arabic publishes a full RTL edition under `/ar/` when `site.languages`
