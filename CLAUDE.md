@@ -54,7 +54,9 @@ documentation). Non-negotiable rules from it:
   is environment-only — never in the admin DB, an API response or browser code.
   Sender addresses are restricted to domains in `EM_MAIL_SENDER_DOMAINS`
   (default `mail.elitemarcom.com`). Routing, on/off switches, subjects and the
-  five customer templates are edited in the admin Email screen.
+  six customer templates are edited in the admin Email screen. Sending is a
+  durable outbox: the request only enqueues (unique per reference+kind), and a
+  startup worker drains it with backoff — never a post-response thread.
 - Backups (Operations) carry content, design, settings, rentals and media —
   never customer submissions, which stay encrypted with their own retention.
 - Arabic publishes a full RTL edition under `/ar/` when `site.languages`

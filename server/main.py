@@ -303,8 +303,7 @@ async def careers_apply(
     reference = storage.save_record("career", payload, ip_hash,
                                     config.RETENTION_CAREERS_DAYS, cv_bytes=cv_bytes)
     notify.notify_new_request("career", reference)
-    mailer.send_form_emails("career", reference, payload,
-                            attachment=(cv_bytes, f"{reference}-cv.pdf") if cv_bytes else None)
+    mailer.enqueue("career", reference)
     track_server_event(request, "enquiry", meta="career application")
     return {"reference": reference}
 
@@ -360,7 +359,7 @@ async def contact_enquiry(request: Request, body: ContactEnquiry):
     }
     reference = storage.save_record("contact", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
     notify.notify_new_request("contact", reference)
-    mailer.send_form_emails("contact", reference, payload)
+    mailer.enqueue("contact", reference)
     track_server_event(request, "enquiry", meta="contact")
     return {"reference": reference}
 
@@ -477,7 +476,7 @@ async def rentals_enquiry(request: Request, body: RentalEnquiry):
     }
     reference = storage.save_record("rental_enquiry", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
     notify.notify_new_request("rental_enquiry", reference)
-    mailer.send_form_emails("rental_enquiry", reference, payload)
+    mailer.enqueue("rental_enquiry", reference)
     track_server_event(request, "enquiry", meta="rental")
     return {"reference": reference}
 
@@ -529,7 +528,7 @@ async def rentals_notification(request: Request, body: RentalNotification):
         "sourcePage": check_source_page(body.sourcePage),
     }
     reference = storage.save_record("rental_notification", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
-    mailer.send_form_emails("rental_notification", reference, payload)
+    mailer.enqueue("rental_notification", reference)
     return {"reference": reference}
 
 
@@ -740,7 +739,7 @@ async def giveaways_enquiry(
                                     config.RETENTION_SUBMISSIONS_DAYS,
                                     cv_bytes=logo_bytes, file_ext=logo_ext)
     notify.notify_new_request("giveaway_enquiry", reference)
-    mailer.send_form_emails("giveaway_enquiry", reference, payload)
+    mailer.enqueue("giveaway_enquiry", reference)
     track_server_event(request, "enquiry", meta="corporate gifts")
     return {"reference": reference}
 
@@ -789,11 +788,36 @@ async def giveaways_notification(request: Request, body: GiveawayNotification):
     }
     reference = storage.save_record("giveaway_notification", payload, ip_hash,
                                     config.RETENTION_SUBMISSIONS_DAYS)
-    mailer.send_form_emails("giveaway_notification", reference, payload)
+    mailer.enqueue("giveaway_notification", reference)
     return {"reference": reference}
 
 
 # ---------------- retention cleanup ----------------
+
+@app.on_event("startup")
+async def start_mail_worker():
+    """Durable outbox worker. Emails are queued inside the request and sent
+    here; anything left behind by a restart or crash is retried, so delivery
+    never depends on a process surviving past the HTTP response."""
+    from . import mailer
+
+    try:
+        recovered = mailer.recover_stuck(0)
+        if recovered:
+            print(f"[mail] recovered {recovered} interrupted delivery job(s)", flush=True)
+    except Exception:
+        pass
+
+    async def loop():
+        while True:
+            try:
+                await asyncio.to_thread(mailer.process_outbox, 10)
+                await asyncio.to_thread(mailer.recover_stuck, 300)
+            except Exception as exc:
+                print(f"[mail] worker error: {exc.__class__.__name__}", flush=True)
+            await asyncio.sleep(5)
+    asyncio.get_event_loop().create_task(loop())
+
 
 @app.on_event("startup")
 async def start_schedule_task():

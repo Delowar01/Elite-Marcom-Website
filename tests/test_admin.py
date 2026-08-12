@@ -1325,7 +1325,17 @@ def test_email_settings_screen_and_permissions():
     d = res.json()
     assert {f["key"] for f in d["forms"]} == {
         "general_inquiry", "job_application", "corporate_gifts",
-        "stock_notification", "rental_inquiry"}
+        "stock_notification", "rental_availability", "rental_inquiry"}
+    # the two availability alerts stay separate, with their own recipients
+    forms = {f["key"]: f for f in d["forms"]}
+    assert forms["stock_notification"]["label"] == "Stock Notification"
+    assert forms["rental_availability"]["label"] == "Rental Availability Notification"
+    assert forms["rental_availability"]["recipient"] == "mohammad.hossain@elitemarcom.com"
+    assert forms["stock_notification"]["customerSubject"] != \
+        forms["rental_availability"]["customerSubject"]
+    assert "required_from" in forms["rental_availability"]["variables"]
+    assert "required_from" not in forms["stock_notification"]["variables"]
+    assert isinstance(d["queued"], int)
     assert d["general"]["fromEmail"] == "website@mail.elitemarcom.com"
     assert d["senderDomains"] == ["mail.elitemarcom.com"]
     # the provider key is never present in any shape

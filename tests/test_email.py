@@ -64,14 +64,8 @@ def mail_env(tmp_path_factory):
         del mailer._local.conn
     real_client = mailer.httpx.Client
     mailer.httpx.Client = _StubClient
-    # deliver inline so assertions are deterministic
-    real_send = mailer.send_form_emails
-    mailer.send_form_emails = lambda kind, ref, payload, attachment=None: (
-        mailer._deliver(mailer.KIND_TO_FORM[kind], kind, ref, payload, attachment)
-        if kind in mailer.KIND_TO_FORM else None)
     yield
     mailer.httpx.Client = real_client
-    mailer.send_form_emails = real_send
     config.RESEND_API_KEY, config.RUNTIME_DIR = old_key, old_runtime
     aa._DB_PATH, storage._DB_PATH, storage._CV_DIR, storage._conn = (
         old_admin, old_records, old_cv, old_conn)
@@ -95,6 +89,11 @@ def challenge(form: str) -> str:
 
 def base(form: str) -> dict:
     return {"consent": True, "challenge": challenge(form), "consentVersion": "2026-01"}
+
+
+def drain() -> dict:
+    """Run the worker exactly as the server does after a response."""
+    return mailer.process_outbox(20)
 
 
 def by_recipient(address: str) -> dict | None:
@@ -131,6 +130,8 @@ def test_general_inquiry_sends_both_emails():
         "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     reference = res.json()["reference"]
+    assert SENT == []                      # nothing sent during the request
+    drain()
     assert len(SENT) == 2
 
     internal = by_recipient("info@elitemarcom.com")
@@ -172,6 +173,7 @@ def test_job_application_attaches_the_cv():
         files={"cv": ("lina-cv.pdf", pdf, "application/pdf")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     reference = res.json()["reference"]
+    drain()
 
     internal = by_recipient("hr@elitemarcom.com")
     assert internal is not None
@@ -198,6 +200,7 @@ def test_corporate_gifts_request_sends_both_emails():
         "challenge": challenge("giveaway_enquiry"), "consentVersion": "2026-01",
         "sourcePage": "/giveaways.html"}, headers=ORIGIN)
     assert res.status_code == 200, res.text
+    drain()
     internal = by_recipient("mohammad.hossain@elitemarcom.com")
     customer = by_recipient("yousef@example.com")
     assert internal is not None and customer is not None
@@ -216,6 +219,7 @@ def test_stock_notification_sends_both_emails():
         "productId": products[0]["id"], "sourcePage": "/giveaways.html",
         **base("giveaway_notification")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
+    drain()
     internal = by_recipient("mohammad.hossain@elitemarcom.com")
     customer = by_recipient("sara@example.com")
     assert internal is not None and customer is not None
@@ -233,12 +237,88 @@ def test_rental_inquiry_sends_both_emails():
         "market": "ksa", "items": [{"productId": rentals[0]["id"], "quantity": 2, "days": 4}],
         "sourcePage": "/rental.html", **base("rental_enquiry")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
+    drain()
     internal = by_recipient("mohammad.hossain@elitemarcom.com")
     customer = by_recipient("bakr@example.com")
     assert internal is not None and customer is not None
     assert "Bakr Holding" in internal["subject"]
     assert "day(s)" in internal["html"]
     assert "rental enquiry" in customer["html"].lower()
+
+
+def test_rental_availability_is_its_own_notification_type():
+    """The sixth type: separate from the gifts stock alert in every respect."""
+    from server.main import load_rentals
+
+    rental = load_rentals()[0]
+    res = client.post("/api/rentals/notifications", json={
+        "fullName": "Nadia Rahman", "company": "Skyline Events",
+        "email": "nadia.customer@example.com", "phone": "+966554443322",
+        "requiredFrom": "2026-11-02", "requiredUntil": "2026-11-08",
+        "message": "We need this for the Riyadh Season activation.",
+        "market": "ksa", "productId": rental["id"], "sourcePage": "/rental.html",
+        **base("rental_notification")}, headers=ORIGIN)
+    assert res.status_code == 200, res.text
+    reference = res.json()["reference"]
+    assert SENT == []
+    drain()
+    assert len(SENT) == 2
+
+    internal = by_recipient("mohammad.hossain@elitemarcom.com")
+    assert internal is not None
+    assert internal["subject"].startswith("Rental availability alert")
+    assert reference in internal["subject"]
+    assert "Skyline Events" in internal["html"]
+    assert "2026-11-02" in internal["html"] and "2026-11-08" in internal["html"]
+
+    customer = by_recipient("nadia.customer@example.com")
+    assert customer is not None
+    assert customer["subject"] == "We will confirm availability for you — Elite Marcom"
+    assert "Nadia Rahman" in customer["html"]
+    assert "2026-11-02" in customer["html"]        # required_from variable resolved
+    assert "2026-11-08" in customer["html"]        # required_until variable resolved
+    assert rental["name"] in customer["html"]
+    assert "{{" not in customer["html"]
+    # it is NOT the gifts stock-notification template
+    assert "notification list" not in customer["html"]
+    assert "rental" in customer["html"].lower()
+
+    # its log rows are tagged with the new form key
+    entries = [e for e in mailer.log_entries(20) if e["reference"] == reference]
+    assert entries and all(e["form"] == "rental_availability" for e in entries)
+    assert {e["kind"] for e in entries} == {"internal", "customer"}
+
+
+def test_rental_availability_settings_are_independent_of_stock_notification():
+    mailer.save_form("rental_availability", {
+        "recipient": "rentals-alerts@elitemarcom.com",
+        "customerSubject": "Rental availability — Elite Marcom",
+        "customerOn": True})
+    assert mailer.form_settings("rental_availability")["recipient"] == "rentals-alerts@elitemarcom.com"
+    # the gifts stock notification is untouched
+    assert mailer.form_settings("stock_notification")["recipient"] == "mohammad.hossain@elitemarcom.com"
+    assert mailer.form_settings("stock_notification")["customerSubject"] == \
+        "We will let you know when it is available — Elite Marcom"
+    # variables are scoped per form
+    with pytest.raises(mailer.MailError):
+        mailer.save_form("stock_notification", {"body": "From {{required_from}}"})
+    with pytest.raises(mailer.MailError):
+        mailer.save_form("rental_availability", {"body": "Qty {{quantity}}"})
+
+    # a fresh rental alert honours the new routing
+    from server.main import load_rentals
+
+    res = client.post("/api/rentals/notifications", json={
+        "fullName": "Route Check", "company": "Route Co", "email": "route.rental@example.com",
+        "phone": "+966554443322", "requiredFrom": "2026-12-01", "requiredUntil": "2026-12-05",
+        "message": "Routing check for the rental availability alert.",
+        "market": "ksa", "productId": load_rentals()[0]["id"], "sourcePage": "/rental.html",
+        **base("rental_notification")}, headers=ORIGIN)
+    assert res.status_code == 200
+    drain()
+    assert by_recipient("rentals-alerts@elitemarcom.com") is not None
+    assert by_recipient("mohammad.hossain@elitemarcom.com") is None
+    mailer.save_form("rental_availability", {"recipient": "mohammad.hossain@elitemarcom.com"})
 
 
 # ---------------- admin-controlled behaviour ----------------
@@ -250,6 +330,7 @@ def test_routing_change_affects_the_next_submission():
         "email": "routing@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Branding", "message": "Testing the routing change end to end.",
         "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+    drain()
     assert by_recipient("newteam@elitemarcom.com") is not None
     assert by_recipient("info@elitemarcom.com") is None
     mailer.save_form("general_inquiry", {"recipient": "info@elitemarcom.com"})
@@ -262,6 +343,7 @@ def test_on_off_switches_are_respected():
         "email": "switch@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Branding", "message": "Only the customer should hear back here.",
         "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+    drain()
     assert by_recipient("info@elitemarcom.com") is None
     assert by_recipient("switch@example.com") is not None
 
@@ -272,6 +354,7 @@ def test_on_off_switches_are_respected():
         "email": "switch2@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Branding", "message": "Only the team should hear about this one.",
         "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+    drain()
     assert by_recipient("info@elitemarcom.com") is not None
     assert by_recipient("switch2@example.com") is None
     mailer.save_form("general_inquiry", {"internalOn": True, "customerOn": True})
@@ -289,6 +372,7 @@ def test_template_edits_reach_the_customer_email():
         "email": "template@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Corporate Events", "message": "Checking the custom template rendering.",
         "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+    drain()
     customer = by_recipient("template@example.com")
     assert customer["subject"] == "Hello Template Tester — Elite Marcom"
     assert "Thanks, Template Tester" in customer["html"]
@@ -319,6 +403,7 @@ def test_template_values_are_escaped_not_injected():
         "market": "Worldwide", "service": "Branding",
         "message": "Testing that markup in a name cannot break the email.",
         "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+    drain()
     customer = by_recipient("bobby@example.com")
     assert "<script>" not in customer["html"]
     assert "&lt;script&gt;" in customer["html"]
@@ -326,7 +411,7 @@ def test_template_values_are_escaped_not_injected():
 
 # ---------------- reliability & safety ----------------
 
-def test_failed_send_is_logged_as_failed_never_as_sent():
+def test_failed_send_is_retried_then_recovered_without_duplicates():
     FAIL_NEXT[0] = True
     res = client.post("/api/contact/enquiries", json={
         "enquiryType": "General enquiry", "fullName": "Fail Case", "company": "",
@@ -335,20 +420,56 @@ def test_failed_send_is_logged_as_failed_never_as_sent():
         "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
     assert res.status_code == 200          # the visitor's request is still safely stored
     reference = res.json()["reference"]
-    entries = [e for e in mailer.log_entries(20) if e["reference"] == reference]
-    assert entries and all(e["status"] == "failed" for e in entries)
+
+    drain()                                 # first attempt fails
+    entries = [e for e in mailer.log_entries(30) if e["reference"] == reference]
+    assert entries and all(e["status"] == "pending" for e in entries)   # queued for retry
+    assert all(e["attempts"] == 1 for e in entries)
     assert all("stub" not in e["detail"] for e in entries)   # provider text never stored
 
+    # the provider recovers; the queued jobs go out, exactly once each
+    FAIL_NEXT[0] = False
+    SENT.clear()                                            # count only what happens next
+    mailer.retry_failed(reference=reference)                # make them due immediately
+    with mailer._log_lock:
+        mailer._log_conn().execute(
+            "UPDATE sends SET next_attempt_at=0 WHERE reference=?", (reference,))
+        mailer._log_conn().commit()
+    drain()
+    entries = [e for e in mailer.log_entries(30) if e["reference"] == reference]
+    assert all(e["status"] == "sent" for e in entries)
+    assert len([s for s in SENT if "fail@example.com" in s["payload"]["to"]]) == 1
 
-def test_duplicate_submission_cannot_send_twice():
+    drain()                                  # a further pass must not resend
+    assert len([s for s in SENT if "fail@example.com" in s["payload"]["to"]]) == 1
+
+
+def test_delivery_survives_a_restart():
+    """A process killed mid-send leaves the job recoverable, not lost."""
+    payload = {"fullName": "Crash Case", "company": "", "email": "crash@example.com",
+               "phone": "+966500000000", "message": "queued before the crash"}
+    reference = storage.save_record("contact", payload, "iphash", 180)
+    assert mailer.enqueue("contact", reference) == 2
+    # simulate: worker claimed the jobs, then the process died
+    mailer._claim_due(10)
+    assert SENT == []
+    assert mailer.recover_stuck(0) == 2       # startup recovery re-queues them
+    drain()
+    assert by_recipient("crash@example.com") is not None
+    entries = [e for e in mailer.log_entries(30) if e["reference"] == reference]
+    assert all(e["status"] == "sent" for e in entries)
+
+
+def test_duplicate_submission_cannot_queue_or_send_twice():
     payload = {"fullName": "Repeat Sender", "company": "", "email": "repeat@example.com",
                "phone": "+966500000000", "message": "duplicate check"}
     reference = storage.save_record("contact", payload, "iphash", 180)
-    mailer._deliver("general_inquiry", "contact", reference, payload, None)
-    first = len(SENT)
-    assert first == 2
-    mailer._deliver("general_inquiry", "contact", reference, payload, None)  # retry / double click
-    assert len(SENT) == first
+    assert mailer.enqueue("contact", reference) == 2
+    assert mailer.enqueue("contact", reference) == 0     # double click / retried request
+    drain()
+    assert len(SENT) == 2
+    drain()
+    assert len(SENT) == 2
 
 
 def test_api_key_never_leaves_the_server():
@@ -387,7 +508,8 @@ def test_nothing_is_sent_when_the_key_is_missing():
     try:
         payload = {"fullName": "No Key", "email": "nokey@example.com"}
         reference = storage.save_record("contact", payload, "iphash", 180)
-        mailer._deliver("general_inquiry", "contact", reference, payload, None)
+        mailer.enqueue("contact", reference)
+        assert mailer.process_outbox() == {"sent": 0, "failed": 0, "pending": 0}
         assert SENT == []
     finally:
         config.RESEND_API_KEY = original

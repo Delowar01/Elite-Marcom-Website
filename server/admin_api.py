@@ -1414,6 +1414,7 @@ async def admin_email(request: Request):
     data = mailer.all_settings()
     data["log"] = mailer.log_entries(30)
     data["stats"] = mailer.log_stats()
+    data["queued"] = mailer.outbox_pending()
     return data
 
 
@@ -1510,6 +1511,29 @@ async def admin_email_preview(request: Request, body: EmailPreviewBody,
     return {"subject": subject, "html": html,
             "from": f'{general["fromName"]} <{general["fromEmail"]}>',
             "replyTo": general["replyTo"]}
+
+
+class EmailRetryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reference: str = Field(default="", max_length=20)
+    all: bool = False
+
+
+@router.post("/api/admin/email/retry")
+async def admin_email_retry(request: Request, body: EmailRetryBody,
+                            x_csrf: str | None = Header(default=None)):
+    """Put failed deliveries back in the queue — never duplicates a send that
+    already succeeded, and never re-creates the customer's submission."""
+    session = require_perm(request, "settings.manage")
+    require_csrf(request, session, x_csrf)
+    from . import mailer
+
+    if not body.all and not body.reference:
+        raise HTTPException(status_code=400, detail="Choose a delivery to retry.")
+    requeued = mailer.retry_failed(reference=body.reference.strip().upper())
+    aa.audit(session, "email.retried", "email",
+             {"reference": body.reference or "all", "requeued": requeued}, _ip_hash(request))
+    return {"requeued": requeued}
 
 
 class EmailTestBody(BaseModel):

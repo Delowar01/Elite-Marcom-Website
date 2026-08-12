@@ -2117,6 +2117,7 @@
           '<div class="stat-row">' +
           '<div class="stat-card"><b>' + esc(stats.sent || 0) + "</b><span>Sent (30 days)</span></div>" +
           '<div class="stat-card"><b>' + esc(stats.failed || 0) + "</b><span>Failed (30 days)</span></div>" +
+          '<div class="stat-card"><b>' + esc(d.queued || 0) + "</b><span>Waiting in the queue</span></div>" +
           '<div class="stat-card"><b>' + esc(forms.length) + "</b><span>Connected forms</span></div></div>" +
 
           '<div class="admin-panel"><h2>Sender &amp; branding</h2>' +
@@ -2173,6 +2174,11 @@
           '<span class="admin-inline-note" id="et-result"></span></div></form></div>' +
 
           '<div class="admin-panel"><h2>Recent deliveries</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">Every email is queued when the ' +
+          "form is submitted and sent by the server, so a temporary email outage never loses a " +
+          "message — failed deliveries stay here and can be retried without resending the form." +
+          ((stats.failed || 0) ? ' <button class="btn btn--ghost btn--small" id="em-retry-all">Retry all failed</button>' : "") +
+          "</p>" +
           ((d.log || []).length
             ? '<div class="table-scroll"><table class="admin-table"><thead><tr><th>When</th><th>Form</th><th>Type</th>' +
               "<th>To</th><th>Status</th></tr></thead><tbody>" +
@@ -2181,7 +2187,11 @@
                 return '<tr><td class="muted">' + esc(when(l.ts)) + "</td><td>" + esc(l.form) +
                   '</td><td class="muted">' + esc(l.kind) + '</td><td class="muted">' + esc(l.recipient) +
                   '</td><td><span class="' + cls + '">' + esc(l.status) + "</span>" +
-                  (l.detail ? ' <span class="admin-inline-note">' + esc(l.detail) + "</span>" : "") + "</td></tr>";
+                  (l.attempts > 1 ? ' <span class="admin-inline-note">(' + esc(l.attempts) + " attempts)</span>" : "") +
+                  (l.detail ? '<br><span class="admin-inline-note">' + esc(l.detail) + "</span>" : "") +
+                  (l.status === "failed" && l.reference
+                    ? ' <button class="btn btn--ghost btn--small" data-retry="' + esc(l.reference) + '">Retry</button>'
+                    : "") + "</td></tr>";
               }).join("") + "</tbody></table></div>"
             : '<p class="admin-inline-note">Nothing sent yet.</p>') + "</div>" +
           '<div class="picker-overlay" id="em-preview" hidden><div class="picker-box">' +
@@ -2253,6 +2263,20 @@
         });
         document.getElementById("pv-close").addEventListener("click", function () {
           document.getElementById("em-preview").hidden = true;
+        });
+        var retryAll = document.getElementById("em-retry-all");
+        if (retryAll) retryAll.addEventListener("click", function () {
+          api("/api/admin/email/retry", { all: true }).then(function (r2) {
+            r2.ok ? (toast("Requeued " + r2.data.requeued + " delivery(ies)."), views.email()) : apiErr(r2);
+          });
+        });
+        main.querySelectorAll("[data-retry]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            api("/api/admin/email/retry", { reference: btn.getAttribute("data-retry") })
+              .then(function (r2) {
+                r2.ok ? (toast("Requeued — the server will try again shortly."), views.email()) : apiErr(r2);
+              });
+          });
         });
         document.getElementById("em-test").addEventListener("submit", function (e) {
           e.preventDefault();

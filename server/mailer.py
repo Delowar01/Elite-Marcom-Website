@@ -96,7 +96,7 @@ FORMS: dict[str, dict] = {
     },
     "stock_notification": {
         "label": "Stock Notification",
-        "kinds": ("giveaway_notification", "rental_notification"),
+        "kinds": ("giveaway_notification",),
         "recipient": "mohammad.hossain@elitemarcom.com",
         "internalSubject": "Stock notification request — {{product_name}} ({{reference_number}})",
         "customerSubject": "We will let you know when it is available — Elite Marcom",
@@ -112,6 +112,28 @@ FORMS: dict[str, dict] = {
         "buttonUrl": "https://www.elitemarcom.com/giveaways.html",
         "variables": ("customer_name", "company_name", "email", "phone", "product_name",
                       "market", "reference_number"),
+    },
+    "rental_availability": {
+        "label": "Rental Availability Notification",
+        "kinds": ("rental_notification",),
+        "recipient": "mohammad.hossain@elitemarcom.com",
+        "internalSubject": "Rental availability alert — {{product_name}} ({{reference_number}})",
+        "customerSubject": "We will confirm availability for you — Elite Marcom",
+        "heading": "We will let you know the moment it is free",
+        "body": ("Dear {{customer_name}},\n\n"
+                 "Thank you for your interest in renting {{product_name}}. The item is currently "
+                 "reserved for your dates, so we have added you to the availability list.\n\n"
+                 "Required from: {{required_from}}\n"
+                 "Required until: {{required_until}}\n"
+                 "Reference number: {{reference_number}}\n\n"
+                 "As soon as it becomes free — or if we can offer an equivalent unit — we will "
+                 "contact you straight away."),
+        "closing": "If your dates are flexible, reply to this email and we will find the closest "
+                   "match from our fleet.",
+        "buttonText": "Browse rental items",
+        "buttonUrl": "https://www.elitemarcom.com/rental.html",
+        "variables": ("customer_name", "company_name", "email", "phone", "product_name",
+                      "required_from", "required_until", "market", "reference_number"),
     },
     "rental_inquiry": {
         "label": "Rental Items Inquiry",
@@ -299,6 +321,8 @@ def variables_for(form_key: str, payload: dict, reference: str) -> dict[str, str
         "location": str(payload.get("location") or ""),
         "product_name": product or "the item you selected",
         "quantity": quantity,
+        "required_from": str(payload.get("requiredFrom") or payload.get("startDate") or "not specified"),
+        "required_until": str(payload.get("requiredUntil") or payload.get("endDate") or "not specified"),
         "reference_number": reference,
     }
     return {name: values.get(name, "") for name in FORMS[form_key]["variables"]}
@@ -400,7 +424,9 @@ _INTERNAL_LABELS = {
     "projectDate": "Project date", "projectCity": "City", "eventDate": "Event date",
     "startDate": "Start date", "endDate": "End date", "eventCity": "Event city",
     "venue": "Venue", "shippingAddress": "Shipping address", "productName": "Product",
-    "productId": "Product id",
+    "productCode": "Product code", "productId": "Product id",
+    "requiredFrom": "Required from", "requiredUntil": "Required until",
+    "deliveryCity": "Delivery city", "requiredBy": "Required by",
 }
 
 
@@ -495,56 +521,32 @@ def _log_conn() -> sqlite3.Connection:
             subject TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL,
             detail TEXT NOT NULL DEFAULT '',
-            provider_id TEXT NOT NULL DEFAULT ''
+            provider_id TEXT NOT NULL DEFAULT '',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL DEFAULT 0
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_sends_once
             ON sends(reference, kind) WHERE reference <> '';
         """)
+        # migrate databases created before the durable queue existed, then
+        # build the index that depends on the new columns
+        for ddl in ("ALTER TABLE sends ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE sends ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0"):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # column already present
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sends_due ON sends(status, next_attempt_at)")
         conn.commit()
         _local.conn = conn
     return conn
 
 
-def claim(reference: str, kind: str, form: str, recipient: str) -> bool:
-    """Reserve one (reference, kind) slot so a retry can never double-send."""
-    if not reference:
-        return True
-    with _log_lock:
-        conn = _log_conn()
-        try:
-            conn.execute(
-                "INSERT INTO sends (ts, form, kind, reference, recipient, status)"
-                " VALUES (?,?,?,?,?,'sending')",
-                (int(time.time()), form, kind, reference, recipient[:200]))
-            conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
-
-
-def record(reference: str, kind: str, form: str, recipient: str, subject: str,
-           status: str, detail: str = "", provider_id: str = "") -> None:
-    with _log_lock:
-        conn = _log_conn()
-        if reference:
-            conn.execute(
-                "UPDATE sends SET status=?, detail=?, provider_id=?, subject=?, ts=?"
-                " WHERE reference=? AND kind=?",
-                (status, detail[:300], provider_id[:80], subject[:200], int(time.time()),
-                 reference, kind))
-        else:
-            conn.execute(
-                "INSERT INTO sends (ts, form, kind, reference, recipient, subject, status,"
-                " detail, provider_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                (int(time.time()), form, kind, "", recipient[:200], subject[:200],
-                 status, detail[:300], provider_id[:80]))
-        conn.commit()
-
-
 def log_entries(limit: int = 40) -> list[dict]:
     rows = _log_conn().execute(
-        "SELECT ts, form, kind, reference, recipient, subject, status, detail"
-        " FROM sends ORDER BY id DESC LIMIT ?", (max(1, min(200, limit)),)).fetchall()
+        "SELECT id, ts, form, kind, reference, recipient, subject, status, detail,"
+        " attempts FROM sends ORDER BY id DESC LIMIT ?",
+        (max(1, min(200, limit)),)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -594,7 +596,6 @@ def send_email(*, to: str, subject: str, html: str, reply_to: str = "",
     except Exception as exc:
         raise MailError("The email service could not be reached.") from exc
     if res.status_code >= 400:
-        body = ""
         try:
             body = json.dumps(res.json())[:200]
         except Exception:
@@ -615,74 +616,219 @@ def _attachment(cv_bytes: bytes, filename: str) -> list[dict]:
              "content": base64.b64encode(cv_bytes).decode()}]
 
 
-# ---------------- public entry point ----------------
+# ---------------- durable outbox ----------------
 
-def send_form_emails(kind: str, reference: str, payload: dict,
-                     attachment: tuple[bytes, str] | None = None) -> None:
-    """Queue the internal notification and the customer confirmation.
+MAX_ATTEMPTS = 5
+BACKOFF_S = (30, 120, 600, 1800)      # 30s, 2m, 10m, 30m, then give up
 
-    Runs off the request thread so a slow provider can never delay or fail a
-    visitor's submission — the submission itself is already saved. Outcomes
-    are written to the mail log exactly as they happened.
+
+def enqueue(kind: str, reference: str) -> int:
+    """Persist the intent to send BEFORE the HTTP response returns.
+
+    Nothing is sent here: the rows survive a restart, a crash or a deploy,
+    and the worker picks them up. The unique (reference, kind) index means a
+    repeated submit or a retry can never queue the same email twice.
     """
     form_key = KIND_TO_FORM.get(kind)
-    if form_key is None:
+    if form_key is None or not reference:
+        return 0
+    settings = form_settings(form_key)
+    queued = 0
+    now = int(time.time())
+    with _log_lock:
+        conn = _log_conn()
+        for audience, recipient, enabled in (
+                ("internal", settings["recipient"], settings["internalOn"]),
+                ("customer", "", settings["customerOn"])):
+            if not enabled:
+                continue
+            try:
+                conn.execute(
+                    "INSERT INTO sends (ts, form, kind, reference, recipient, status,"
+                    " next_attempt_at) VALUES (?,?,?,?,?, 'pending', ?)",
+                    (now, form_key, audience, reference, recipient[:200], now))
+                queued += 1
+            except sqlite3.IntegrityError:
+                pass  # already queued for this submission
+        conn.commit()
+    return queued
+
+
+def _claim_due(limit: int = 10) -> list[dict]:
+    """Atomically take pending jobs whose time has come."""
+    now = int(time.time())
+    taken = []
+    with _log_lock:
+        conn = _log_conn()
+        rows = conn.execute(
+            "SELECT id, form, kind, reference, attempts FROM sends"
+            " WHERE status='pending' AND next_attempt_at <= ? ORDER BY id LIMIT ?",
+            (now, max(1, min(50, limit)))).fetchall()
+        for row in rows:
+            cur = conn.execute(
+                "UPDATE sends SET status='sending', ts=? WHERE id=? AND status='pending'",
+                (now, row["id"]))
+            if cur.rowcount:
+                taken.append(dict(row))
+        conn.commit()
+    return taken
+
+
+def _finish(job_id: int, status: str, *, subject: str = "", recipient: str = "",
+            detail: str = "", provider_id: str = "", attempts: int = 0,
+            next_attempt_at: int = 0) -> None:
+    with _log_lock:
+        conn = _log_conn()
+        conn.execute(
+            "UPDATE sends SET status=?, subject=COALESCE(NULLIF(?,''), subject),"
+            " recipient=COALESCE(NULLIF(?,''), recipient), detail=?, provider_id=?,"
+            " attempts=?, next_attempt_at=?, ts=? WHERE id=?",
+            (status, subject[:200], recipient[:200], detail[:300], provider_id[:80],
+             attempts, next_attempt_at, int(time.time()), job_id))
+        conn.commit()
+
+
+def recover_stuck(older_than_s: int = 300) -> int:
+    """A process that died mid-send leaves rows in 'sending'; make them due again."""
+    cutoff = int(time.time()) - older_than_s
+    with _log_lock:
+        conn = _log_conn()
+        cur = conn.execute(
+            "UPDATE sends SET status='pending', next_attempt_at=? WHERE status='sending' AND ts <= ?",
+            (int(time.time()), cutoff))
+        conn.commit()
+        return cur.rowcount
+
+
+def retry_failed(reference: str = "", job_id: int = 0) -> int:
+    """Admin action: put failed deliveries back in the queue."""
+    with _log_lock:
+        conn = _log_conn()
+        if job_id:
+            cur = conn.execute(
+                "UPDATE sends SET status='pending', next_attempt_at=?, attempts=0"
+                " WHERE id=? AND status='failed'", (int(time.time()), job_id))
+        elif reference:
+            cur = conn.execute(
+                "UPDATE sends SET status='pending', next_attempt_at=?, attempts=0"
+                " WHERE reference=? AND status='failed'", (int(time.time()), reference))
+        else:
+            cur = conn.execute(
+                "UPDATE sends SET status='pending', next_attempt_at=?, attempts=0"
+                " WHERE status='failed'", (int(time.time()),))
+        conn.commit()
+        return cur.rowcount
+
+
+def _load_submission(reference: str) -> tuple[dict, tuple[bytes, str] | None]:
+    """Read the stored submission at send time — no second copy of personal
+    data is kept in the queue, and the CV never leaves the encrypted store."""
+    from . import storage
+
+    record = storage.get_record(reference)
+    if record is None:
+        raise MailError("The submission is no longer available.")
+    try:
+        payload = json.loads(storage.decrypt(record["payload"]).decode())
+    except Exception:
+        raise MailError("The submission could not be read.")
+    attachment = None
+    if record.get("cvPath"):
+        data = storage.read_attachment(record["cvPath"])
+        if data:
+            attachment = (data, f"{reference}-cv.pdf")
+    return payload, attachment
+
+
+def _send_job(job: dict) -> None:
+    form_key, audience, reference = job["form"], job["kind"], job["reference"]
+    attempts = int(job["attempts"]) + 1
+    if form_key not in FORMS:
+        _finish(job["id"], "failed", detail="unknown form", attempts=attempts)
+        return
+    try:
+        payload, attachment = _load_submission(reference)
+    except MailError as exc:
+        _finish(job["id"], "failed", detail=str(exc), attempts=attempts)
         return
 
-    def worker():
-        try:
-            _deliver(form_key, kind, reference, payload, attachment)
-        except Exception as exc:  # never surfaces to the visitor
-            print(f"[mail] unexpected failure: {exc.__class__.__name__}", flush=True)
-
-    threading.Thread(target=worker, daemon=True).start()
-
-
-def _deliver(form_key: str, kind: str, reference: str, payload: dict,
-             attachment: tuple[bytes, str] | None) -> None:
-    if not config.RESEND_API_KEY:
-        record(reference, "internal", form_key, "", "", "skipped", "no API key configured")
-        return
     settings = form_settings(form_key)
     general = general_settings()
     values = variables_for(form_key, payload, reference)
+    customer_email = str(payload.get("email") or "")
 
-    if settings["internalOn"] and _valid_email(settings["recipient"]):
-        if claim(reference, "internal", form_key, settings["recipient"]):
-            note = ""
-            attachments = []
-            if attachment and attachment[0]:
-                attachments = _attachment(*attachment)
-                note = ("The applicant's CV is attached to this email."
-                        if attachments else
-                        "A CV was uploaded but is too large to attach — open the request in the "
-                        "admin panel to download it securely.")
-            subject = render(settings["internalSubject"], values, escape=False)
-            try:
-                provider_id = send_email(
-                    to=settings["recipient"], subject=subject,
-                    html=internal_html(form_key, general, payload, reference, note),
-                    reply_to=str(payload.get("email") or "") if _valid_email(
-                        str(payload.get("email") or "")) else "",
-                    attachments=attachments, general=general)
-                record(reference, "internal", form_key, settings["recipient"], subject,
-                       "sent", "", provider_id)
-            except MailError as exc:
-                record(reference, "internal", form_key, settings["recipient"], subject,
-                       "failed", str(exc))
+    if audience == "internal":
+        recipient = settings["recipient"]
+        subject = render(settings["internalSubject"], values, escape=False)
+        attachments = []
+        note = ""
+        if attachment:
+            attachments = _attachment(*attachment)
+            note = ("The applicant's CV is attached to this email." if attachments else
+                    "A CV was uploaded but is too large to attach — open the request in the "
+                    "admin panel to download it securely.")
+        html = internal_html(form_key, general, payload, reference, note)
+        reply_to = customer_email if _valid_email(customer_email) else ""
+    else:
+        recipient = customer_email
+        subject = render(settings["customerSubject"], values, escape=False)
+        html = customer_html(form_key, settings, general, values)
+        attachments, reply_to = [], ""
+        if not _valid_email(recipient):
+            _finish(job["id"], "failed", subject=subject,
+                    detail="no valid customer address", attempts=attempts)
+            return
 
-    customer = str(payload.get("email") or "")
-    if settings["customerOn"] and _valid_email(customer):
-        if claim(reference, "customer", form_key, customer):
-            subject = render(settings["customerSubject"], values, escape=False)
-            try:
-                provider_id = send_email(
-                    to=customer, subject=subject,
-                    html=customer_html(form_key, settings, general, values),
-                    general=general)
-                record(reference, "customer", form_key, customer, subject, "sent", "", provider_id)
-            except MailError as exc:
-                record(reference, "customer", form_key, customer, subject, "failed", str(exc))
+    try:
+        provider_id = send_email(to=recipient, subject=subject, html=html,
+                                 reply_to=reply_to, attachments=attachments, general=general)
+    except MailError as exc:
+        if attempts >= MAX_ATTEMPTS:
+            _finish(job["id"], "failed", subject=subject, recipient=recipient,
+                    detail=f"{exc} (gave up after {attempts} attempts)", attempts=attempts)
+        else:
+            delay = BACKOFF_S[min(attempts - 1, len(BACKOFF_S) - 1)]
+            _finish(job["id"], "pending", subject=subject, recipient=recipient,
+                    detail=f"{exc} — retrying", attempts=attempts,
+                    next_attempt_at=int(time.time()) + delay)
+        return
+    _finish(job["id"], "sent", subject=subject, recipient=recipient,
+            provider_id=provider_id, attempts=attempts)
+
+
+def process_outbox(limit: int = 10) -> dict:
+    """One worker pass. Safe to call from anywhere, any number of times."""
+    if not config.RESEND_API_KEY:
+        return {"sent": 0, "failed": 0, "pending": 0}
+    result = {"sent": 0, "failed": 0, "pending": 0}
+    for job in _claim_due(limit):
+        before = _log_conn().execute("SELECT status FROM sends WHERE id=?",
+                                     (job["id"],)).fetchone()
+        _send_job(job)
+        after = _log_conn().execute("SELECT status FROM sends WHERE id=?",
+                                    (job["id"],)).fetchone()
+        status = after["status"] if after else "failed"
+        result[status if status in result else "pending"] += 1
+        del before
+    return result
+
+
+def outbox_pending() -> int:
+    return _log_conn().execute(
+        "SELECT COUNT(*) AS c FROM sends WHERE status IN ('pending','sending')").fetchone()["c"]
+
+
+def record(reference: str, kind: str, form: str, recipient: str, subject: str,
+           status: str, detail: str = "", provider_id: str = "") -> None:
+    """Log a one-off send (the admin test email) that has no queued job."""
+    with _log_lock:
+        conn = _log_conn()
+        conn.execute(
+            "INSERT INTO sends (ts, form, kind, reference, recipient, subject, status,"
+            " detail, provider_id, attempts) VALUES (?,?,?,?,?,?,?,?,?,1)",
+            (int(time.time()), form, kind, reference, recipient[:200], subject[:200],
+             status, detail[:300], provider_id[:80]))
+        conn.commit()
 
 
 def send_test(recipient: str, by: str) -> dict:
