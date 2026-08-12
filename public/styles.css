@@ -427,6 +427,8 @@ body.menu-open .menu-panel { transform: translateX(0); visibility: visible; }
 .reveal[data-reveal="zoom"] { transform: scale(0.92); }
 .reveal[data-reveal="zoom-up"] { transform: translateY(30px) scale(0.95); }
 .reveal[data-reveal="mask-title"] { transform: translateY(100%); }
+.reveal[data-reveal="blur-in"] { transform: none; filter: blur(16px); }
+.reveal[data-reveal="rise"] { transform: translateY(64px); }
 .mask-clip { overflow: hidden; display: block; }
 html.reveals-off .reveal { opacity: 1; transform: none; }
 

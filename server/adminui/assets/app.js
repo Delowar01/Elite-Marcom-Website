@@ -229,29 +229,40 @@
   }
 
   /* ---------- visual editor state + iframe messages ---------- */
-  var edState = { page: "index", lang: "en", vw: "desktop", outlines: true,
-                  changed: {}, fields: {}, selected: null,
-                  selectKey: null, postFrame: null };
+  var edState = {
+    page: "index", lang: "en", vw: "desktop", outlines: true,
+    changedText: {}, fields: {},
+    pageDoc: { elements: {}, sections: {} },
+    globalDoc: { elements: {}, sections: {} },
+    docTouched: { page: false, global: false },
+    touchedAttrPaths: {}, touchedAnimPaths: {},
+    sections: [], sel: null,
+    undo: [], redo: [],
+    onSelect: null, onReady: null, postFrame: null
+  };
   window.addEventListener("message", function (ev) {
     if (ev.origin !== location.origin || !ev.data || typeof ev.data !== "object") return;
     if (!document.getElementById("ed-frame")) return; // editor not on screen
-    if (ev.data.type === "em-select" && edState.selectKey) {
-      edState.selectKey(ev.data.key);
-    } else if (ev.data.type === "em-nav-blocked") {
-      toast("Links are disabled while editing — use the page selector above.");
-    } else if (ev.data.type === "em-ready" && edState.postFrame) {
-      edState.postFrame({ type: "em-outlines", on: edState.outlines });
-      // re-apply unsaved live edits after an iframe reload
-      Object.keys(edState.changed).forEach(function (key) {
-        var f = edState.fields[key];
-        var d = document.createElement("div");
-        d.textContent = edState.changed[key] || (f ? f.original : "");
-        edState.postFrame({ type: "em-update", key: key,
-                            html: d.innerHTML.replace(/\n/g, "<br>") });
-      });
-      if (edState.selected) edState.postFrame({ type: "em-focus", key: edState.selected });
+    if (ev.data.type === "em-select" && edState.onSelect) {
+      edState.onSelect(ev.data);
+    } else if (ev.data.type === "em-ready" && edState.onReady) {
+      edState.onReady(ev.data);
     }
   });
+
+  /* client-side mirror of the server's limited rich-text policy */
+  function richHtml(text) {
+    var d = document.createElement("div");
+    d.textContent = String(text == null ? "" : text);
+    var out = d.innerHTML
+      .replace(/&lt;(\/?)(strong|em|b|i|u|ul|ol|li)&gt;/g, "<$1$2>")
+      .replace(/&lt;br&gt;/g, "<br>")
+      .replace(/&lt;a href="([^"<>\s]+)"&gt;/g, function (m, href) {
+        return /^(https?:\/\/|mailto:|tel:|\/|#)/.test(href) ? '<a href="' + href + '">' : m;
+      })
+      .replace(/&lt;\/a&gt;/g, "</a>");
+    return out.replace(/\n/g, "<br>");
+  }
 
   /* ---------- page editor ---------- */
   var pageLang = "en";
@@ -1017,13 +1028,145 @@
 
     editor: function () {
       var VIEWPORTS = { desktop: 1440, tablet: 834, mobile: 390 };
+      var SHADOWS = { soft: "0 8px 30px rgba(8,10,18,0.35)", strong: "0 20px 60px rgba(8,10,18,0.5)",
+                      glow: "0 0 34px rgba(237,108,38,0.45)", none: "none" };
+      var ANIMS = ["fade-up", "fade-in", "slide-left", "slide-right", "zoom", "zoom-up",
+                   "mask-title", "blur-in", "rise"];
       var st = edState;
+      function bp() { return st.vw === "desktop" ? "base" : st.vw; }
+      function isGlobalPath(path) {
+        return path.indexOf("header.site-header") === 0 || path.indexOf("footer.site-footer") === 0;
+      }
+      function docFor(path, forceScope) {
+        var scope = forceScope || (isGlobalPath(path) && !st.pageScopeOnly ? "global" : "page");
+        return scope === "global" ? st.globalDoc : st.pageDoc;
+      }
+      function specOf(doc, path, create) {
+        if (!doc.elements[path] && create) doc.elements[path] = {};
+        return doc.elements[path] || {};
+      }
+      function markTouched(doc) {
+        if (doc === st.globalDoc) st.docTouched.global = true; else st.docTouched.page = true;
+      }
+      function mergedElements() {
+        var out = {};
+        [st.globalDoc, st.pageDoc].forEach(function (doc) {
+          Object.keys(doc.elements).forEach(function (path) {
+            var spec = doc.elements[path];
+            var t = (out[path] = out[path] || {});
+            Object.keys(spec.styles || {}).forEach(function (b) {
+              t.styles = t.styles || {};
+              t.styles[b] = Object.assign({}, t.styles[b] || {}, spec.styles[b]);
+            });
+            if (spec.attrs) t.attrs = Object.assign({}, t.attrs || {}, spec.attrs);
+            if (spec.hidden) t.hidden = Object.assign({}, t.hidden || {}, spec.hidden);
+            if (spec.anim) t.anim = spec.anim;
+          });
+        });
+        return out;
+      }
+      function buildCss(elements) {
+        var media = { tablet: "@media (max-width: 1024px)", mobile: "@media (max-width: 640px)" };
+        var hideMedia = { base: "@media (min-width: 1025px)",
+                          tablet: "@media (min-width: 641px) and (max-width: 1024px)",
+                          mobile: "@media (max-width: 640px)" };
+        var buckets = { base: [], tablet: [], mobile: [] };
+        var hides = { base: [], tablet: [], mobile: [] };
+        Object.keys(elements).forEach(function (path) {
+          var spec = elements[path];
+          Object.keys(spec.styles || {}).forEach(function (b) {
+            var props = spec.styles[b];
+            var decls = "";
+            Object.keys(props).forEach(function (prop) {
+              if (!props[prop]) return;
+              decls += prop === "background-image"
+                ? "background-image:url('" + props[prop] + "') !important;"
+                : prop + ":" + props[prop] + " !important;";
+            });
+            if (decls) buckets[b].push(path + "{" + decls + "}");
+          });
+          Object.keys(spec.hidden || {}).forEach(function (b) {
+            if (spec.hidden[b]) hides[b].push(path + "{display:none !important;}");
+          });
+        });
+        var css = buckets.base.join("\n");
+        ["tablet", "mobile"].forEach(function (b) {
+          if (buckets[b].length) css += "\n" + media[b] + "{\n" + buckets[b].join("\n") + "\n}";
+        });
+        ["base", "tablet", "mobile"].forEach(function (b) {
+          if (hides[b].length) css += "\n" + hideMedia[b] + "{\n" + hides[b].join("\n") + "\n}";
+        });
+        return css;
+      }
+      function applyLive() {
+        if (!st.postFrame) return;
+        var elements = mergedElements();
+        var attrs = [];
+        Object.keys(st.touchedAttrPaths).forEach(function (path) {
+          var current = (elements[path] || {}).attrs || {};
+          var set = {};
+          Object.keys(st.touchedAttrPaths[path]).forEach(function (name) {
+            set[name] = current[name] || null;
+          });
+          attrs.push({ path: path, set: set });
+        });
+        var anims = [];
+        Object.keys(st.touchedAnimPaths).forEach(function (path) {
+          var a = (elements[path] || {}).anim;
+          anims.push(a ? { path: path, type: a.type, delay: a.delay || 0 }
+                       : { path: path, type: "keep" });
+        });
+        var texts = Object.keys(st.changedText).map(function (key) {
+          var f = st.fields[key] || {};
+          return { key: key, html: richHtml(st.changedText[key] || f.original || "") };
+        });
+        st.postFrame({ type: "em-apply", css: buildCss(elements), attrs: attrs,
+                       anims: anims, sections: st.pageDoc.sections || {}, texts: texts });
+        refreshDirty();
+      }
+      function snapshot() {
+        return JSON.stringify({ t: st.changedText, p: st.pageDoc, g: st.globalDoc,
+                                d: st.docTouched, a: st.touchedAttrPaths, n: st.touchedAnimPaths });
+      }
+      function restore(snap) {
+        var s = JSON.parse(snap);
+        st.changedText = s.t; st.pageDoc = s.p; st.globalDoc = s.g;
+        st.docTouched = s.d; st.touchedAttrPaths = s.a; st.touchedAnimPaths = s.n;
+        reloadFrame();
+      }
+      function pushUndo() {
+        st.undo.push(snapshot());
+        if (st.undo.length > 60) st.undo.shift();
+        st.redo = [];
+        refreshDirty();
+      }
+      function reloadFrame() {
+        var frame = document.getElementById("ed-frame");
+        if (frame) frame.src = "/admin/visual/" + encodeURIComponent(st.page) + "?lang=" + st.lang +
+          "&t=" + Date.now();
+      }
+      function dirtyCount() {
+        return Object.keys(st.changedText).length +
+          (st.docTouched.page ? 1 : 0) + (st.docTouched.global ? 1 : 0);
+      }
+      function refreshDirty() {
+        var el = document.getElementById("ed-dirty");
+        if (!el) return;
+        var n = dirtyCount();
+        el.textContent = n ? "Unsaved changes" : "";
+        document.getElementById("ed-save").disabled = !n;
+        document.getElementById("ed-undo").disabled = !st.undo.length;
+        document.getElementById("ed-redo").disabled = !st.redo.length;
+      }
+
       Promise.all([
         api("/api/admin/pages/" + st.page + "?lang=" + st.lang),
         api("/api/admin/pages/_global?lang=" + st.lang),
-        api("/api/admin/pages")
+        api("/api/admin/pages"),
+        api("/api/admin/design/" + st.page)
       ]).then(function (rs) {
-        if (!rs[0].ok || !rs[1].ok || !rs[2].ok) return apiErr(rs[0].ok ? (rs[1].ok ? rs[2] : rs[1]) : rs[0]);
+        var bad = rs.find(function (r) { return !r.ok; });
+        if (bad) return apiErr(bad);
         st.fields = {};
         rs[0].data.regions.concat(rs[0].data.seo).forEach(function (f) {
           st.fields[f.key] = { label: f.label, kind: f.kind, original: f.original,
@@ -1033,6 +1176,15 @@
           st.fields[f.key] = { label: f.label, kind: f.kind, original: f.original,
                                value: f.value, scope: "_global" };
         });
+        st.pageDoc = rs[3].data.doc && rs[3].data.doc.elements
+          ? rs[3].data.doc : { elements: {}, sections: {} };
+        if (!st.pageDoc.sections) st.pageDoc.sections = {};
+        st.globalDoc = rs[3].data.globalDoc && rs[3].data.globalDoc.elements
+          ? rs[3].data.globalDoc : { elements: {}, sections: {} };
+        st.docTouched = { page: false, global: false };
+        st.touchedAttrPaths = {}; st.touchedAnimPaths = {};
+        st.changedText = {}; st.undo = []; st.redo = []; st.sel = null;
+
         var pageOpts = rs[2].data.pages.filter(function (p) { return p.regions > 0; })
           .map(function (p) {
             return '<option value="' + esc(p.page) + '"' + (p.page === st.page ? " selected" : "") + ">" +
@@ -1048,21 +1200,30 @@
             var labels = { desktop: "🖥 Desktop", tablet: "📱 Tablet", mobile: "📱 Mobile" };
             return '<button class="btn btn--small ' + (st.vw === v ? "btn--primary" : "btn--ghost") + '" data-edvw="' + v + '">' + labels[v] + "</button>";
           }).join("") + "</span>" +
-          '<label class="ed-outline-toggle"><input type="checkbox" id="ed-outlines"' + (st.outlines ? " checked" : "") + "> Show editable areas</label>" +
+          '<label class="ed-outline-toggle"><input type="checkbox" id="ed-outlines"' + (st.outlines ? " checked" : "") + "> Outlines</label>" +
+          '<button class="btn btn--ghost btn--small" id="ed-sections-btn">Sections</button>' +
+          '<span class="ed-group"><button class="btn btn--ghost btn--small" id="ed-undo" disabled title="Undo (Ctrl+Z)">↺</button>' +
+          '<button class="btn btn--ghost btn--small" id="ed-redo" disabled title="Redo (Ctrl+Shift+Z)">↻</button></span>' +
           '<span class="admin-inline-note" id="ed-dirty"></span>' +
           '<span class="ed-spacer"></span>' +
+          '<span class="admin-inline-note" id="ed-bp-note">Styling: ' + esc(st.vw) + "</span>" +
           '<button class="btn btn--ghost btn--small" id="ed-save" disabled>Save draft</button>' +
           '<button class="btn btn--primary btn--small" id="ed-publish">Publish site</button>' +
           "</div>" +
           '<div class="ed-body"><div class="ed-canvas" id="ed-canvas"><div class="ed-frame-wrap" id="ed-wrap">' +
           '<iframe id="ed-frame" src="/admin/visual/' + esc(st.page) + "?lang=" + st.lang + '" title="Page preview"></iframe>' +
           "</div></div>" +
-          '<aside class="ed-panel" id="ed-panel"><p class="admin-inline-note">Click any highlighted area in the page to edit it. ' +
-          (st.lang === "ar" ? "Arabic saves as a draft and publishes when Arabic is enabled." : "") + "</p></aside></div>";
+          '<aside class="ed-panel" id="ed-panel"><p class="admin-inline-note">Click anything in the page to edit it — text, images, styles, spacing, animation. Use the Sections button for reordering.</p></aside></div>' +
+          '<div class="picker-overlay" id="ed-picker" hidden><div class="picker-box">' +
+          '<div class="picker-head"><h2>Choose an image</h2><button class="btn btn--ghost btn--small" id="picker-close">Close</button></div>' +
+          '<div class="picker-grid" id="picker-grid"></div></div></div>';
 
         var frame = document.getElementById("ed-frame");
         var wrap = document.getElementById("ed-wrap");
         var canvas = document.getElementById("ed-canvas");
+        st.postFrame = function (msg) {
+          if (frame.contentWindow) frame.contentWindow.postMessage(msg, location.origin);
+        };
 
         function fit() {
           var w = VIEWPORTS[st.vw];
@@ -1075,61 +1236,426 @@
         fit();
         window.addEventListener("resize", fit);
 
-        function dirtyCount() {
-          return Object.keys(st.changed).length;
-        }
-        function refreshDirty() {
-          document.getElementById("ed-dirty").textContent =
-            dirtyCount() ? dirtyCount() + " unsaved change(s)" : "";
-          document.getElementById("ed-save").disabled = !dirtyCount();
-        }
-        function liveHtml(text) {
-          var d = document.createElement("div");
-          d.textContent = text;
-          return d.innerHTML.replace(/\n/g, "<br>");
-        }
-        function postFrame(msg) {
-          if (frame.contentWindow) frame.contentWindow.postMessage(msg, location.origin);
-        }
-        st.postFrame = postFrame;
+        st.onReady = function (data) {
+          st.sections = data.sections || [];
+          st.postFrame({ type: "em-outlines", on: st.outlines });
+          applyLive();
+          if (st.sel) st.postFrame({ type: "em-focus", path: st.sel.path });
+        };
 
-        function selectKey(key) {
-          var f = st.fields[key];
+        /* ---------- media picker ---------- */
+        function openPicker(cb) {
+          var overlay = document.getElementById("ed-picker");
+          var grid = document.getElementById("picker-grid");
+          grid.innerHTML = '<p class="admin-inline-note">Loading…</p>';
+          overlay.hidden = false;
+          api("/api/admin/media").then(function (r) {
+            if (!r.ok) return apiErr(r);
+            var lib = (r.data.library || []).map(function (m) {
+              return { url: "/media/" + m.file, label: m.name };
+            });
+            var assets = (r.data.siteAssets || []).filter(function (a) {
+              return a.ext !== "glb" && a.ext !== "svg";
+            }).map(function (a) { return { url: "/" + a.path, label: a.path.replace("assets/", "") }; });
+            grid.innerHTML = lib.concat(assets).map(function (it) {
+              return '<button class="picker-item" data-url="' + esc(it.url) + '">' +
+                '<img src="' + esc(it.url) + '" alt="" loading="lazy"><span>' + esc(it.label) + "</span></button>";
+            }).join("") || '<p class="admin-inline-note">No images yet — upload in Media.</p>';
+            grid.querySelectorAll(".picker-item").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                overlay.hidden = true;
+                cb(btn.getAttribute("data-url"));
+              });
+            });
+          });
+        }
+        document.getElementById("picker-close").addEventListener("click", function () {
+          document.getElementById("ed-picker").hidden = true;
+        });
+
+        /* ---------- selection panel ---------- */
+        function rgbToHex(c) {
+          var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || "");
+          if (!m) return "#000000";
+          return "#" + [m[1], m[2], m[3]].map(function (x) {
+            return ("0" + parseInt(x, 10).toString(16)).slice(-2);
+          }).join("");
+        }
+        function styleVal(path, prop) {
+          var spec = specOf(docFor(path), path, false);
+          return spec.styles && spec.styles[bp()] ? spec.styles[bp()][prop] || "" : "";
+        }
+        function setStyle(path, prop, value) {
+          pushUndo();
+          var doc = docFor(path);
+          var spec = specOf(doc, path, true);
+          spec.styles = spec.styles || {};
+          spec.styles[bp()] = spec.styles[bp()] || {};
+          if (value) spec.styles[bp()][prop] = value;
+          else delete spec.styles[bp()][prop];
+          markTouched(doc);
+          applyLive();
+        }
+        function setAttr(path, name, value) {
+          pushUndo();
+          var doc = docFor(path);
+          var spec = specOf(doc, path, true);
+          spec.attrs = spec.attrs || {};
+          if (value) spec.attrs[name] = value; else delete spec.attrs[name];
+          (st.touchedAttrPaths[path] = st.touchedAttrPaths[path] || {})[name] = true;
+          markTouched(doc);
+          applyLive();
+        }
+        function setAnim(path, type, delay) {
+          pushUndo();
+          var doc = docFor(path);
+          var spec = specOf(doc, path, true);
+          if (!type) delete spec.anim;
+          else spec.anim = { type: type, delay: delay | 0 };
+          st.touchedAnimPaths[path] = true;
+          markTouched(doc);
+          applyLive();
+        }
+        function setHidden(path, b, on) {
+          pushUndo();
+          var doc = docFor(path);
+          var spec = specOf(doc, path, true);
+          spec.hidden = spec.hidden || {};
+          if (on) spec.hidden[b] = true; else delete spec.hidden[b];
+          markTouched(doc);
+          applyLive();
+        }
+
+        function textInput(id, value, placeholder) {
+          return '<input id="' + id + '" value="' + esc(value) + '" placeholder="' + esc(placeholder || "") + '">';
+        }
+        function selectInput(id, options, current) {
+          return '<select id="' + id + '">' + options.map(function (o) {
+            return '<option value="' + esc(o[0]) + '"' + (o[0] === current ? " selected" : "") + ">" + esc(o[1]) + "</option>";
+          }).join("") + "</select>";
+        }
+        function group(title, inner, open) {
+          return "<details" + (open ? " open" : "") + "><summary>" + esc(title) + "</summary>" +
+                 '<div class="ed-fields">' + inner + "</div></details>";
+        }
+        function bindStyle(id, path, prop, transform) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          el.addEventListener("change", function () {
+            setStyle(path, prop, transform ? transform(el.value) : el.value.trim());
+          });
+        }
+
+        st.onSelect = function (meta) {
+          st.sel = meta;
+          var path = meta.path;
+          var c = meta.computed;
           var panel = document.getElementById("ed-panel");
-          if (!f) {
-            panel.innerHTML = '<p class="admin-inline-note">This area is not editable yet.</p>';
-            return;
+          var globalEl = isGlobalPath(path);
+          st.pageScopeOnly = false;
+          var spec = specOf(docFor(path), path, false);
+          var attrs = spec.attrs || {};
+          var anim = spec.anim || null;
+          var hidden = (specOf(st.pageDoc, path, false).hidden || {});
+          if (globalEl) hidden = Object.assign({}, specOf(st.globalDoc, path, false).hidden || {}, hidden);
+          var f = meta.emKey ? st.fields[meta.emKey] : null;
+
+          var content = "";
+          if (f) {
+            var currentText = meta.emKey in st.changedText ? st.changedText[meta.emKey] : (f.value || f.original);
+            content = group("Content — " + f.label,
+              '<div class="rich-bar">' +
+              '<button type="button" data-rt="strong" title="Bold"><b>B</b></button>' +
+              '<button type="button" data-rt="em" title="Italic"><i>I</i></button>' +
+              '<button type="button" data-rt="a" title="Link">🔗</button>' +
+              '<button type="button" data-rt="li" title="List item">• List</button>' +
+              '<button type="button" data-rt="br" title="Line break">↵</button></div>' +
+              '<textarea id="ed-text" rows="4" maxlength="2000">' + esc(currentText) + "</textarea>" +
+              '<span class="admin-inline-note">Original: ' + esc(f.original || "—") + "</span>" +
+              '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-text-revert">Use original</button></div>', true);
           }
-          st.selected = key;
-          var current = key in st.changed ? st.changed[key] : (f.value || f.original);
+          var media = "";
+          if (meta.isImg) {
+            media = group("Image",
+              '<img class="ed-thumb" src="' + esc(attrs.src || meta.attrs.src) + '" alt="">' +
+              '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-img-replace">Replace…</button>' +
+              (attrs.src ? '<button class="btn btn--ghost btn--small" id="ed-img-reset">Reset</button>' : "") + "</div>" +
+              "<label>Alt text</label>" + textInput("ed-alt", attrs.alt || meta.attrs.alt, "describe the image"), true);
+          } else if (meta.hasBg) {
+            media = group("Background image",
+              '<span class="admin-inline-note">' + esc((styleVal(path, "background-image") || c.backgroundImage).slice(0, 60)) + "</span>" +
+              '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-bg-replace">Replace…</button>' +
+              (styleVal(path, "background-image") ? '<button class="btn btn--ghost btn--small" id="ed-bg-reset">Reset</button>' : "") + "</div>");
+          }
+          var link = meta.isLink
+            ? group("Link", "<label>Target (URL or /page.html)</label>" +
+                textInput("ed-href", attrs.href || meta.attrs.href, "/contact.html"))
+            : "";
+          var currentAnim = anim ? anim.type : "";
+          var animGroup = group("Animation",
+            "<label>Effect</label>" +
+            selectInput("ed-anim",
+              [["", meta.attrs.reveal ? "Keep original (" + meta.attrs.reveal + ")" : "Keep original (none)"],
+               ["none", "No animation"]].concat(ANIMS.map(function (a) { return [a, a]; })),
+              currentAnim) +
+            "<label>Delay (ms, 0–420)</label>" +
+            textInput("ed-anim-delay", anim && anim.delay ? String(anim.delay) : "", meta.attrs.revealDelay || "0") +
+            '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-anim-play">▶ Play</button></div>');
+          var typo = group("Typography",
+            "<label>Size</label>" + textInput("ed-fs", styleVal(path, "font-size"), c.fontSize) +
+            "<label>Weight</label>" + selectInput("ed-fw",
+              [["", "Default (" + c.fontWeight + ")"], ["300", "300"], ["400", "400"], ["500", "500"],
+               ["600", "600"], ["700", "700"], ["800", "800"]], styleVal(path, "font-weight")) +
+            "<label>Align</label>" + selectInput("ed-ta",
+              [["", "Default"], ["left", "Left"], ["center", "Center"], ["right", "Right"]],
+              styleVal(path, "text-align")) +
+            "<label>Transform</label>" + selectInput("ed-tt",
+              [["", "Default"], ["none", "none"], ["uppercase", "UPPERCASE"], ["capitalize", "Capitalize"]],
+              styleVal(path, "text-transform")) +
+            '<label>Text colour</label><span class="ed-color"><input type="color" id="ed-color" value="' +
+            esc(styleVal(path, "color") || rgbToHex(c.color)) + '">' +
+            '<button class="btn btn--ghost btn--small" id="ed-color-clear">Clear</button></span>');
+          var box = group("Background & border",
+            '<label>Background colour</label><span class="ed-color"><input type="color" id="ed-bgc" value="' +
+            esc(styleVal(path, "background-color") || rgbToHex(c.backgroundColor)) + '">' +
+            '<button class="btn btn--ghost btn--small" id="ed-bgc-clear">Clear</button></span>' +
+            "<label>Border width</label>" + textInput("ed-bw", styleVal(path, "border-width"), c.borderWidth) +
+            "<label>Border style</label>" + selectInput("ed-bs",
+              [["", "Default"], ["none", "none"], ["solid", "solid"], ["dashed", "dashed"]],
+              styleVal(path, "border-style")) +
+            '<label>Border colour</label><span class="ed-color"><input type="color" id="ed-bc" value="' +
+            esc(styleVal(path, "border-color") || rgbToHex(c.borderColor)) + '">' +
+            '<button class="btn btn--ghost btn--small" id="ed-bc-clear">Clear</button></span>' +
+            "<label>Corner radius</label>" + textInput("ed-br", styleVal(path, "border-radius"), c.borderRadius) +
+            "<label>Shadow</label>" + selectInput("ed-sh",
+              [["", "Default"], ["none", "None"], [SHADOWS.soft, "Soft"], [SHADOWS.strong, "Strong"],
+               [SHADOWS.glow, "Orange glow"]], styleVal(path, "box-shadow")) +
+            "<label>Opacity (0–1)</label>" + textInput("ed-op", styleVal(path, "opacity"), c.opacity));
+          var space = group("Spacing & size",
+            "<label>Margin (e.g. 10px or 10px 20px)</label>" + textInput("ed-mg", styleVal(path, "margin"), c.margin) +
+            "<label>Padding</label>" + textInput("ed-pd", styleVal(path, "padding"), c.padding) +
+            "<label>Width</label>" + textInput("ed-w", styleVal(path, "width"), c.width) +
+            "<label>Max width</label>" + textInput("ed-mw", styleVal(path, "max-width"), c.maxWidth) +
+            "<label>Height</label>" + textInput("ed-h", styleVal(path, "height"), c.height));
+          var vis = group("Visibility",
+            ["base", "tablet", "mobile"].map(function (b) {
+              var labels = { base: "Hide on desktop", tablet: "Hide on tablet", mobile: "Hide on mobile" };
+              return '<label class="ed-check"><input type="checkbox" data-hide="' + b + '"' +
+                (hidden[b] ? " checked" : "") + "> " + labels[b] + "</label>";
+            }).join(""));
           panel.innerHTML =
-            "<h2>" + esc(f.label) + "</h2>" +
-            '<p class="admin-inline-note">' + (f.scope === "_global" ? "Applies to every page." : "This page only.") + "</p>" +
-            (f.kind === "multiline"
-              ? '<textarea id="ed-input" rows="6" maxlength="2000">' + esc(current) + "</textarea>"
-              : '<input id="ed-input" maxlength="300" value="' + esc(current) + '">') +
-            '<p class="admin-inline-note" style="margin-top:8px;">Original: ' + esc(f.original || "—") + "</p>" +
-            '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-revert">Use original text</button></div>';
-          var input = document.getElementById("ed-input");
-          input.focus();
-          input.addEventListener("input", function () {
-            st.changed[key] = input.value;
-            postFrame({ type: "em-update", key: key, html: liveHtml(input.value || f.original) });
-            refreshDirty();
+            '<div class="ed-sel-head"><span class="chip">' + esc(meta.tag) + "</span>" +
+            (globalEl ? '<span class="chip chip--violet">site-wide</span>' : "") +
+            '<button class="btn btn--ghost btn--small" id="ed-parent">Select parent</button></div>' +
+            (globalEl ? '<label class="ed-check" style="margin-bottom:10px;"><input type="checkbox" id="ed-scope-page"> Apply changes to this page only</label>' : "") +
+            content + media + link + typo + box + space + animGroup + vis +
+            '<div class="admin-actions" style="margin-top:14px;"><button class="btn btn--ghost btn--small" id="ed-el-reset">Reset this element</button></div>' +
+            '<p class="admin-inline-note" style="margin-top:8px;">Style edits apply to the <b>' + esc(st.vw) + "</b> view" +
+            (st.vw === "desktop" ? " (and smaller screens unless they override)" : "") + ".</p>";
+
+          document.getElementById("ed-parent").addEventListener("click", function () {
+            st.postFrame({ type: "em-select-parent" });
           });
-          document.getElementById("ed-revert").addEventListener("click", function () {
-            input.value = "";
-            st.changed[key] = "";
-            postFrame({ type: "em-update", key: key, html: liveHtml(f.original) });
-            refreshDirty();
-            toast("Will use the original text after saving.");
+          var scopeCb = document.getElementById("ed-scope-page");
+          if (scopeCb) scopeCb.addEventListener("change", function () {
+            st.pageScopeOnly = scopeCb.checked;
+          });
+          if (f) {
+            var ta = document.getElementById("ed-text");
+            function pushText() {
+              st.changedText[meta.emKey] = ta.value;
+              st.postFrame({ type: "em-update", key: meta.emKey,
+                             html: richHtml(ta.value || f.original) });
+              refreshDirty();
+            }
+            ta.addEventListener("input", pushText);
+            panel.querySelectorAll("[data-rt]").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                var tag = btn.getAttribute("data-rt");
+                var s = ta.selectionStart, e = ta.selectionEnd;
+                var sel = ta.value.slice(s, e);
+                var ins;
+                if (tag === "br") ins = "<br>";
+                else if (tag === "a") {
+                  var url = prompt("Link to (URL or /page.html):", "https://");
+                  if (!url) return;
+                  ins = '<a href="' + url.trim() + '">' + (sel || "link text") + "</a>";
+                } else if (tag === "li") ins = "<ul><li>" + (sel || "item") + "</li></ul>";
+                else ins = "<" + tag + ">" + (sel || "text") + "</" + tag + ">";
+                ta.setRangeText(ins, s, e, "end");
+                ta.focus();
+                pushText();
+              });
+            });
+            document.getElementById("ed-text-revert").addEventListener("click", function () {
+              ta.value = "";
+              st.changedText[meta.emKey] = "";
+              st.postFrame({ type: "em-update", key: meta.emKey, html: richHtml(f.original) });
+              refreshDirty();
+            });
+          }
+          if (meta.isImg) {
+            document.getElementById("ed-img-replace").addEventListener("click", function () {
+              openPicker(function (url) { setAttr(path, "src", url); st.onSelect(meta); });
+            });
+            var imgReset = document.getElementById("ed-img-reset");
+            if (imgReset) imgReset.addEventListener("click", function () {
+              setAttr(path, "src", ""); st.onSelect(meta);
+            });
+            document.getElementById("ed-alt").addEventListener("change", function () {
+              setAttr(path, "alt", this.value.trim());
+            });
+          }
+          if (!meta.isImg && meta.hasBg) {
+            document.getElementById("ed-bg-replace").addEventListener("click", function () {
+              openPicker(function (url) { setStyle(path, "background-image", url); st.onSelect(meta); });
+            });
+            var bgReset = document.getElementById("ed-bg-reset");
+            if (bgReset) bgReset.addEventListener("click", function () {
+              setStyle(path, "background-image", ""); st.onSelect(meta);
+            });
+          }
+          if (meta.isLink) {
+            document.getElementById("ed-href").addEventListener("change", function () {
+              setAttr(path, "href", this.value.trim());
+            });
+          }
+          document.getElementById("ed-anim").addEventListener("change", function () {
+            var delay = parseInt(document.getElementById("ed-anim-delay").value, 10) || 0;
+            setAnim(path, this.value, delay);
+          });
+          document.getElementById("ed-anim-delay").addEventListener("change", function () {
+            var type = document.getElementById("ed-anim").value;
+            if (type) setAnim(path, type, parseInt(this.value, 10) || 0);
+          });
+          document.getElementById("ed-anim-play").addEventListener("click", function () {
+            st.postFrame({ type: "em-play-anim", path: path });
+          });
+          bindStyle("ed-fs", path, "font-size");
+          bindStyle("ed-fw", path, "font-weight");
+          bindStyle("ed-ta", path, "text-align");
+          bindStyle("ed-tt", path, "text-transform");
+          bindStyle("ed-bw", path, "border-width");
+          bindStyle("ed-bs", path, "border-style");
+          bindStyle("ed-br", path, "border-radius");
+          bindStyle("ed-sh", path, "box-shadow");
+          bindStyle("ed-op", path, "opacity");
+          bindStyle("ed-mg", path, "margin");
+          bindStyle("ed-pd", path, "padding");
+          bindStyle("ed-w", path, "width");
+          bindStyle("ed-mw", path, "max-width");
+          bindStyle("ed-h", path, "height");
+          document.getElementById("ed-color").addEventListener("change", function () {
+            setStyle(path, "color", this.value);
+          });
+          document.getElementById("ed-color-clear").addEventListener("click", function () {
+            setStyle(path, "color", "");
+          });
+          document.getElementById("ed-bgc").addEventListener("change", function () {
+            setStyle(path, "background-color", this.value);
+          });
+          document.getElementById("ed-bgc-clear").addEventListener("click", function () {
+            setStyle(path, "background-color", "");
+          });
+          document.getElementById("ed-bc").addEventListener("change", function () {
+            setStyle(path, "border-color", this.value);
+          });
+          document.getElementById("ed-bc-clear").addEventListener("click", function () {
+            setStyle(path, "border-color", "");
+          });
+          panel.querySelectorAll("[data-hide]").forEach(function (cb) {
+            cb.addEventListener("change", function () {
+              setHidden(path, cb.getAttribute("data-hide"), cb.checked);
+            });
+          });
+          document.getElementById("ed-el-reset").addEventListener("click", function () {
+            pushUndo();
+            delete st.pageDoc.elements[path];
+            delete st.globalDoc.elements[path];
+            st.docTouched = { page: true, global: true };
+            reloadFrame();
+            toast("Element reset — will apply after saving.");
+          });
+        };
+
+        /* ---------- sections manager ---------- */
+        function renderSections() {
+          var panel = document.getElementById("ed-panel");
+          var spec = st.pageDoc.sections || {};
+          var order = (spec.order && spec.order.length ? spec.order : st.sections.map(function (s) { return s.id; }))
+            .filter(function (id) { return st.sections.some(function (s) { return s.id === id; }); });
+          st.sections.forEach(function (s) {
+            if (order.indexOf(s.id) === -1) order.push(s.id);
+          });
+          var removed = spec.removed || [];
+          var duplicated = spec.duplicated || [];
+          var labels = {};
+          st.sections.forEach(function (s) { labels[s.id] = s.label; });
+          panel.innerHTML =
+            "<h2>Page sections</h2>" +
+            '<p class="admin-inline-note">Reorder, hide, or duplicate the big blocks of this page.</p>' +
+            '<div class="sec-list">' + order.map(function (id, i) {
+              var off = removed.indexOf(id) !== -1;
+              return '<div class="sec-item' + (off ? " sec-item--off" : "") + '" data-sec="' + esc(id) + '">' +
+                "<span>" + esc(labels[id] || id) + "</span><span class=\"sec-btns\">" +
+                '<button title="Move up" data-sec-up' + (i === 0 ? " disabled" : "") + ">↑</button>" +
+                '<button title="Move down" data-sec-down' + (i === order.length - 1 ? " disabled" : "") + ">↓</button>" +
+                '<button title="' + (off ? "Show" : "Hide") + '" data-sec-hide>' + (off ? "🚫" : "👁") + "</button>" +
+                '<button title="Duplicate" data-sec-dup' + (duplicated.indexOf(id) !== -1 ? ' class="is-on"' : "") + ">⧉</button>" +
+                "</span></div>";
+            }).join("") + "</div>" +
+            '<div class="admin-actions" style="margin-top:12px;"><button class="btn btn--ghost btn--small" id="sec-reset">Reset section layout</button></div>';
+          function mutate(fn) {
+            pushUndo();
+            var s = st.pageDoc.sections = st.pageDoc.sections || {};
+            s.order = order.slice();
+            fn(s);
+            st.docTouched.page = true;
+            applyLive();
+            renderSections();
+          }
+          panel.querySelectorAll(".sec-item").forEach(function (row) {
+            var id = row.getAttribute("data-sec");
+            row.querySelector("[data-sec-up]").addEventListener("click", function () {
+              mutate(function (s) {
+                var i = s.order.indexOf(id);
+                if (i > 0) { s.order.splice(i, 1); s.order.splice(i - 1, 0, id); }
+              });
+            });
+            row.querySelector("[data-sec-down]").addEventListener("click", function () {
+              mutate(function (s) {
+                var i = s.order.indexOf(id);
+                if (i < s.order.length - 1) { s.order.splice(i, 1); s.order.splice(i + 1, 0, id); }
+              });
+            });
+            row.querySelector("[data-sec-hide]").addEventListener("click", function () {
+              mutate(function (s) {
+                s.removed = s.removed || [];
+                var i = s.removed.indexOf(id);
+                if (i === -1) s.removed.push(id); else s.removed.splice(i, 1);
+              });
+            });
+            row.querySelector("[data-sec-dup]").addEventListener("click", function () {
+              mutate(function (s) {
+                s.duplicated = s.duplicated || [];
+                var i = s.duplicated.indexOf(id);
+                if (i === -1) s.duplicated.push(id); else s.duplicated.splice(i, 1);
+              });
+            });
+          });
+          document.getElementById("sec-reset").addEventListener("click", function () {
+            pushUndo();
+            st.pageDoc.sections = {};
+            st.docTouched.page = true;
+            applyLive();
+            renderSections();
           });
         }
-        st.selectKey = selectKey;
+        document.getElementById("ed-sections-btn").addEventListener("click", renderSections);
 
+        /* ---------- toolbar ---------- */
         function guardedSwitch(fn) {
           if (dirtyCount() && !confirm("You have unsaved changes — discard them?")) return;
-          st.changed = {};
           fn();
           views.editor();
         }
@@ -1140,8 +1666,7 @@
         main.querySelectorAll("[data-edlang]").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var v = btn.getAttribute("data-edlang");
-            if (v === st.lang) return;
-            guardedSwitch(function () { st.lang = v; });
+            if (v !== st.lang) guardedSwitch(function () { st.lang = v; });
           });
         });
         main.querySelectorAll("[data-edvw]").forEach(function (btn) {
@@ -1150,30 +1675,58 @@
             main.querySelectorAll("[data-edvw]").forEach(function (b) {
               b.className = "btn btn--small " + (b === btn ? "btn--primary" : "btn--ghost");
             });
+            document.getElementById("ed-bp-note").textContent = "Styling: " + st.vw;
             fit();
+            if (st.sel) st.onSelect(st.sel); // re-render panel for the new breakpoint
           });
         });
         document.getElementById("ed-outlines").addEventListener("change", function () {
           st.outlines = this.checked;
-          postFrame({ type: "em-outlines", on: st.outlines });
+          st.postFrame({ type: "em-outlines", on: st.outlines });
+        });
+        document.getElementById("ed-undo").addEventListener("click", function () {
+          if (!st.undo.length) return;
+          st.redo.push(snapshot());
+          restore(st.undo.pop());
+        });
+        document.getElementById("ed-redo").addEventListener("click", function () {
+          if (!st.redo.length) return;
+          st.undo.push(snapshot());
+          restore(st.redo.pop());
+        });
+        document.addEventListener("keydown", function (e) {
+          if (!document.getElementById("ed-frame")) return;
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+            e.preventDefault();
+            document.getElementById(e.shiftKey ? "ed-redo" : "ed-undo").click();
+          }
         });
         document.getElementById("ed-save").addEventListener("click", function () {
+          var calls = [];
           var byScope = {};
-          Object.keys(st.changed).forEach(function (key) {
+          Object.keys(st.changedText).forEach(function (key) {
             var scope = st.fields[key] ? st.fields[key].scope : st.page;
-            (byScope[scope] = byScope[scope] || {})[key] = st.changed[key];
+            (byScope[scope] = byScope[scope] || {})[key] = st.changedText[key];
           });
-          var saves = Object.keys(byScope).map(function (scope) {
-            return api("/api/admin/pages/" + encodeURIComponent(scope),
-                       { lang: st.lang, values: byScope[scope] });
+          Object.keys(byScope).forEach(function (scope) {
+            calls.push(api("/api/admin/pages/" + encodeURIComponent(scope),
+                           { lang: st.lang, values: byScope[scope] }));
           });
-          Promise.all(saves).then(function (results) {
+          if (st.docTouched.page) {
+            calls.push(api("/api/admin/design/" + encodeURIComponent(st.page), { doc: st.pageDoc }));
+          }
+          if (st.docTouched.global) {
+            calls.push(api("/api/admin/design/_global", { doc: st.globalDoc }));
+          }
+          if (!calls.length) return;
+          Promise.all(calls).then(function (results) {
             var bad = results.find(function (r) { return !r.ok; });
             if (bad) return apiErr(bad);
-            Object.keys(st.changed).forEach(function (key) {
-              if (st.fields[key]) st.fields[key].value = st.changed[key];
+            Object.keys(st.changedText).forEach(function (key) {
+              if (st.fields[key]) st.fields[key].value = st.changedText[key];
             });
-            st.changed = {};
+            st.changedText = {};
+            st.docTouched = { page: false, global: false };
             refreshDirty();
             toast("Draft saved — publish when you are ready.");
           });

@@ -102,6 +102,64 @@ def get_values(page: str, lang: str = "en") -> dict[str, str]:
     return {r["key"]: r["value"] for r in rows}
 
 
+# --- limited rich text (bold/italic/links/lists/line breaks) ---
+
+_RICH_TAGS = {"strong", "em", "b", "i", "u", "br", "ul", "ol", "li", "a"}
+_RICH_HREF = re.compile(r"^(https://|http://|mailto:|tel:|/|#)[^\s\"'<>]*$")
+
+
+class _RichSanitizer(HTMLParser):
+    """Rebuild input keeping only whitelisted inline tags; everything else is
+    reduced to its text content. Attributes are dropped except a[href]."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+        self._open: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in _RICH_TAGS:
+            return
+        if tag == "br":
+            self.out.append("<br>")
+            return
+        if tag == "a":
+            href = next((v for k, v in attrs if k == "href"), "") or ""
+            if not _RICH_HREF.match(href):
+                return
+            self.out.append(f'<a href="{html_mod.escape(href, quote=True)}">')
+            self._open.append("a")
+            return
+        self.out.append(f"<{tag}>")
+        self._open.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag in _RICH_TAGS and tag in self._open:
+            while self._open:
+                open_tag = self._open.pop()
+                self.out.append(f"</{open_tag}>")
+                if open_tag == tag:
+                    break
+
+    def handle_data(self, data):
+        self.out.append(html_mod.escape(data))
+
+    def result(self) -> str:
+        while self._open:
+            self.out.append(f"</{self._open.pop()}>")
+        return "".join(self.out)
+
+
+def sanitize_rich(text: str) -> str:
+    s = _RichSanitizer()
+    s.feed(text)
+    s.close()
+    return s.result()
+
+
+_RICH_MARKER = re.compile(r"<(strong|em|b|i|u|br|ul|ol|li|a)\b", re.IGNORECASE)
+
+
 def set_values(page: str, values: dict, lang: str, by: str) -> list[str]:
     from . import adminauth as aa
 
@@ -116,6 +174,8 @@ def set_values(page: str, values: dict, lang: str, by: str) -> list[str]:
             if key not in allowed:
                 raise ValueError(f"unknown field: {key[:60]}")
             value = str(value or "").strip()[:2000]
+            if "<" in value and not key.startswith("seo."):
+                value = sanitize_rich(value)[:4000]
             if value:
                 conn.execute(
                     "INSERT INTO content (page, key, lang, value, updated_at, updated_by) "
@@ -220,12 +280,18 @@ def original_values(page: str) -> dict[str, str]:
 # ---------------- bake ----------------
 
 def _escaped(value: str) -> str:
+    if _RICH_MARKER.search(value):
+        # sanitized at save time — whitelist tags only, text already escaped
+        return value.replace("\r", "").replace("\n", "<br>")
     return html_mod.escape(value).replace("\r", "").replace("\n", "<br>")
 
 
 def bake_page(page: str, lang: str = "en") -> str:
+    from . import design
+
     cfg = PAGES[page]
     raw = (config.PUBLIC_DIR / cfg["file"]).read_text(encoding="utf-8")
+    raw = design.apply_to_page(raw, page)
     values = get_values("_global", lang) | get_values(page, lang)
     if values:
         regions = [r for r in _locate(raw) if values.get(r["key"])]
@@ -287,7 +353,10 @@ def publish_all(by: str, note: str = "") -> dict:
         tmp.replace(PUBLISHED_DIR / cfg["file"])
         count += 1
     (PUBLISHED_DIR / "sitemap.xml").write_text(_sitemap_xml(), encoding="utf-8")
-    snapshot = json.dumps({"note": note, "content": _all_content_rows()}, ensure_ascii=False)
+    from . import design
+
+    snapshot = json.dumps({"note": note, "content": _all_content_rows(),
+                           "designs": design.all_docs()}, ensure_ascii=False)
     with aa._lock:
         conn = aa._connect()
         cur = conn.execute("INSERT INTO publishes (ts, by, pages, snapshot) VALUES (?,?,?,?)",
@@ -327,6 +396,9 @@ def rollback(publish_id: int, by: str) -> dict:
                 "VALUES (?,?,?,?,?,?)",
                 (r["page"], r["key"], r["lang"], r["value"], int(time.time()), by[:200]))
         conn.commit()
+    from . import design
+
+    design.restore_docs(data.get("designs", []))
     return publish_all(by, note=f"rollback to #{publish_id}")
 
 

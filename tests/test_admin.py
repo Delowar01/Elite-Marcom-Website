@@ -802,3 +802,142 @@ def test_visual_editor_requires_content_permission():
     assert sales.get("/admin/visual/index").status_code == 403
     anon = TestClient(app)
     assert anon.get("/admin/visual/index").status_code == 401
+
+
+# ---------------- Visual editor v2: design overrides ----------------
+
+def test_design_save_validate_and_bake_styles():
+    me = client.get("/api/admin/me").json()
+    doc = {"elements": {
+        "[data-em-sec=s0]>div:nth-of-type(2)>div:nth-of-type(1)>h1:nth-of-type(1)": {
+            "styles": {"base": {"font-size": "72px", "color": "#123456"},
+                       "mobile": {"font-size": "40px"}},
+            "anim": {"type": "blur-in", "delay": 120}},
+        "header.site-header": {"styles": {"base": {"background-color": "#101418"}}}
+    }}
+    res = client.post("/api/admin/design/index", json={"doc": doc},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/visual/index").text
+    assert 'id="em-design"' in baked
+    assert "font-size:72px !important" in baked
+    assert "@media (max-width: 640px)" in baked and "font-size:40px" in baked
+    assert 'data-em-sec="s0"' in baked
+    # css payload rejects unknown properties and unsafe values
+    bad = client.post("/api/admin/design/index",
+                      json={"doc": {"elements": {"main": {"styles": {"base": {"behavior": "url(x)"}}}}}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    bad2 = client.post("/api/admin/design/index",
+                       json={"doc": {"elements": {"main": {"styles": {"base": {"color": "red;}</style><script>"}}}}}},
+                       headers={"X-CSRF": me["csrf"]})
+    assert bad2.status_code == 400
+    bad3 = client.post("/api/admin/design/index",
+                       json={"doc": {"elements": {"main"[::-1] + "<script>": {}}}},
+                       headers={"X-CSRF": me["csrf"]})
+    assert bad3.status_code == 400
+
+
+def test_design_animation_attrs_and_media_swap_bake():
+    me = client.get("/api/admin/me").json()
+    from server import content as ct
+    raw = (ct.config.PUBLIC_DIR / "index.html").read_text(encoding="utf-8")
+    # hero eyebrow: p inside section s0 — set new animation + image swap on about page
+    doc = {"elements": {
+        "[data-em-sec=s0]>div:nth-of-type(2)>div:nth-of-type(1)>p:nth-of-type(1)": {
+            "anim": {"type": "slide-left", "delay": 200}}}}
+    client.post("/api/admin/design/index", json={"doc": doc}, headers={"X-CSRF": me["csrf"]})
+    baked = client.get("/admin/visual/index").text
+    assert 'data-reveal="slide-left"' in baked
+    assert 'data-reveal-delay="200"' in baked
+    # the original fade-up on that element is gone (no double animation)
+    import re as _re
+    eyebrow = _re.search(r'<p class="eyebrow reveal[^>]*data-em="hero.eyebrow"[^>]*>', baked)
+    assert eyebrow and "fade-up" not in eyebrow.group(0)
+    # img swap on about page hero figure
+    about_doc = {"elements": {
+        "[data-em-sec=s0]>div:nth-of-type(2)>div:nth-of-type(1)>figure:nth-of-type(1)>div:nth-of-type(1)>img:nth-of-type(1)": {
+            "attrs": {"src": "/media/0123456789abcdef.webp", "alt": "Team at work"}}}}
+    res = client.post("/api/admin/design/about", json={"doc": about_doc},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    about = client.get("/admin/visual/about").text
+    assert 'src="/media/0123456789abcdef.webp"' in about
+    assert 'alt="Team at work"' in about
+    # external src rejected
+    bad = client.post("/api/admin/design/about",
+                      json={"doc": {"elements": {"main": {"attrs": {"src": "https://evil.example/x.png"}}}}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+
+
+def test_design_sections_reorder_hide_duplicate():
+    me = client.get("/api/admin/me").json()
+    baked0 = client.get("/admin/visual/services").text
+    import re as _re
+    ids0 = _re.findall(r'data-em-sec="(s\d+)"', baked0)
+    assert ids0 == ["s0", "s1", "s2"]
+    doc = {"sections": {"order": ["s0", "s2", "s1"], "removed": ["s1"], "duplicated": ["s2"]},
+           "elements": {}}
+    res = client.post("/api/admin/design/services", json={"doc": doc},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/visual/services").text
+    ids = _re.findall(r'data-em-sec="(s\d+)"', baked)
+    assert ids == ["s0", "s2"]  # s1 hidden; duplicate carries no data-em-sec
+    assert baked.count("<section") == 3  # s0 + s2 + duplicate of s2
+    # clear
+    client.post("/api/admin/design/services", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
+    assert client.get("/admin/visual/services").text.count("<section") == 3
+
+
+def test_design_global_scope_restricted_and_hidden_ranges():
+    me = client.get("/api/admin/me").json()
+    ok = client.post("/api/admin/design/_global",
+                     json={"doc": {"elements": {"footer.site-footer": {
+                         "hidden": {"mobile": True},
+                         "styles": {"base": {"padding": "40px 0"}}}}}},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200, ok.text
+    baked = client.get("/admin/visual/contact").text  # global applies everywhere
+    assert "@media (max-width: 640px)" in baked
+    assert "footer.site-footer{display:none !important;}" in baked
+    bad = client.post("/api/admin/design/_global",
+                      json={"doc": {"elements": {"main": {"styles": {"base": {"color": "#fff000"}}}}}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400  # global may only touch header/footer
+    client.post("/api/admin/design/_global", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
+
+
+def test_design_publish_rollback_and_rich_text():
+    me = client.get("/api/admin/me").json()
+    # publish with a design + rich text
+    client.post("/api/admin/pages/index",
+                json={"lang": "en", "values": {"hero.lead": "We make <strong>bold</strong> work<br>worldwide. <script>alert(1)</script>"}},
+                headers={"X-CSRF": me["csrf"]})
+    pub = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert pub.status_code == 200
+    v_design = pub.json()["id"]
+    home = client.get("/").text
+    assert "<strong>bold</strong>" in home and "<br>worldwide" in home
+    assert "<script>alert(1)</script>" not in home and "alert(1)" in home  # tag stripped, text kept
+    assert 'data-reveal="slide-left"' in home  # published design layer
+    # remove design + publish, then roll back — design returns
+    client.post("/api/admin/design/index", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert 'data-reveal="slide-left"' not in client.get("/").text
+    rb = client.post("/api/admin/pages-rollback", json={"id": v_design},
+                     headers={"X-CSRF": me["csrf"]})
+    assert rb.status_code == 200
+    assert 'data-reveal="slide-left"' in client.get("/").text
+    # cleanup: unpublish + clear docs
+    client.post("/api/admin/design/index", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/design/about", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages/index", json={"lang": "en", "values": {"hero.lead": ""}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})

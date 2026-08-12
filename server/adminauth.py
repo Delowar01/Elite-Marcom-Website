@@ -128,6 +128,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         updated_by TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (page, key, lang)
     );
+    CREATE TABLE IF NOT EXISTS designs (
+        page TEXT PRIMARY KEY,
+        doc TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by TEXT NOT NULL DEFAULT ''
+    );
     CREATE TABLE IF NOT EXISTS publishes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,

@@ -944,10 +944,12 @@ async def admin_pages(request: Request):
     require_perm(request, "content.edit")
     from . import content
 
+    from . import design
+
     last = content.last_publish()
     pages = []
     for page, cfg in content.PAGES.items():
-        edited = content.last_edit_ts(page)
+        edited = max(content.last_edit_ts(page), design.last_design_edit(page))
         pages.append({"page": page, "label": cfg["label"], "file": cfg["file"],
                       "regions": len(cfg["regions"]),
                       "dirty": bool(edited and (last is None or edited > last["ts"]))})
@@ -1016,6 +1018,43 @@ async def admin_page_preview(request: Request, page: str, lang: str = "en"):
                     headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
 
 
+@router.get("/api/admin/design/{page}")
+async def admin_design_get(request: Request, page: str):
+    require_perm(request, "content.edit")
+    from . import content, design
+
+    if page != "_global" and page not in content.PAGES:
+        raise HTTPException(status_code=404, detail="Unknown page.")
+    return {"page": page, "doc": design.get_doc(page),
+            "globalDoc": design.get_doc("_global") if page != "_global" else None,
+            "animations": list(design.ANIMATIONS),
+            "breakpoints": list(design.BREAKPOINTS)}
+
+
+class DesignBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    doc: dict
+
+
+@router.post("/api/admin/design/{page}")
+async def admin_design_save(request: Request, page: str, body: DesignBody,
+                            x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content, design
+
+    if page != "_global" and page not in content.PAGES:
+        raise HTTPException(status_code=404, detail="Unknown page.")
+    try:
+        clean = design.set_doc(page, body.doc, session["email"])
+    except design.DesignError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    aa.audit(session, "design.saved", "pages",
+             {"page": page, "elements": len(clean["elements"]),
+              "sections": bool(clean.get("sections"))}, _ip_hash(request))
+    return {"doc": clean}
+
+
 @router.get("/admin/visual/{page}", include_in_schema=False)
 async def admin_page_visual(request: Request, page: str, lang: str = "en"):
     """The visual editor's iframe document: the draft-baked page with the
@@ -1026,7 +1065,7 @@ async def admin_page_visual(request: Request, page: str, lang: str = "en"):
     if page not in content.PAGES or lang not in content.LANGS:
         raise HTTPException(status_code=404, detail="Unknown page.")
     baked = content.bake_page(page, lang)
-    bridge = '<script src="/admin/assets/editor-bridge.js?v=1" defer></script></body>'
+    bridge = '<script src="/admin/assets/editor-bridge.js?v=2" defer></script></body>'
     baked = baked.replace("</body>", bridge, 1)
     return Response(content=baked, media_type="text/html; charset=utf-8",
                     headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
