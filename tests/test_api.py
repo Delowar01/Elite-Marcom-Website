@@ -664,6 +664,75 @@ def test_manual_proxy_rejects_non_pdf_candidate(tmp_path, monkeypatch):
     assert calls["n"] == 1  # the failed verdict is cached — no refetch
 
 
+def _fake_area_image() -> bytes:
+    import io as _io
+
+    from PIL import Image as _Image
+
+    im = _Image.new("RGB", (400, 300), (240, 240, 236))
+    buf = _io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_generated_manual_is_valid_pdf():
+    from server import jasani, manuals
+
+    product = {"id": "24246", "code": "ITGL 1291", "name": "NAPIER MagCase Phone Cardholder",
+               "color": "Grey"}
+    areas = [{"name": "FRONT TOP", "methods": ["Laser Engraving", "Digital (UV) Print"],
+              "areaWidthMm": "40", "areaHeightMm": "10",
+              "image": {"data": _fake_area_image(), "width": 400, "height": 300},
+              "rect": {"left": 120, "top": 90, "width": 160, "height": 60},
+              "colorChoices": "", "leadTime": ""}]
+    pdf = manuals.build_manual(product, areas, "ksa", None)
+    assert jasani._valid_manual_pdf(pdf)
+    assert b"Elite Marcom" in pdf or pdf.startswith(b"%PDF-")
+
+
+def test_manual_endpoint_prefers_generated_manual(tmp_path, monkeypatch):
+    jasani = _manual_catalog(monkeypatch)
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+
+    async def fake_areas(market, product_id):
+        assert product_id == "24246"
+        return [{"name": "FRONT TOP", "methods": ["Laser Engraving"],
+                 "areaWidthMm": "40", "areaHeightMm": "10",
+                 "image": {"data": _fake_area_image(), "width": 400, "height": 300},
+                 "rect": {"left": 10, "top": 10, "width": 100, "height": 50},
+                 "colorChoices": "", "leadTime": ""}]
+    monkeypatch.setattr(jasani, "get_branding_areas", fake_areas)
+
+    async def no_image(url):
+        return None
+    monkeypatch.setattr(jasani, "_fetch_image_bytes", no_image)
+
+    async def never_called(market, template_id):
+        raise AssertionError("supplier proxy should not be needed")
+    monkeypatch.setattr(jasani, "_fetch_manual_bytes", never_called)
+
+    res = client.get("/api/giveaways/manual?country=ksa&product_id=24246")
+    assert res.status_code == 200
+    assert res.content.startswith(b"%PDF-")
+    # second call comes from the generated-manual cache
+    assert client.get("/api/giveaways/manual?country=ksa&product_id=24246").status_code == 200
+
+
+def test_enquiry_accepts_branding_preference():
+    items = json.dumps([{"productId": "prev-hoodie-ksa", "quantity": 10,
+                         "branding": {"area": "Front Top", "method": "Silk Screen Printing",
+                                      "note": "Centre the logo"}}])
+    res = client.post("/api/giveaways/enquiries", data=enquiry_form(items=items), headers=ORIGIN)
+    assert res.status_code == 200, res.text
+
+
+def test_enquiry_rejects_unknown_branding_fields():
+    items = json.dumps([{"productId": "prev-hoodie-ksa", "quantity": 10,
+                         "branding": {"area": "Front", "price": "1"}}])
+    res = client.post("/api/giveaways/enquiries", data=enquiry_form(items=items), headers=ORIGIN)
+    assert res.status_code == 400
+
+
 def test_manual_proxy_unknown_product_404(tmp_path, monkeypatch):
     jasani = _manual_catalog(monkeypatch)
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)

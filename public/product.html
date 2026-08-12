@@ -19,7 +19,7 @@
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
 <link rel="stylesheet" href="/styles.css?v=3">
-<link rel="stylesheet" href="/pages.css?v=6">
+<link rel="stylesheet" href="/pages.css?v=7">
 <script src="/js/theme-init.js?v=1"></script>
 <meta name="robots" content="noindex">
 </head>
@@ -137,6 +137,24 @@
             <h2>Branding options</h2>
             <ul class="service-points" id="pdp-branding"></ul>
           </div>
+          <div class="pdp__section" id="pdp-pref-section">
+            <h2>Your branding preference <span class="pref-tag">optional</span></h2>
+            <p class="pref-hint">Choose or suggest a printing area and method — it travels with your request and is confirmed after technical review.</p>
+            <div class="pref-grid">
+              <div class="variant-field">
+                <label for="pref-area">Preferred area</label>
+                <select id="pref-area"></select>
+              </div>
+              <div class="variant-field">
+                <label for="pref-method">Preferred method</label>
+                <select id="pref-method"></select>
+              </div>
+              <div class="pref-note">
+                <label for="pref-note">Notes / suggested position</label>
+                <textarea id="pref-note" maxlength="500" rows="2" placeholder="e.g. Centre our logo on the top surface, single colour print"></textarea>
+              </div>
+            </div>
+          </div>
           <div class="pdp__actions" id="pdp-actions"></div>
           <div class="pdp__section">
             <p class="text-muted" style="font-size:0.88rem;margin:0;">No public prices — add the product to your request and receive one clear private proposal. Availability is confirmed at submission.</p>
@@ -252,6 +270,6 @@
 
 <script src="/js/site.js?v=4" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/product.js?v=6" defer></script>
+<script src="/js/product.js?v=7" defer></script>
 </body>
 </html>

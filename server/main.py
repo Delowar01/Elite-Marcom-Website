@@ -367,10 +367,20 @@ async def rentals_products():
     return JSONResponse({"products": load_rentals()}, headers={"Cache-Control": "no-store"})
 
 
+class BrandingPreference(BaseModel):
+    """Customer's requested printing area/method — a preference only, always
+    subject to Elite Marcom technical review."""
+    model_config = ConfigDict(extra="forbid")
+    area: str = Field(default="", max_length=120)
+    method: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=500)
+
+
 class RequestItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     productId: str = Field(min_length=1, max_length=80)
     quantity: int = Field(ge=1, le=100000)
+    branding: BrandingPreference | None = None
 
 
 class RentalEnquiry(BaseModel):
@@ -612,8 +622,16 @@ async def canonical_giveaway_items(items: list[RequestItem], market: str) -> lis
             raise HTTPException(status_code=400, detail=f"“{p['name']}” is currently unavailable — please remove it or ask for a notification.")
         if item.quantity > available:
             raise HTTPException(status_code=400, detail=f"Only {available} unit(s) of “{p['name']}” are available — please adjust the quantity.")
-        out.append({"productId": p["id"], "code": p["code"], "name": p["name"],
-                    "market": market, "quantity": item.quantity, "stockAtSubmission": available})
+        entry = {"productId": p["id"], "code": p["code"], "name": p["name"],
+                 "market": market, "quantity": item.quantity, "stockAtSubmission": available}
+        if item.branding and (item.branding.area or item.branding.method or item.branding.note):
+            entry["brandingPreference"] = {
+                "area": clean_text(item.branding.area, 120, 0, "branding area") if item.branding.area else "",
+                "method": clean_text(item.branding.method, 120, 0, "branding method") if item.branding.method else "",
+                "note": clean_multiline(item.branding.note, 500, 0, "branding note") if item.branding.note else "",
+                "status": "pending_technical_review",
+            }
+        out.append(entry)
     return out
 
 

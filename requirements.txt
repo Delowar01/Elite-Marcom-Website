@@ -6,3 +6,5 @@ httpx==0.28.1
 defusedxml==0.7.1
 cryptography==50.0.0
 python-multipart==0.0.32
+reportlab==5.0.0
+pillow==12.3.0

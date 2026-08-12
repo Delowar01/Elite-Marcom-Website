@@ -34,6 +34,9 @@
     colorsSection: document.getElementById("pdp-colors-section"),
     brandingSection: document.getElementById("pdp-branding-section"),
     branding: document.getElementById("pdp-branding"),
+    prefArea: document.getElementById("pref-area"),
+    prefMethod: document.getElementById("pref-method"),
+    prefNote: document.getElementById("pref-note"),
     actions: document.getElementById("pdp-actions"),
     fabCount: document.getElementById("pdp-fab-count")
   };
@@ -60,18 +63,60 @@
   }
   function saveRequests() { EM.store.set(REQUEST_KEY, requests); updateFab(); }
 
+  /* current branding preference — attached to the request item on add */
+  function collectPreference() {
+    function sel(el) {
+      return el && el.value && el.value !== "__none" ? String(el.value).slice(0, 120) : "";
+    }
+    var pref = {
+      area: sel(els.prefArea),
+      method: sel(els.prefMethod),
+      note: els.prefNote ? els.prefNote.value.trim().slice(0, 500) : ""
+    };
+    return (pref.area || pref.method || pref.note) ? pref : null;
+  }
+
+  function populatePreference(brandingList) {
+    if (!els.prefArea) return;
+    var areas = [], methods = [];
+    (brandingList || []).forEach(function (b) {
+      if (b.area && areas.indexOf(b.area) === -1) areas.push(b.area);
+      (b.method || "").split(",").forEach(function (m) {
+        m = m.trim();
+        if (m && methods.indexOf(m) === -1) methods.push(m);
+      });
+    });
+    function fill(select, values, otherLabel) {
+      var current = select.value;
+      select.innerHTML =
+        '<option value="__none">No preference — let Elite Marcom recommend</option>' +
+        values.map(function (v) {
+          return '<option value="' + EM.escapeHtml(v) + '">' + EM.escapeHtml(v) + "</option>";
+        }).join("") +
+        '<option value="Other — see notes">' + otherLabel + "</option>";
+      if (current) select.value = current;
+      if (!select.value) select.value = "__none";
+    }
+    fill(els.prefArea, areas.slice(0, 12), "Other area — describe in notes");
+    fill(els.prefMethod, methods.slice(0, 12), "Other method — describe in notes");
+  }
+
   function addToRequest(p, qty) {
+    var pref = collectPreference();
     var existing = findRequest(p.id);
     if (existing) {
       existing.qty = qty;
+      existing.branding = pref;
       EM.toast("Request updated — " + p.name + " × " + qty, "ok");
     } else {
       if (requests[market].length >= MAX_ITEMS) {
         EM.toast("A request can contain up to " + MAX_ITEMS + " items.", "err");
         return;
       }
-      requests[market].push({ id: p.id, code: p.code, name: p.name, image: p.image || "", market: market, qty: qty });
-      EM.toast("Added to request — " + p.name + " × " + qty, "ok");
+      requests[market].push({ id: p.id, code: p.code, name: p.name, image: p.image || "",
+                              market: market, qty: qty, branding: pref });
+      EM.toast("Added to request — " + p.name + " × " + qty +
+               (pref ? " (with branding preference)" : ""), "ok");
     }
     saveRequests();
     var addBtn = document.querySelector("[data-add]");
@@ -344,6 +389,13 @@
     if (notifyBtn) notifyBtn.addEventListener("click", function () { openNotify(p); });
 
     /* branding options — resolved server-side for known products only */
+    populatePreference([]);
+    var stored = inReq && inReq.branding;
+    if (stored) {
+      if (els.prefNote) els.prefNote.value = stored.note || "";
+    } else if (els.prefNote) {
+      els.prefNote.value = "";
+    }
     EM.api("/api/giveaways/branding?country=" + market + "&product_id=" + encodeURIComponent(p.id)).then(function (r) {
       if (r.ok && r.data && Array.isArray(r.data.branding) && r.data.branding.length) {
         els.branding.innerHTML = r.data.branding.map(function (b) {
@@ -351,6 +403,13 @@
           return "<li>" + bits.join(" · ") + "</li>";
         }).join("");
         els.brandingSection.hidden = false;
+        populatePreference(r.data.branding);
+      }
+      if (stored) {
+        if (stored.area && els.prefArea) els.prefArea.value = stored.area;
+        if (stored.method && els.prefMethod) els.prefMethod.value = stored.method;
+        if (els.prefArea && !els.prefArea.value) els.prefArea.value = "__none";
+        if (els.prefMethod && !els.prefMethod.value) els.prefMethod.value = "__none";
       }
     }).catch(function () { /* branding advice arrives with the proposal */ });
   }

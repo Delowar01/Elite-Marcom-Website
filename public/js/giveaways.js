@@ -49,9 +49,15 @@
       all[m] = all[m].filter(function (it) {
         return it && typeof it.id === "string" && typeof it.qty === "number" && it.qty >= 1 && it.market === m;
       }).slice(0, MAX_ITEMS).map(function (it) {
+        var b = it.branding && typeof it.branding === "object" ? {
+          area: String(it.branding.area || "").slice(0, 120),
+          method: String(it.branding.method || "").slice(0, 120),
+          note: String(it.branding.note || "").slice(0, 500)
+        } : null;
+        if (b && !b.area && !b.method && !b.note) b = null;
         return { id: String(it.id).slice(0, 80), code: String(it.code || "").slice(0, 80),
                  name: String(it.name || "").slice(0, 200), image: String(it.image || "").slice(0, 500),
-                 market: m, qty: Math.min(100000, Math.floor(it.qty)) };
+                 market: m, qty: Math.min(100000, Math.floor(it.qty)), branding: b };
       });
     });
     return all;
@@ -497,6 +503,11 @@
           '<div class="request-item__body">' +
             '<p class="request-item__name">' + EM.escapeHtml(it.name) + "</p>" +
             '<p class="request-item__meta">' + EM.escapeHtml(it.code) + " · " + it.market.toUpperCase() + "</p>" +
+            (it.branding
+              ? '<p class="request-item__pref">Branding: ' +
+                EM.escapeHtml([it.branding.area, it.branding.method].filter(Boolean).join(" · ") || "see notes") +
+                "</p>"
+              : "") +
             '<div class="request-item__row">' +
               '<div class="qty-control"><button type="button" data-r-minus aria-label="Decrease quantity">−</button>' +
               '<input type="number" inputmode="numeric" value="' + it.qty + '" min="1" max="' + max + '" aria-label="Quantity for ' + EM.escapeHtml(it.name) + '">' +
@@ -574,7 +585,9 @@
       fd.append("consent", enquiryForm.consent.checked ? "yes" : "");
       fd.append("market", market);
       fd.append("items", JSON.stringify(marketList().map(function (it) {
-        return { productId: it.id, quantity: it.qty };
+        var entry = { productId: it.id, quantity: it.qty };
+        if (it.branding) entry.branding = it.branding;
+        return entry;
       })));
       var logo = enquiryForm.querySelector('input[name="logo"]');
       if (logo && logo.files && logo.files[0]) fd.append("logo", logo.files[0]);

@@ -741,16 +741,78 @@ async def _fetch_manual_bytes(market: str, template_id: str) -> bytes:
     return b"".join(chunks)
 
 
-async def get_manual(market: str, product_id: str) -> tuple[bytes, str]:
-    """Validated printing-manual PDF for a catalog product.
+async def _fetch_image_bytes(url: str) -> bytes | None:
+    """Best-effort product photo download from an approved supplier host."""
+    if not url or not _safe_supplier_url(url):
+        return None
+    host = urllib.parse.urlsplit(url).hostname or ""
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, trust_env=False) as client:
+            async with client.stream("GET", url) as res:
+                if res.status_code != 200:
+                    return None
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in res.aiter_bytes():
+                    total += len(chunk)
+                    if total > 4 * 1024 * 1024:
+                        return None
+                    chunks.append(chunk)
+        return b"".join(chunks)
+    except Exception:
+        return None
 
-    Returns (pdf_bytes, product_code). Raises SupplierUnavailable when the
-    product is unknown, has no template candidate, or the candidate does not
-    produce a genuine PDF."""
-    products, _state = await get_catalog(market)
-    product = next((p for p in products if p["id"] == product_id), None)
-    if product is None:
-        raise SupplierUnavailable("unknown product")
+
+GEN_MANUAL_VERSION = 1
+
+
+async def _generated_manual(market: str, product: dict) -> bytes | None:
+    """Elite Marcom-branded manual (design M1) from Branding API data, cached
+    24h. Returns None when branding data is unavailable — caller falls back."""
+    from . import manuals
+
+    pdf_path, meta_path = _manual_paths(market, f"gen{GEN_MANUAL_VERSION}-{product['id']}")
+    now = time.time()
+    meta = None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    if meta and now - meta.get("checkedAt", 0) < MANUAL_CACHE_HOURS * 3600:
+        if meta.get("valid") and pdf_path.exists():
+            return pdf_path.read_bytes()
+        if not meta.get("valid"):
+            return None
+    try:
+        areas = await get_branding_areas(market, product["id"])
+    except SupplierUnavailable:
+        # supplier outage: last-known-good generated copy, else fall back
+        if meta and meta.get("valid") and pdf_path.exists():
+            return pdf_path.read_bytes()
+        return None
+    if not areas:
+        try:
+            meta_path.write_text(json.dumps({"checkedAt": int(now), "valid": False}), encoding="utf-8")
+        except OSError:
+            pass
+        return None
+    photo = await _fetch_image_bytes(product.get("image") or "")
+    try:
+        data = manuals.build_manual(product, areas, market, photo)
+    except Exception as exc:
+        print(f"[jasani] {market}: manual generation failed ({exc.__class__.__name__})", flush=True)
+        return None
+    try:
+        pdf_path.write_bytes(data)
+        meta_path.write_text(json.dumps({"checkedAt": int(now), "valid": True,
+                                         "size": len(data)}), encoding="utf-8")
+    except OSError:
+        pass
+    return data
+
+
+async def _supplier_manual(market: str, product: dict) -> bytes:
+    """Fallback: the supplier's own preview_product PDF via validated candidate."""
     template_id = str(product.get("parentId") or product.get("templateId") or "")
     if not template_id.isdigit() or not 0 < int(template_id) < 10**12:
         raise SupplierUnavailable("no manual candidate for this product")
@@ -763,7 +825,7 @@ async def get_manual(market: str, product_id: str) -> tuple[bytes, str]:
         pass
     if meta and now - meta.get("checkedAt", 0) < MANUAL_CACHE_HOURS * 3600:
         if meta.get("valid") and pdf_path.exists():
-            return pdf_path.read_bytes(), product["code"]
+            return pdf_path.read_bytes()
         if not meta.get("valid"):
             raise SupplierUnavailable("manual candidate previously failed validation")
     try:
@@ -771,7 +833,7 @@ async def get_manual(market: str, product_id: str) -> tuple[bytes, str]:
     except SupplierUnavailable:
         # supplier outage: keep serving the last-known-good copy
         if meta and meta.get("valid") and pdf_path.exists():
-            return pdf_path.read_bytes(), product["code"]
+            return pdf_path.read_bytes()
         raise
     valid = _valid_manual_pdf(data)
     try:
@@ -783,56 +845,162 @@ async def get_manual(market: str, product_id: str) -> tuple[bytes, str]:
         pass  # cache failures never break the response
     if not valid:
         raise SupplierUnavailable("candidate did not return a valid PDF")
-    return data, product["code"]
+    return data
+
+
+async def get_manual(market: str, product_id: str) -> tuple[bytes, str]:
+    """Printing-manual PDF for a catalog product: the Elite Marcom-branded
+    generated manual when Branding API data exists, else the validated
+    supplier PDF. Returns (pdf_bytes, product_code)."""
+    products, _state = await get_catalog(market)
+    product = next((p for p in products if p["id"] == product_id), None)
+    if product is None:
+        raise SupplierUnavailable("unknown product")
+    data = await _generated_manual(market, product)
+    if data is not None:
+        return data, product["code"]
+    return await _supplier_manual(market, product), product["code"]
 
 
 # ---------------- branding ----------------
 
-_branding_cache: dict[str, tuple[float, list[dict]]] = {}
+def _branding_cache_path(market: str, product_id: str):
+    d = _CACHE_DIR / "branding"
+    d.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^0-9A-Za-z_-]", "", str(product_id))[:60]
+    return d / f"{market}-{safe}.json"
 
 
-async def get_branding(market: str, product_id: str) -> list[dict]:
-    """Branding only for a product already known in the market's normalized catalog."""
+def _fnum(rec: dict, *keys: str) -> float | None:
+    raw = _s(rec, *keys)
+    m = re.match(r"^-?\d+(?:\.\d+)?", raw)
+    if not m:
+        return None
+    try:
+        return float(m.group())
+    except ValueError:
+        return None
+
+
+def _decode_web_image(raw: Any) -> tuple[bytes | None, int, int]:
+    """Base64 web_image → (bytes, natural_width, natural_height); size-capped
+    and verified server-side so only genuine images reach the PDF generator."""
+    if not isinstance(raw, str) or len(raw) < 64:
+        return None, 0, 0
+    b64 = raw.strip()
+    if b64.startswith("data:"):
+        b64 = b64.split(",", 1)[-1]
+    if len(b64) > 8 * 1024 * 1024:
+        return None, 0, 0
+    import base64
+    import io as _io
+
+    try:
+        data = base64.b64decode(b64, validate=False)
+    except Exception:
+        return None, 0, 0
+    if len(data) < 128 or len(data) > 6 * 1024 * 1024:
+        return None, 0, 0
+    try:
+        from PIL import Image as _Image
+
+        im = _Image.open(_io.BytesIO(data))
+        im.verify()
+        w, h = im.size
+    except Exception:
+        return None, 0, 0
+    if not (8 <= w <= 6000 and 8 <= h <= 6000):
+        return None, 0, 0
+    return data, w, h
+
+
+async def get_branding_areas(market: str, product_id: str) -> list[dict]:
+    """Full branding areas for a known catalog product, cached on disk 24h.
+
+    Each entry: {name, methods, areaWidthMm, areaHeightMm,
+                 image: {data: bytes|None, width, height} | None,
+                 rect: {left, top, width, height} | None,
+                 colorChoices, leadTime}."""
     products, _state = await get_catalog(market)
-    known = None
-    for p in products:
-        if p["id"] == product_id:
-            known = p
-            break
-    if known is None:
+    if not any(p["id"] == product_id for p in products):
         raise SupplierUnavailable("unknown product")
-    key = f"{market}:{product_id}"
+    import base64
+
+    cache = _branding_cache_path(market, product_id)
     now = time.time()
-    hit = _branding_cache.get(key)
-    if hit and now - hit[0] < config.BRANDING_CACHE_HOURS * 3600:
-        return hit[1]
+    try:
+        stored = json.loads(cache.read_text(encoding="utf-8"))
+        if now - stored.get("fetchedAt", 0) < config.BRANDING_CACHE_HOURS * 3600:
+            for a in stored["areas"]:
+                if a.get("imageB64"):
+                    a["image"] = {"data": base64.b64decode(a.pop("imageB64")),
+                                  "width": a.pop("imageW", 0), "height": a.pop("imageH", 0)}
+                else:
+                    a["image"] = None
+                    a.pop("imageB64", None), a.pop("imageW", None), a.pop("imageH", None)
+            return stored["areas"]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
     host = _host(market)
     # the Branding API is documented outside the daily primary-call limit
     raw, ctype = await _fetch(
         f"https://{host}/branding/{_token()}/{urllib.parse.quote(str(product_id), safe='')}", host,
         primary=False,
     )
-    records = _parse_records(raw, ctype)[:50]
-    branding = []
+    records = _parse_records(raw, ctype)[:20]
+    areas: list[dict] = []
     for rec in records:
         rec = _normalize_keys(rec)
-        # documented shape: name, area_width/area_height (mm), pricing_products
-        # (supported methods); web_image/coordinates stay server-side for now
-        methods = _rel_names(rec.get("pricing_products") or rec.get("pricingproducts"))
-        w = _weight(rec, "area_width", ndigits=1)
-        h = _weight(rec, "area_height", ndigits=1)
-        dims = f"{w} × {h} mm" if w and h else _s(rec, "dimensions", "size", "max_size", "area_size")[:120]
+        methods = _rel_names(rec.get("pricing_products") or rec.get("pricingproducts"))[:8]
+        img_data, img_w, img_h = _decode_web_image(rec.get("web_image") or rec.get("webimage"))
+        rect = None
+        left, top = _fnum(rec, "left"), _fnum(rec, "top")
+        r_w, r_h = _fnum(rec, "width"), _fnum(rec, "height")
+        if (img_data and None not in (left, top, r_w, r_h) and r_w > 0 and r_h > 0
+                and left >= -2 and top >= -2
+                and left + r_w <= img_w + 2 and top + r_h <= img_h + 2):
+            rect = {"left": max(0.0, left), "top": max(0.0, top), "width": r_w, "height": r_h}
         entry = {
-            "area": _s(rec, "name", "area", "branding_area", "position", "location")[:120],
-            "method": (", ".join(methods) or _s(rec, "method", "branding_method", "technique", "branding_type"))[:200],
+            "name": _s(rec, "name", "area", "branding_area", "position", "location")[:120],
+            "methods": methods or [m for m in
+                                   [_s(rec, "method", "branding_method", "technique", "branding_type")[:120]] if m],
+            "areaWidthMm": _weight(rec, "area_width", ndigits=1) or None,
+            "areaHeightMm": _weight(rec, "area_height", ndigits=1) or None,
+            "image": {"data": img_data, "width": img_w, "height": img_h} if img_data else None,
+            "rect": rect,
+            "colorChoices": "",  # enriched later from the Branding Prices API
+            "leadTime": "",
+        }
+        if entry["name"] or entry["methods"] or entry["image"]:
+            areas.append(entry)
+    try:
+        serializable = []
+        for a in areas:
+            s = {k: v for k, v in a.items() if k != "image"}
+            if a["image"]:
+                s["imageB64"] = base64.b64encode(a["image"]["data"]).decode()
+                s["imageW"], s["imageH"] = a["image"]["width"], a["image"]["height"]
+            serializable.append(s)
+        cache.write_text(json.dumps({"fetchedAt": int(now), "areas": serializable}),
+                         encoding="utf-8")
+    except OSError:
+        pass
+    return areas
+
+
+async def get_branding(market: str, product_id: str) -> list[dict]:
+    """Public text summary of the branding areas (no images or coordinates)."""
+    areas = await get_branding_areas(market, product_id)
+    branding = []
+    for a in areas:
+        dims = ""
+        if a.get("areaWidthMm") and a.get("areaHeightMm"):
+            dims = f"{a['areaWidthMm']} × {a['areaHeightMm']} mm"
+        entry = {
+            "area": (a.get("name") or "")[:120],
+            "method": ", ".join(a.get("methods") or [])[:200],
             "dimensions": dims[:120],
         }
         if any(entry.values()):
             branding.append(entry)
-    with _lock:
-        if len(_branding_cache) >= config.BRANDING_CACHE_MAX_ENTRIES:
-            oldest = sorted(_branding_cache.items(), key=lambda kv: kv[1][0])[:50]
-            for k, _v in oldest:
-                _branding_cache.pop(k, None)
-        _branding_cache[key] = (now, branding)
     return branding
