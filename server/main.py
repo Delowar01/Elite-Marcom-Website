@@ -804,6 +804,12 @@ async def block_private_paths(request: Request, call_next):
     return await call_next(request)
 
 
+from . import admin_api  # noqa: E402  (registered before the catch-all static mount)
+
+app.include_router(admin_api.router)
+app.mount("/admin/assets", StaticFiles(directory=str(admin_api.ADMIN_UI / "assets")), name="admin-assets")
+
+
 class CachedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):  # type: ignore[override]
         response = await super().get_response(path, scope)

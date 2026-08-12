@@ -62,6 +62,12 @@ def _fail(message: str) -> None:
 EM_DATA_KEY = _secret("EM_DATA_KEY")            # AES-GCM data-at-rest key material
 EM_CHALLENGE_SECRET = _secret("EM_CHALLENGE_SECRET")  # form-token signing
 EM_IP_HASH_SECRET = _secret("EM_IP_HASH_SECRET")      # IP hashing
+EM_ADMIN_SESSION_SECRET = _secret("EM_ADMIN_SESSION_SECRET")  # admin pending-token signing
+
+# one-time bootstrap code required to create the FIRST admin account in
+# production (any value works in development when unset)
+ADMIN_SETUP_CODE = os.environ.get("EM_ADMIN_SETUP_CODE", "").strip()
+ADMIN_SESSION_HOURS = float(os.environ.get("EM_ADMIN_SESSION_HOURS", "12"))
 
 TURNSTILE_SECRET = os.environ.get("EM_TURNSTILE_SECRET", "").strip()
 TURNSTILE_SITE_KEY = os.environ.get("EM_TURNSTILE_SITE_KEY", "").strip()
@@ -92,11 +98,14 @@ def validate_startup() -> None:
     problems = []
     for name, val in (("EM_DATA_KEY", EM_DATA_KEY),
                       ("EM_CHALLENGE_SECRET", EM_CHALLENGE_SECRET),
-                      ("EM_IP_HASH_SECRET", EM_IP_HASH_SECRET)):
+                      ("EM_IP_HASH_SECRET", EM_IP_HASH_SECRET),
+                      ("EM_ADMIN_SESSION_SECRET", EM_ADMIN_SESSION_SECRET)):
         if val.startswith(_DEV_PREFIX) or len(val) < 32:
             problems.append(f"{name} must be set to at least 32 characters")
-    if len({EM_DATA_KEY, EM_CHALLENGE_SECRET, EM_IP_HASH_SECRET}) != 3:
-        problems.append("EM_DATA_KEY / EM_CHALLENGE_SECRET / EM_IP_HASH_SECRET must be distinct")
+    if len({EM_DATA_KEY, EM_CHALLENGE_SECRET, EM_IP_HASH_SECRET, EM_ADMIN_SESSION_SECRET}) != 4:
+        problems.append("EM_DATA_KEY / EM_CHALLENGE_SECRET / EM_IP_HASH_SECRET / EM_ADMIN_SESSION_SECRET must be distinct")
+    if not ADMIN_SETUP_CODE:
+        problems.append("EM_ADMIN_SETUP_CODE is required in production until the first admin account exists")
     if not TURNSTILE_SECRET or not TURNSTILE_SITE_KEY:
         problems.append("EM_TURNSTILE_SECRET and EM_TURNSTILE_SITE_KEY are required in production")
     https_origins = [o for o in ALLOWED_ORIGINS if o.startswith("https://")]
