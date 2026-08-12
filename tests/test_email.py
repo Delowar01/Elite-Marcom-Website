@@ -1,4 +1,4 @@
-"""Resend transactional email — all five forms, routing, templates, safety.
+"""Resend transactional email — all six forms, routing, templates, safety.
 
 The provider call is captured by a stub transport, so the whole pipeline is
 exercised end to end without sending anything or needing a real API key.
@@ -108,6 +108,7 @@ def test_default_routing_matches_the_brief():
         "job_application": "hr@elitemarcom.com",
         "corporate_gifts": "mohammad.hossain@elitemarcom.com",
         "stock_notification": "mohammad.hossain@elitemarcom.com",
+        "rental_availability": "mohammad.hossain@elitemarcom.com",
         "rental_inquiry": "mohammad.hossain@elitemarcom.com",
     }
     for key, address in expected.items():
@@ -120,7 +121,7 @@ def test_default_routing_matches_the_brief():
     assert general["contactEmail"] == "info@elitemarcom.com"
 
 
-# ---------------- the five forms, end to end ----------------
+# ---------------- the six forms, end to end ----------------
 
 def test_general_inquiry_sends_both_emails():
     res = client.post("/api/contact/enquiries", json={
@@ -513,3 +514,93 @@ def test_nothing_is_sent_when_the_key_is_missing():
         assert SENT == []
     finally:
         config.RESEND_API_KEY = original
+
+
+# ---------------- queue health (admin KPI cards) ----------------
+
+def _reset_log() -> None:
+    """Start from an empty log so the KPI counts can be asserted exactly."""
+    with mailer._log_lock:
+        mailer._log_conn().execute("DELETE FROM sends")
+        mailer._log_conn().commit()
+
+
+def _due_now() -> None:
+    with mailer._log_lock:
+        mailer._log_conn().execute("UPDATE sends SET next_attempt_at=0 WHERE status='pending'")
+        mailer._log_conn().commit()
+
+
+def _queue(name: str, address: str) -> str:
+    reference = storage.save_record(
+        "contact", {"fullName": name, "company": "", "email": address,
+                    "phone": "+966500000000", "message": "queue health"}, "iphash", 180)
+    assert mailer.enqueue("contact", reference) == 2
+    return reference
+
+
+def test_queue_health_counts_every_status():
+    """The Email screen's KPI cards read straight off log_stats()."""
+    _reset_log()
+    assert mailer.log_stats() == {"pending": 0, "sending": 0, "sent": 0, "failed": 0, "total": 0}
+
+    reference = _queue("Health Check", "health@example.com")
+    assert mailer.log_stats() == {"pending": 2, "sending": 0, "sent": 0, "failed": 0, "total": 2}
+
+    mailer._claim_due(10)                                   # in flight
+    assert mailer.log_stats()["sending"] == 2
+    mailer.recover_stuck(0)
+    _due_now()
+
+    drain()
+    assert mailer.log_stats() == {"pending": 0, "sending": 0, "sent": 2, "failed": 0, "total": 2}
+    entries = [e for e in mailer.log_entries(30) if e["reference"] == reference]
+    assert len(entries) == 2 and all(e["status"] == "sent" for e in entries)
+
+
+def test_exhausted_jobs_show_as_failed_and_retry_clears_the_warning():
+    _reset_log()
+    FAIL_NEXT[0] = True
+    reference = _queue("Attention Case", "attention@example.com")
+
+    for _ in range(mailer.MAX_ATTEMPTS):
+        _due_now()
+        drain()
+
+    stats = mailer.log_stats()
+    assert stats == {"pending": 0, "sending": 0, "sent": 0, "failed": 2, "total": 2}
+    entries = [e for e in mailer.log_entries(30) if e["reference"] == reference]
+    assert all(e["attempts"] == mailer.MAX_ATTEMPTS for e in entries)
+    assert all("stub" not in e["detail"] and "re_" not in e["detail"] for e in entries)
+
+    FAIL_NEXT[0] = False
+    SENT.clear()
+    assert mailer.retry_failed(reference=reference) == 2          # per-row Retry
+    assert mailer.log_stats()["failed"] == 0                      # warning clears
+    assert mailer.log_stats()["pending"] == 2
+    drain()
+    assert mailer.log_stats() == {"pending": 0, "sending": 0, "sent": 2, "failed": 0, "total": 2}
+    assert len([s for s in SENT if "attention@example.com" in s["payload"]["to"]]) == 1
+    drain()
+    assert len([s for s in SENT if "attention@example.com" in s["payload"]["to"]]) == 1
+
+
+def test_retry_all_failed_requeues_every_failure():
+    _reset_log()
+    FAIL_NEXT[0] = True
+    references = [_queue("Bulk One", "bulk1@example.com"), _queue("Bulk Two", "bulk2@example.com")]
+    for _ in range(mailer.MAX_ATTEMPTS):
+        _due_now()
+        drain()
+    assert mailer.log_stats() == {"pending": 0, "sending": 0, "sent": 0, "failed": 4, "total": 4}
+
+    FAIL_NEXT[0] = False
+    SENT.clear()
+    assert mailer.retry_failed() == 4                             # "Retry all failed"
+    drain()
+    assert mailer.log_stats() == {"pending": 0, "sending": 0, "sent": 4, "failed": 0, "total": 4}
+    for reference in references:
+        entries = [e for e in mailer.log_entries(30) if e["reference"] == reference]
+        assert len(entries) == 2 and all(e["status"] == "sent" for e in entries)
+    assert len([s for s in SENT if "bulk1@example.com" in s["payload"]["to"]]) == 1
+    assert len([s for s in SENT if "bulk2@example.com" in s["payload"]["to"]]) == 1

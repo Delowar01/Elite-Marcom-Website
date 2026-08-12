@@ -1336,6 +1336,11 @@ def test_email_settings_screen_and_permissions():
     assert "required_from" in forms["rental_availability"]["variables"]
     assert "required_from" not in forms["stock_notification"]["variables"]
     assert isinstance(d["queued"], int)
+    # queue health cards: every status the Email screen shows
+    stats = d["stats"]
+    assert set(stats) == {"pending", "sending", "sent", "failed", "total"}
+    assert all(isinstance(v, int) for v in stats.values())
+    assert stats["total"] == stats["pending"] + stats["sending"] + stats["sent"] + stats["failed"]
     assert d["general"]["fromEmail"] == "website@mail.elitemarcom.com"
     assert d["senderDomains"] == ["mail.elitemarcom.com"]
     # the provider key is never present in any shape
@@ -1349,6 +1354,23 @@ def test_email_settings_screen_and_permissions():
     sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
     assert editor.get("/api/admin/email").status_code == 403
     assert editor.post("/api/admin/email/test", json={"to": "x@y.com"}).status_code == 403
+
+
+def test_email_retry_endpoint_is_guarded_and_reports_what_it_requeued():
+    me = client.get("/api/admin/me").json()
+    assert client.post("/api/admin/email/retry", json={"all": True}).status_code == 403  # no CSRF
+    vague = client.post("/api/admin/email/retry", json={},
+                        headers={"X-CSRF": me["csrf"]})
+    assert vague.status_code == 400
+    ok = client.post("/api/admin/email/retry", json={"all": True},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200 and isinstance(ok.json()["requeued"], int)
+    one = client.post("/api/admin/email/retry", json={"reference": "EM-0000-0000"},
+                      headers={"X-CSRF": me["csrf"]})
+    assert one.status_code == 200 and one.json()["requeued"] == 0
+    editor = TestClient(app)
+    sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
+    assert editor.post("/api/admin/email/retry", json={"all": True}).status_code == 403
 
 
 def test_email_routing_and_template_editing_through_the_api():

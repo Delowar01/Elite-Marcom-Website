@@ -404,6 +404,11 @@
 .ins-alert:last-child { margin-bottom: 0; }
 .ins-alert--warn { border-color: #d9a441; color: #d9a441; }
 .ins-alert--good { border-color: #63c98c; color: #63c98c; }
+.mail-health { margin-bottom: 28px; }
+.stat-card--warn { border-color: #d9a441; }
+.stat-card--warn b { color: #d9a441; }
+.stat-card--bad { border-color: #ee4b4b; }
+.stat-card--bad b { color: #ee4b4b; }
 .funnel { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .funnel-step { flex: 1; min-width: 130px; padding: 16px 18px; border-radius: 14px;
   border: 1px solid var(--border); background: var(--panel-2); display: flex;

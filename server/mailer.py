@@ -551,11 +551,15 @@ def log_entries(limit: int = 40) -> list[dict]:
 
 
 def log_stats() -> dict:
+    """Queue health. Counted over the whole log, not a rolling window: a job
+    stuck pending for weeks still needs to show up as pending."""
     row = _log_conn().execute(
-        "SELECT SUM(status='sent') AS sent, SUM(status='failed') AS failed,"
-        " COUNT(*) AS total FROM sends WHERE ts > ?",
-        (int(time.time()) - 30 * 86400,)).fetchone()
-    return {"sent": row["sent"] or 0, "failed": row["failed"] or 0, "total": row["total"] or 0}
+        "SELECT SUM(status='pending') AS pending, SUM(status='sending') AS sending,"
+        " SUM(status='sent') AS sent, SUM(status='failed') AS failed,"
+        " COUNT(*) AS total FROM sends").fetchone()
+    return {"pending": row["pending"] or 0, "sending": row["sending"] or 0,
+            "sent": row["sent"] or 0, "failed": row["failed"] or 0,
+            "total": row["total"] or 0}
 
 
 # ---------------- transport ----------------

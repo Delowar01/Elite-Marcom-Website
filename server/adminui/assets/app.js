@@ -2102,6 +2102,9 @@
         }
         var current = forms.filter(function (f) { return f.key === emailForm; })[0] || {};
         var stats = d.stats || {};
+        var pending = stats.pending || 0;
+        var sending = stats.sending || 0;
+        var failed = stats.failed || 0;
         function vars(list) {
           return (list || []).map(function (v) {
             return '<button type="button" class="var-chip" data-var="{{' + esc(v) + '}}">{{' + esc(v) + "}}</button>";
@@ -2114,11 +2117,23 @@
           (d.configured ? "" :
             '<p class="ins-alert ins-alert--warn">No email service key is configured on the server yet ' +
             "(RESEND_API_KEY). Settings can be prepared now; sending starts once the key is in place.</p>") +
-          '<div class="stat-row">' +
-          '<div class="stat-card"><b>' + esc(stats.sent || 0) + "</b><span>Sent (30 days)</span></div>" +
-          '<div class="stat-card"><b>' + esc(stats.failed || 0) + "</b><span>Failed (30 days)</span></div>" +
-          '<div class="stat-card"><b>' + esc(d.queued || 0) + "</b><span>Waiting in the queue</span></div>" +
-          '<div class="stat-card"><b>' + esc(forms.length) + "</b><span>Connected forms</span></div></div>" +
+          '<div class="stat-row stat-row--tight">' +
+          '<div class="stat-card' + (pending ? " stat-card--warn" : "") + '"><b>' + esc(pending) +
+          "</b><span>Pending</span></div>" +
+          '<div class="stat-card"><b>' + esc(sending) + "</b><span>Sending</span></div>" +
+          '<div class="stat-card"><b>' + esc(stats.sent || 0) + "</b><span>Sent</span></div>" +
+          '<div class="stat-card' + (failed ? " stat-card--bad" : "") + '"><b>' + esc(failed) +
+          "</b><span>Failed</span></div>" +
+          '<div class="stat-card"><b>' + esc(stats.total || 0) + "</b><span>Total deliveries</span></div></div>" +
+          (failed
+            ? '<p class="ins-alert ins-alert--warn mail-health">\u26a0 <b>Email delivery attention required</b> — ' +
+              esc(failed) + " email deliver" + (failed === 1 ? "y" : "ies") + " failed and require review" +
+              (pending ? ", " + esc(pending) + " still waiting to send" : "") +
+              ". Retry them under Recent deliveries below.</p>"
+            : pending
+              ? '<p class="ins-alert mail-health">' + esc(pending) + " email" + (pending === 1 ? " is" : "s are") +
+                " waiting in the queue — the server sends them automatically.</p>"
+              : '<p class="ins-alert ins-alert--good mail-health">\u2713 Email delivery is healthy.</p>') +
 
           '<div class="admin-panel"><h2>Sender &amp; branding</h2>' +
           '<form class="admin-form" id="em-general">' +
@@ -2177,7 +2192,7 @@
           '<p class="admin-inline-note" style="margin-bottom:12px;">Every email is queued when the ' +
           "form is submitted and sent by the server, so a temporary email outage never loses a " +
           "message — failed deliveries stay here and can be retried without resending the form." +
-          ((stats.failed || 0) ? ' <button class="btn btn--ghost btn--small" id="em-retry-all">Retry all failed</button>' : "") +
+          (failed ? ' <button class="btn btn--ghost btn--small" id="em-retry-all">Retry all failed</button>' : "") +
           "</p>" +
           ((d.log || []).length
             ? '<div class="table-scroll"><table class="admin-table"><thead><tr><th>When</th><th>Form</th><th>Type</th>' +
