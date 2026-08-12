@@ -28,6 +28,19 @@ LINE = (0.910, 0.894, 0.871)         # #e8e4de
 
 _LOGO_PATH = Path(__file__).parent / "data" / "logo-print.png"
 
+
+def _logo_path() -> Path:
+    """Admin-uploaded PDF logo override wins over the shipped asset."""
+    try:
+        from . import media
+
+        override = media.pdf_logo_path()
+        if override is not None:
+            return override
+    except Exception:
+        pass
+    return _LOGO_PATH
+
 DISCLAIMER = ("All branding placements, methods and dimensions are subject to artwork review, "
               "product compatibility, technical feasibility and final production approval by "
               "Elite Marcom. This document shows the maximum printable areas provided by the "
@@ -128,7 +141,7 @@ def build_manual(product: dict, areas: list[dict], market: str,
     # ---------- header ----------
     logo_h = 26.0
     try:
-        logo = ImageReader(str(_LOGO_PATH))
+        logo = ImageReader(str(_logo_path()))
         lw, lh = logo.getSize()
         logo_w = logo_h * lw / lh
         c.drawImage(logo, M, y - logo_h, width=logo_w, height=logo_h,

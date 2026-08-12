@@ -32,20 +32,33 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
 
   var GLB_URL = "/assets/aces-exhibition.glb";
 
-  /* camera framing — tunable via data attributes (URL query overrides for design review) */
+  /* camera framing — priority: URL query (design review) > admin panel > data attributes */
   var q = new URLSearchParams(location.search);
+  var adminHero = {};
   function tune(name, fallback) {
-    var v = parseFloat(q.get(name) || stage.getAttribute("data-" + name) || "");
+    var query = parseFloat(q.get(name) || "");
+    if (!isNaN(query)) return query;
+    if (typeof adminHero[name] === "number") return adminHero[name];
+    var v = parseFloat(stage.getAttribute("data-" + name) || "");
     return isNaN(v) ? fallback : v;
   }
-  var CAM_Z = tune("camz", 5.6);
-  var CAM_Y = tune("camy", 1.15);
-  var CAM_FOV = tune("fov", 38);
+  var CAM_Z = 5.6, CAM_Y = 1.15, CAM_FOV = 38;
 
-  /* Preload the GLB bytes without blocking hero text. */
+  /* Preload the GLB bytes (and admin camera overrides) without blocking hero text. */
+  var heroCfg = fetch("/api/site/hero").then(function (r) {
+    return r.ok ? r.json() : {};
+  }).catch(function () { return {}; });
   var preload = fetch(GLB_URL).then(function (r) {
     if (!r.ok) throw new Error("glb http " + r.status);
     return r.arrayBuffer();
+  }).then(function (buffer) {
+    return heroCfg.then(function (cfg) {
+      adminHero = cfg || {};
+      CAM_Z = tune("camz", 5.6);
+      CAM_Y = tune("camy", 1.15);
+      CAM_FOV = tune("fov", 38);
+      return buffer;
+    });
   });
 
   function fail(err) {
@@ -193,6 +206,7 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
         });
 
         pivot.add(model);
+        camera.fov = CAM_FOV;
         camera.position.set(0, CAM_Y, CAM_Z);
         camera.lookAt(0, 0.1, 0);
 

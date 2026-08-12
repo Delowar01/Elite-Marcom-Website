@@ -14,7 +14,7 @@ from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -791,6 +791,35 @@ async def start_cleanup_task():
     asyncio.get_event_loop().create_task(loop())
 
 
+# ---------------- brand theme, media library & hero config (admin-managed) ----------------
+
+@app.get("/theme-custom.css", include_in_schema=False)
+async def theme_custom_css():
+    from . import media
+
+    return Response(content=media.theme_css(), media_type="text/css",
+                    headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/media/{name}", include_in_schema=False)
+async def media_file(name: str):
+    from . import media
+
+    path = media.media_file_path(name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path, media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=604800, immutable"})
+
+
+@app.get("/api/site/hero")
+async def site_hero_config():
+    """Public camera overrides for the 3D hero (set from the admin panel)."""
+    from . import media
+
+    return media.get_hero_config()
+
+
 # ---------------- static site (strict public webroot) ----------------
 
 _BLOCKED_PREFIXES = ("/.", "/server", "/runtime", "/tests")
@@ -814,11 +843,29 @@ app.include_router(admin_api.router)
 app.mount("/admin/assets", StaticFiles(directory=str(admin_api.ADMIN_UI / "assets")), name="admin-assets")
 
 
+_OVERRIDE_TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp",
+                   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".glb": "model/gltf-binary"}
+
+
 class CachedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):  # type: ignore[override]
-        response = await super().get_response(path, scope)
-        if path.endswith((".webp", ".svg", ".png", ".glb", ".js", ".css")) and "v=" not in path:
-            response.headers.setdefault("Cache-Control", "public, max-age=86400")
+        from . import media
+
+        override = media.override_for(path)
+        if override is not None:
+            ctype = _OVERRIDE_TYPES.get(override.suffix.lower(), "application/octet-stream")
+            response: Response = FileResponse(override, media_type=ctype)
+            # admin replacements must show up promptly on the public site
+            response.headers["Cache-Control"] = "no-cache"
+        else:
+            response = await super().get_response(path, scope)
+            if path.endswith((".js", ".css")) and "v=" not in path:
+                response.headers.setdefault("Cache-Control", "public, max-age=86400")
+            elif path.endswith((".webp", ".svg", ".png", ".jpg", ".glb")):
+                # short-lived so admin replacements reach returning visitors
+                # quickly; ETag revalidation keeps repeat loads cheap
+                response.headers.setdefault(
+                    "Cache-Control", "public, max-age=300, stale-while-revalidate=600")
         if path.endswith(".glb"):
             response.headers["Content-Type"] = "model/gltf-binary"
         return response

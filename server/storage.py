@@ -121,7 +121,7 @@ def list_records(kinds: list[str] | None = None, limit: int = 50, offset: int = 
         rows = conn.execute(
             f"SELECT id, kind, reference, created_at, expires_at, payload, cv_path {sql}"
             " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-            params + [max(1, min(200, limit)), max(0, offset)]).fetchall()
+            params + [max(1, min(1000, limit)), max(0, offset)]).fetchall()
     out = []
     for r in rows:
         out.append({"id": r[0], "kind": r[1], "reference": r[2], "createdAt": r[3],
@@ -139,6 +139,24 @@ def get_record(reference: str) -> dict | None:
         return None
     return {"id": row[0], "kind": row[1], "reference": row[2], "createdAt": row[3],
             "expiresAt": row[4], "payload": row[5], "cvPath": row[6]}
+
+
+def delete_record(reference: str) -> bool:
+    """Remove one record and its encrypted attachment (admin-initiated)."""
+    with _lock:
+        conn = _connect()
+        row = conn.execute("SELECT cv_path FROM records WHERE reference=?",
+                           (reference,)).fetchone()
+        if row is None:
+            return False
+        if row[0]:
+            try:
+                (_CV_DIR / Path(row[0]).name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        conn.execute("DELETE FROM records WHERE reference=?", (reference,))
+        conn.commit()
+    return True
 
 
 def read_attachment(cv_path: str) -> bytes | None:

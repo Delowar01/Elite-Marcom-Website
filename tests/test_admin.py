@@ -35,6 +35,20 @@ def records_db(tmp_path_factory):
     storage._DB_PATH, storage._CV_DIR, storage._conn = old
 
 
+@pytest.fixture(scope="module", autouse=True)
+def media_dirs(tmp_path_factory):
+    """Isolated media/overrides directories for Phase 2 tests."""
+    from server import media
+
+    d = tmp_path_factory.mktemp("mediastore")
+    old = (media.MEDIA_DIR, media.GLB_DIR, media.OVERRIDES_DIR)
+    media.MEDIA_DIR = d / "media"
+    media.GLB_DIR = d / "media" / "glb"
+    media.OVERRIDES_DIR = d / "overrides"
+    yield
+    media.MEDIA_DIR, media.GLB_DIR, media.OVERRIDES_DIR = old
+
+
 @pytest.fixture(autouse=True)
 def reset_limiter():
     security.limiter._hits.clear()
@@ -276,6 +290,71 @@ def test_requests_permissions_sales_yes_editor_no():
     assert "requests.view" not in editor_me["permissions"]
 
 
+def test_requests_status_filter():
+    res = client.get("/api/admin/requests?status=in_progress")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total"] >= 1
+    assert all(x["status"] == "in_progress" for x in data["requests"])
+    none = client.get("/api/admin/requests?status=won").json()
+    assert none["total"] == 0
+
+
+def test_requests_export_csv_xlsx_pdf():
+    import io
+    import zipfile
+
+    res = client.get("/api/admin/requests/export?format=csv")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/csv")
+    text = res.content.decode("utf-8-sig")
+    assert "Reference,Type,Received" in text and "Amira Hassan" in text
+
+    res = client.get("/api/admin/requests/export?format=xlsx")
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as z:
+        sheet = z.read("xl/worksheets/sheet1.xml").decode()
+    assert "Amira Hassan" in sheet and "Reference" in sheet
+
+    ref = globals()["_REF_GV"]
+    res = client.get(f"/api/admin/requests/export?format=pdf&refs={ref}")
+    assert res.status_code == 200
+    assert res.content.startswith(b"%PDF-")
+
+    # single-request export + filtered export
+    res = client.get(f"/api/admin/requests/{ref}/export?format=xlsx")
+    assert res.status_code == 200
+    res = client.get("/api/admin/requests/export?format=csv&status=in_progress")
+    assert res.status_code == 200 and ref.encode() in res.content
+    assert client.get("/api/admin/requests/export?format=doc").status_code == 400
+    actions = {e["action"] for e in aa.audit_list(limit=15)}
+    assert "requests.exported" in actions and "request.exported" in actions
+
+
+def test_request_delete_removes_record_and_meta():
+    me = client.get("/api/admin/me").json()
+    ref = _seed_request("contact", {"fullName": "To Be Deleted"},
+                        cv=b"%PDF-1.4 tiny", ext="pdf")
+    client.post(f"/api/admin/requests/{ref}",
+                json={"status": "closed"}, headers={"X-CSRF": me["csrf"]})
+    no_csrf = client.post(f"/api/admin/requests/{ref}/delete")
+    assert no_csrf.status_code == 403
+    ok = client.post(f"/api/admin/requests/{ref}/delete", headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    assert client.get(f"/api/admin/requests/{ref}").status_code == 404
+    assert storage.get_record(ref) is None
+    assert aa.request_meta_get(ref)["updatedAt"] is None  # meta row gone
+    actions = {e["action"] for e in aa.audit_list(limit=10)}
+    assert "request.deleted" in actions
+    # sales can delete (requests.manage), editor cannot even see
+    sales = TestClient(app)
+    sales_me = sign_in(sales, "sales@elitemarcom.com", "another-long-pass")
+    ref2 = _seed_request("contact", {"fullName": "Sales Deletes"})
+    ok2 = sales.post(f"/api/admin/requests/{ref2}/delete",
+                     headers={"X-CSRF": sales_me["csrf"]})
+    assert ok2.status_code == 200
+
+
 # ---------------- Phase 1: Jasani console ----------------
 
 def _seed_jasani_cache(cache_dir, market="ksa"):
@@ -353,3 +432,177 @@ def test_jasani_refresh_blocked_when_budget_exhausted(tmp_path, monkeypatch):
     assert client.get("/api/admin/jasani").json()["budget"]["remaining"] == 0
     actions = {e["action"] for e in aa.audit_list(limit=10)}
     assert "jasani.refresh_failed" in actions
+
+
+# ---------------- Phase 2: media library, brand, GLB ----------------
+
+def _png_bytes(size=(200, 200), color="red") -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_media_upload_converts_to_webp_and_serves():
+    me = client.get("/api/admin/me").json()
+    res = client.post("/api/admin/media/upload",
+                      files={"file": ("photo.png", _png_bytes(), "image/png")},
+                      data={"alt": "Red test square"},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    item = res.json()["item"]
+    assert item["file"].endswith(".webp") and item["alt"] == "Red test square"
+    served = client.get(f"/media/{item['file']}")
+    assert served.status_code == 200
+    assert served.headers["content-type"] == "image/webp"
+    assert served.content[:4] == b"RIFF" and served.content[8:12] == b"WEBP"
+    # listed with usage stats
+    lib = client.get("/api/admin/media").json()
+    assert any(m["id"] == item["id"] for m in lib["library"])
+    assert lib["usage"]["libraryBytes"] > 0
+    # alt update + delete
+    ok = client.post(f"/api/admin/media/{item['id']}/alt", json={"alt": "New alt"},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    gone = client.post(f"/api/admin/media/{item['id']}/delete", headers={"X-CSRF": me["csrf"]})
+    assert gone.status_code == 200
+    assert client.get(f"/media/{item['file']}").status_code == 404
+    # junk uploads are refused
+    bad = client.post("/api/admin/media/upload",
+                      files={"file": ("x.png", b"not-an-image-at-all", "image/png")},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+
+
+def test_site_asset_replace_serves_override_and_resets():
+    me = client.get("/api/admin/me").json()
+    original = client.get("/assets/favicon-64.png").content
+    res = client.post("/api/admin/media/replace-asset",
+                      data={"path": "assets/favicon-64.png"},
+                      files={"file": ("new.png", _png_bytes((64, 64), "blue"), "image/png")},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    replaced = client.get("/assets/favicon-64.png")
+    assert replaced.status_code == 200 and replaced.content != original
+    assert replaced.content.startswith(b"\x89PNG")
+    assets = client.get("/api/admin/media").json()["siteAssets"]
+    row = next(a for a in assets if a["path"] == "assets/favicon-64.png")
+    assert row["overridden"] is True
+    ok = client.post("/api/admin/media/reset-asset", json={"path": "assets/favicon-64.png"},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    assert client.get("/assets/favicon-64.png").content == original
+    # traversal and non-asset paths are rejected
+    bad = client.post("/api/admin/media/replace-asset",
+                      data={"path": "../server/config.py"},
+                      files={"file": ("x.png", _png_bytes(), "image/png")},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+
+
+def test_brand_tokens_theme_css_and_warnings():
+    me = client.get("/api/admin/me").json()
+    assert client.get("/theme-custom.css").text == ""
+    res = client.post("/api/admin/brand/tokens",
+                      json={"values": {"orange": "#123456", "motion": False}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    css = client.get("/theme-custom.css")
+    assert css.headers["content-type"].startswith("text/css")
+    assert "--orange: #123456;" in css.text
+    assert "animation-duration" in css.text  # motion off
+    bad = client.post("/api/admin/brand/tokens", json={"values": {"orange": "orangeish"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    # near-white orange trips a contrast warning
+    warn = client.post("/api/admin/brand/tokens",
+                       json={"values": {"orange": "#ffef e0".replace(" ", ""), "motion": True}},
+                       headers={"X-CSRF": me["csrf"]})
+    assert warn.status_code == 200 and warn.json()["warnings"]
+    # reset to defaults
+    client.post("/api/admin/brand/tokens", json={"values": {"motion": True}},
+                headers={"X-CSRF": me["csrf"]})
+    assert client.get("/theme-custom.css").text == ""
+
+
+def test_identity_logo_svg_sanitized_and_served():
+    me = client.get("/api/admin/me").json()
+    evil = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+    res = client.post("/api/admin/brand/identity",
+                      data={"slot": "logoLight"},
+                      files={"file": ("logo.svg", evil, "image/svg+xml")},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 400
+    clean = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+             b'<rect width="10" height="10" fill="#123456"/></svg>')
+    res = client.post("/api/admin/brand/identity",
+                      data={"slot": "logoLight"},
+                      files={"file": ("logo.svg", clean, "image/svg+xml")},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    served = client.get("/assets/logo.svg")
+    assert served.content == clean
+    assert served.headers["content-type"].startswith("image/svg")
+    slots = {s["slot"]: s for s in client.get("/api/admin/brand").json()["identity"]}
+    assert slots["logoLight"]["overridden"] is True
+    ok = client.post("/api/admin/brand/identity/reset", json={"slot": "logoLight"},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    assert client.get("/assets/logo.svg").content != clean
+
+
+def test_glb_upload_activate_and_reset():
+    me = client.get("/api/admin/me").json()
+    original_len = len(client.get("/assets/aces-exhibition.glb").content)
+    glb = b"glTF" + (2).to_bytes(4, "little") + (120).to_bytes(4, "little") + b"\0" * 108
+    res = client.post("/api/admin/glb/upload",
+                      files={"file": ("stand.glb", glb, "model/gltf-binary")},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    fname = res.json()["file"]
+    ok = client.post("/api/admin/glb/activate", json={"file": fname},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    live = client.get("/assets/aces-exhibition.glb")
+    assert live.content == glb
+    assert live.headers["content-type"] == "model/gltf-binary"
+    state = client.get("/api/admin/brand").json()["glb"]
+    assert state["overrideActive"] is True
+    assert any(v["file"] == fname and v["active"] for v in state["versions"])
+    client.post("/api/admin/glb/reset", headers={"X-CSRF": me["csrf"]})
+    assert len(client.get("/assets/aces-exhibition.glb").content) == original_len
+    # invalid model rejected
+    bad = client.post("/api/admin/glb/upload",
+                      files={"file": ("x.glb", b"nope" * 50, "model/gltf-binary")},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+
+
+def test_hero_camera_config_public_endpoint():
+    me = client.get("/api/admin/me").json()
+    assert client.get("/api/site/hero").json() == {}
+    res = client.post("/api/admin/hero",
+                      json={"values": {"camz": 6.5, "camy": 1.4, "fov": 42}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200
+    assert client.get("/api/site/hero").json() == {"camz": 6.5, "camy": 1.4, "fov": 42}
+    bad = client.post("/api/admin/hero", json={"values": {"camz": 99}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    client.post("/api/admin/hero", json={"values": {}}, headers={"X-CSRF": me["csrf"]})
+    assert client.get("/api/site/hero").json() == {}
+
+
+def test_media_and_brand_permissions():
+    sales = TestClient(app)
+    sign_in(sales, "sales@elitemarcom.com", "another-long-pass")
+    assert sales.get("/api/admin/media").status_code == 403
+    assert sales.get("/api/admin/brand").status_code == 403
+    editor = TestClient(app)
+    editor_me = sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
+    assert editor.get("/api/admin/media").status_code == 200
+    assert editor.get("/api/admin/brand").status_code == 200
+    assert "media.manage" in editor_me["permissions"]

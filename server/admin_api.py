@@ -13,7 +13,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -400,14 +400,25 @@ def _decrypt_payload(record: dict) -> dict:
 
 
 @router.get("/api/admin/requests")
-async def admin_requests(request: Request, kind: str = "", q: str = "",
+async def admin_requests(request: Request, kind: str = "", status: str = "", q: str = "",
                          limit: int = 30, offset: int = 0):
     session = require_perm(request, "requests.view")
     from . import storage as st
 
     kinds = [kind] if kind in REQUEST_KINDS else list(REQUEST_KINDS)
-    rows, total = st.list_records(kinds, limit=limit, offset=offset, q=q[:40])
-    meta = aa.request_meta_bulk([r["reference"] for r in rows])
+    limit = max(1, min(100, limit))
+    offset = max(0, offset)
+    if status in aa.REQUEST_STATUSES:
+        # workflow status lives in admin.db, so filter across the joined view
+        all_rows, _ = st.list_records(kinds, limit=1000, q=q[:40])
+        meta = aa.request_meta_bulk([r["reference"] for r in all_rows])
+        all_rows = [r for r in all_rows
+                    if meta.get(r["reference"], {}).get("status", "new") == status]
+        total = len(all_rows)
+        rows = all_rows[offset:offset + limit]
+    else:
+        rows, total = st.list_records(kinds, limit=limit, offset=offset, q=q[:40])
+        meta = aa.request_meta_bulk([r["reference"] for r in rows])
     out = []
     for r in rows:
         payload = _decrypt_payload(r)
@@ -427,6 +438,69 @@ async def admin_requests(request: Request, kind: str = "", q: str = "",
     return {"requests": out, "total": total,
             "statuses": list(aa.REQUEST_STATUSES),
             "statusCounts": counts}
+
+
+_EXPORT_TYPES = {
+    "csv": "text/csv; charset=utf-8",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+}
+
+
+def _export_items(records: list[dict]) -> list[dict]:
+    out = []
+    for r in records:
+        out.append({"reference": r["reference"], "kind": r["kind"],
+                    "createdAt": r["createdAt"], "payload": _decrypt_payload(r),
+                    "meta": aa.request_meta_get(r["reference"])})
+    return out
+
+
+def _export_response(items: list[dict], fmt: str, scope: str) -> Response:
+    from . import exports
+
+    rows = [exports.request_row(i) for i in items]
+    if fmt == "csv":
+        data = exports.to_csv(rows)
+    elif fmt == "xlsx":
+        data = exports.to_xlsx(rows)
+    else:
+        data = exports.to_pdf(items)
+    name = exports.export_filename(fmt, scope)
+    return Response(content=data, media_type=_EXPORT_TYPES[fmt], headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+# NOTE: declared before /api/admin/requests/{reference} so "export" is never
+# swallowed by the reference path parameter.
+@router.get("/api/admin/requests/export")
+async def admin_requests_export(request: Request, format: str = "csv", kind: str = "",
+                                status: str = "", q: str = "", refs: str = ""):
+    session = require_perm(request, "requests.view")
+    from . import storage as st
+
+    if format not in _EXPORT_TYPES:
+        raise HTTPException(status_code=400, detail="Export as csv, xlsx or pdf.")
+    if refs:
+        wanted = [r.strip().upper()[:20] for r in refs.split(",") if r.strip()][:200]
+        records = [rec for rec in (st.get_record(r) for r in wanted)
+                   if rec and rec["kind"] in REQUEST_KINDS]
+        scope = "selected"
+    else:
+        kinds = [kind] if kind in REQUEST_KINDS else list(REQUEST_KINDS)
+        records, _ = st.list_records(kinds, limit=1000, q=q[:40])
+        if status in aa.REQUEST_STATUSES:
+            meta = aa.request_meta_bulk([r["reference"] for r in records])
+            records = [r for r in records
+                       if meta.get(r["reference"], {}).get("status", "new") == status]
+        scope = kind or "all"
+    if not records:
+        raise HTTPException(status_code=404, detail="Nothing to export for this selection.")
+    items = _export_items(records)
+    aa.audit(session, "requests.exported", "requests",
+             {"format": format, "count": len(items), "scope": scope}, _ip_hash(request))
+    return _export_response(items, format, scope)
 
 
 @router.get("/api/admin/requests/{reference}")
@@ -501,6 +575,39 @@ async def admin_request_file(request: Request, reference: str):
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
+@router.get("/api/admin/requests/{reference}/export")
+async def admin_request_export(request: Request, reference: str, format: str = "pdf"):
+    session = require_perm(request, "requests.view")
+    from . import storage as st
+
+    if format not in _EXPORT_TYPES:
+        raise HTTPException(status_code=400, detail="Export as csv, xlsx or pdf.")
+    record = st.get_record(reference.strip().upper()[:20])
+    if record is None or record["kind"] not in REQUEST_KINDS:
+        raise HTTPException(status_code=404, detail="Unknown request reference.")
+    items = _export_items([record])
+    aa.audit(session, "request.exported", "requests",
+             {"reference": record["reference"], "format": format}, _ip_hash(request))
+    return _export_response(items, format, record["reference"].lower())
+
+
+@router.post("/api/admin/requests/{reference}/delete")
+async def admin_request_delete(request: Request, reference: str,
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "requests.manage")
+    require_csrf(request, session, x_csrf)
+    from . import storage as st
+
+    record = st.get_record(reference.strip().upper()[:20])
+    if record is None or record["kind"] not in REQUEST_KINDS:
+        raise HTTPException(status_code=404, detail="Unknown request reference.")
+    st.delete_record(record["reference"])
+    aa.request_meta_delete(record["reference"])
+    aa.audit(session, "request.deleted", "requests",
+             {"reference": record["reference"], "kind": record["kind"]}, _ip_hash(request))
+    return {"ok": True}
+
+
 # ---------------- Jasani console (Phase 1) ----------------
 # Status is read-only; refresh actions consume the documented daily budget
 # and are therefore permission-gated, CSRF-protected and audited. The
@@ -557,6 +664,271 @@ async def admin_jasani_products(request: Request, market: str = "ksa", q: str = 
     if market not in config.JASANI_HOSTS:
         raise HTTPException(status_code=400, detail="Unknown market.")
     return {"products": jasani.search_cached(market, q[:80])}
+
+
+# ---------------- media library & site assets (Phase 2) ----------------
+
+def _media_err(exc: Exception) -> HTTPException:
+    from .media import MediaError
+
+    if isinstance(exc, MediaError):
+        return HTTPException(status_code=400, detail=str(exc))
+    raise exc
+
+
+@router.get("/api/admin/media")
+async def admin_media(request: Request):
+    require_perm(request, "media.manage")
+    from . import media
+
+    return {"library": media.library_list(), "siteAssets": media.site_assets(),
+            "usage": media.storage_usage()}
+
+
+@router.post("/api/admin/media/upload")
+async def admin_media_upload(request: Request, file: UploadFile = File(...),
+                             alt: str = Form(default=""),
+                             x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "media.manage")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    data = await file.read()
+    try:
+        item = media.ingest_library_image(data, file.filename or "image", alt, session["email"])
+    except Exception as exc:
+        raise _media_err(exc)
+    aa.audit(session, "media.uploaded", "media",
+             {"file": item["file"], "name": item["name"], "bytes": item["bytes"]},
+             _ip_hash(request))
+    return {"item": item}
+
+
+class MediaAltBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    alt: str = Field(max_length=300)
+
+
+@router.post("/api/admin/media/{media_id}/alt")
+async def admin_media_alt(request: Request, media_id: int, body: MediaAltBody,
+                          x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "media.manage")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    if media.library_get(media_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown media item.")
+    media.library_set_alt(media_id, body.alt)
+    return {"ok": True}
+
+
+@router.post("/api/admin/media/{media_id}/delete")
+async def admin_media_delete(request: Request, media_id: int,
+                             x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "media.manage")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    item = media.library_get(media_id)
+    if item is None or not media.library_delete(media_id):
+        raise HTTPException(status_code=404, detail="Unknown media item.")
+    aa.audit(session, "media.deleted", "media", {"file": item["file"]}, _ip_hash(request))
+    return {"ok": True}
+
+
+@router.post("/api/admin/media/replace-asset")
+async def admin_media_replace(request: Request, path: str = Form(...),
+                              file: UploadFile = File(...),
+                              x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "media.manage")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    data = await file.read()
+    try:
+        result = media.replace_site_asset(path, data, session["email"])
+    except Exception as exc:
+        raise _media_err(exc)
+    aa.audit(session, "asset.replaced", "media", result, _ip_hash(request))
+    return result
+
+
+class AssetPathBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(max_length=300)
+
+
+@router.post("/api/admin/media/reset-asset")
+async def admin_media_reset(request: Request, body: AssetPathBody,
+                            x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "media.manage")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    try:
+        removed = media.reset_site_asset(body.path)
+    except Exception as exc:
+        raise _media_err(exc)
+    if not removed:
+        raise HTTPException(status_code=404, detail="This asset has no replacement to remove.")
+    aa.audit(session, "asset.reset", "media", {"path": body.path}, _ip_hash(request))
+    return {"ok": True}
+
+
+# ---------------- website & brand (Phase 2) ----------------
+
+@router.get("/api/admin/brand")
+async def admin_brand(request: Request):
+    require_perm(request, "brand.edit")
+    from . import media
+
+    tokens = media.get_brand_tokens()
+    return {"tokens": tokens, "defaults": {k: v["default"] for k, v in media.TOKEN_DEFS.items()},
+            "labels": {k: v["label"] for k, v in media.TOKEN_DEFS.items()},
+            "warnings": media.contrast_warnings(tokens),
+            "identity": media.identity_status(),
+            "hero": media.get_hero_config(), "heroRanges": media.HERO_RANGES,
+            "glb": media.glb_versions()}
+
+
+class BrandTokensBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict
+
+
+@router.post("/api/admin/brand/tokens")
+async def admin_brand_tokens(request: Request, body: BrandTokensBody,
+                             x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    try:
+        saved = media.save_brand_tokens(body.values)
+    except Exception as exc:
+        raise _media_err(exc)
+    warnings = media.contrast_warnings(media.get_brand_tokens())
+    aa.audit(session, "brand.tokens_saved", "brand", {"keys": sorted(saved)}, _ip_hash(request))
+    return {"saved": saved, "warnings": warnings}
+
+
+@router.post("/api/admin/brand/identity")
+async def admin_brand_identity(request: Request, slot: str = Form(...),
+                               file: UploadFile = File(...),
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    data = await file.read()
+    try:
+        media.set_identity(slot, data, session["email"])
+    except Exception as exc:
+        raise _media_err(exc)
+    aa.audit(session, "brand.identity_replaced", "brand", {"slot": slot}, _ip_hash(request))
+    return {"ok": True}
+
+
+class IdentitySlotBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    slot: str = Field(max_length=30)
+
+
+@router.post("/api/admin/brand/identity/reset")
+async def admin_brand_identity_reset(request: Request, body: IdentitySlotBody,
+                                     x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    try:
+        media.reset_identity(body.slot)
+    except Exception as exc:
+        raise _media_err(exc)
+    aa.audit(session, "brand.identity_reset", "brand", {"slot": body.slot}, _ip_hash(request))
+    return {"ok": True}
+
+
+# ---------------- 3D hero / GLB manager (Phase 2) ----------------
+
+@router.post("/api/admin/glb/upload")
+async def admin_glb_upload(request: Request, file: UploadFile = File(...),
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    data = await file.read()
+    try:
+        result = media.glb_upload(data, file.filename or "model.glb")
+    except Exception as exc:
+        raise _media_err(exc)
+    aa.audit(session, "glb.uploaded", "brand", result, _ip_hash(request))
+    return result
+
+
+class GlbFileBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    file: str = Field(max_length=120)
+
+
+@router.post("/api/admin/glb/activate")
+async def admin_glb_activate(request: Request, body: GlbFileBody,
+                             x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    try:
+        media.glb_activate(body.file)
+    except Exception as exc:
+        raise _media_err(exc)
+    aa.audit(session, "glb.activated", "brand", {"file": body.file}, _ip_hash(request))
+    return {"ok": True}
+
+
+@router.post("/api/admin/glb/reset")
+async def admin_glb_reset(request: Request, x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    media.glb_reset()
+    aa.audit(session, "glb.reset", "brand", {}, _ip_hash(request))
+    return {"ok": True}
+
+
+@router.post("/api/admin/glb/delete")
+async def admin_glb_delete(request: Request, body: GlbFileBody,
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    if not media.glb_delete_version(body.file):
+        raise HTTPException(status_code=404, detail="Unknown model version.")
+    aa.audit(session, "glb.version_deleted", "brand", {"file": body.file}, _ip_hash(request))
+    return {"ok": True}
+
+
+class HeroBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict
+
+
+@router.post("/api/admin/hero")
+async def admin_hero_save(request: Request, body: HeroBody,
+                          x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "brand.edit")
+    require_csrf(request, session, x_csrf)
+    from . import media
+
+    try:
+        saved = media.save_hero_config(body.values)
+    except Exception as exc:
+        raise _media_err(exc)
+    aa.audit(session, "hero.camera_saved", "brand", saved, _ip_hash(request))
+    return {"saved": saved}
 
 
 # ---------------- dashboard ----------------

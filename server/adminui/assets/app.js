@@ -39,6 +39,22 @@
   function apiErr(r) {
     toast((r.data && r.data.detail) || "That did not work — try again.", true);
   }
+  function apiUpload(path, formData) {
+    return fetch(path, {
+      method: "POST", headers: { "X-CSRF": me ? me.csrf : "" }, body: formData
+    }).then(function (res) {
+      if (res.status === 401) { location.replace("/admin"); throw new Error("signed out"); }
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        return { ok: res.ok, data: data };
+      });
+    });
+  }
+  function fmtBytes(n) {
+    if (!n) return "0 B";
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
   function can(perm) {
     return me && me.permissions.indexOf(perm) !== -1;
   }
@@ -59,7 +75,57 @@
     return k.replace(/([A-Z])/g, " $1").replace(/^./, function (c) { return c.toUpperCase(); });
   }
 
-  var reqState = { kind: "", q: "", offset: 0 };
+  var reqState = { kind: "", status: "", q: "", offset: 0, sel: {} };
+
+  /* ---------- floating row menu (⋮) ---------- */
+  var openMenuEl = null;
+  function closeMenu() {
+    if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; }
+  }
+  document.addEventListener("click", function (e) {
+    if (openMenuEl && !openMenuEl.contains(e.target)) closeMenu();
+  });
+  function showMenu(anchor, entries) {
+    closeMenu();
+    var pop = document.createElement("div");
+    pop.className = "menu-pop";
+    entries.forEach(function (en) {
+      if (en === "-") {
+        var sep = document.createElement("div");
+        sep.className = "menu-sep";
+        pop.appendChild(sep);
+        return;
+      }
+      if (en.heading) {
+        var h = document.createElement("div");
+        h.className = "menu-heading";
+        h.textContent = en.heading;
+        pop.appendChild(h);
+        return;
+      }
+      var el = document.createElement("button");
+      el.type = "button";
+      el.textContent = en.label;
+      if (en.danger) el.className = "menu-danger";
+      el.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        closeMenu();
+        en.action();
+      });
+      pop.appendChild(el);
+    });
+    document.body.appendChild(pop);
+    var r = anchor.getBoundingClientRect();
+    pop.style.top = Math.max(10, Math.min(window.innerHeight - pop.offsetHeight - 10, r.bottom + 4)) + "px";
+    pop.style.left = Math.max(10, r.right - pop.offsetWidth) + "px";
+    openMenuEl = pop;
+  }
+
+  function requestAction(ref, body, after) {
+    api("/api/admin/requests/" + encodeURIComponent(ref), body).then(function (r) {
+      r.ok ? (toast("Saved."), after && after()) : apiErr(r);
+    });
+  }
 
   /* ---------- request detail ---------- */
   function requestDetail(ref) {
@@ -158,47 +224,158 @@
 
     requests: function (param) {
       if (param) return requestDetail(param);
-      var kind = reqState.kind ? "&kind=" + encodeURIComponent(reqState.kind) : "";
-      var q = reqState.q ? "&q=" + encodeURIComponent(reqState.q) : "";
-      api("/api/admin/requests?limit=30&offset=" + reqState.offset + kind + q).then(function (r) {
+      var qs = "limit=30&offset=" + reqState.offset +
+        (reqState.kind ? "&kind=" + encodeURIComponent(reqState.kind) : "") +
+        (reqState.status ? "&status=" + encodeURIComponent(reqState.status) : "") +
+        (reqState.q ? "&q=" + encodeURIComponent(reqState.q) : "");
+      api("/api/admin/requests?" + qs).then(function (r) {
         if (!r.ok) return apiErr(r);
         var d = r.data;
         var counts = d.statusCounts || {};
+        var manage = can("requests.manage");
         var kindOpts = Object.keys(KIND_LABELS).map(function (k) {
           return '<option value="' + k + '"' + (reqState.kind === k ? " selected" : "") + ">" +
                  esc(KIND_LABELS[k]) + "</option>";
         }).join("");
+        var statusOpts = (d.statuses || []).map(function (s) {
+          return '<option value="' + s + '"' + (reqState.status === s ? " selected" : "") + ">" +
+                 esc(STATUS_LABELS[s] || s) + "</option>";
+        }).join("");
+        var selCount = Object.keys(reqState.sel).length;
         main.innerHTML =
           '<h1 class="admin-h1">Requests inbox</h1>' +
           '<p class="admin-sub">Customer submissions decrypt on view — every view is recorded in the activity log.</p>' +
           '<div class="stat-row">' + (d.statuses || []).map(function (s) {
-            return '<div class="stat-card"><b>' + esc(counts[s] || 0) + "</b><span>" + esc(STATUS_LABELS[s] || s) + "</span></div>";
+            return '<div class="stat-card stat-card--click" data-status="' + s + '"><b>' + esc(counts[s] || 0) +
+                   "</b><span>" + esc(STATUS_LABELS[s] || s) + "</span></div>";
           }).join("") + "</div>" +
           '<div class="admin-panel"><div class="req-filters">' +
           '<select id="rq-kind"><option value="">All types</option>' + kindOpts + "</select>" +
+          '<select id="rq-status"><option value="">All statuses</option>' + statusOpts + "</select>" +
           '<input id="rq-q" placeholder="Search reference (e.g. GV-XXXX)" maxlength="20" value="' + esc(reqState.q) + '">' +
-          '<span class="admin-inline-note">' + esc(d.total) + " request(s)</span></div>" +
+          '<span class="admin-inline-note">' + esc(d.total) + " request(s)</span>" +
+          '<span class="req-export">Export list: ' +
+          '<button class="btn btn--ghost btn--small" data-export="csv">CSV</button>' +
+          '<button class="btn btn--ghost btn--small" data-export="xlsx">Excel</button>' +
+          '<button class="btn btn--ghost btn--small" data-export="pdf">PDF</button></span></div>' +
+          '<div class="bulk-bar" id="bulk-bar"' + (selCount ? "" : " hidden") + '><b id="bulk-count">' + selCount +
+          "</b> selected — download " +
+          '<button class="btn btn--ghost btn--small" data-bulk="csv">CSV</button>' +
+          '<button class="btn btn--ghost btn--small" data-bulk="xlsx">Excel</button>' +
+          '<button class="btn btn--ghost btn--small" data-bulk="pdf">PDF</button>' +
+          '<button class="btn btn--ghost btn--small" id="bulk-clear">Clear selection</button></div>' +
           '<div class="table-scroll"><table class="admin-table"><thead>' +
-          "<tr><th>Received</th><th>Reference</th><th>Type</th><th>From</th><th>Status</th><th>Notes</th><th></th></tr></thead><tbody>" +
+          '<tr><th class="cell-check"><input type="checkbox" id="sel-all" aria-label="Select all"></th>' +
+          "<th>Received</th><th>Reference</th><th>Type</th><th>From</th><th>Status</th><th>Notes</th><th></th></tr></thead><tbody>" +
           (d.requests || []).map(function (x) {
             var who = [x.summary.fullName, x.summary.company].filter(Boolean).join(" · ");
-            return '<tr><td class="muted">' + esc(when(x.createdAt)) + "</td>" +
+            return '<tr data-ref="' + esc(x.reference) + '">' +
+              '<td class="cell-check"><input type="checkbox" data-sel' +
+              (reqState.sel[x.reference] ? " checked" : "") + ' aria-label="Select ' + esc(x.reference) + '"></td>' +
+              '<td class="muted">' + esc(when(x.createdAt)) + "</td>" +
               "<td><strong>" + esc(x.reference) + "</strong>" + (x.hasFile ? " 📎" : "") + "</td>" +
               '<td>' + esc(KIND_LABELS[x.kind] || x.kind) + (x.summary.items ? ' <span class="muted">(' + x.summary.items + " items)</span>" : "") + "</td>" +
               "<td>" + esc(who || "—") + "</td>" +
               "<td>" + statusPill(x.status) + "</td>" +
               '<td class="muted">' + (x.noteCount || 0) + "</td>" +
-              '<td><a class="btn btn--ghost btn--small" href="#requests/' + esc(x.reference) + '">Open</a></td></tr>';
+              '<td class="cell-actions"><a class="btn btn--ghost btn--small" href="#requests/' + esc(x.reference) + '">Open</a> ' +
+              '<button class="icon-btn dots-btn" data-dots aria-label="Actions for ' + esc(x.reference) + '">⋮</button></td></tr>';
           }).join("") + "</tbody></table></div>" +
           '<div class="admin-actions">' +
           (reqState.offset > 0 ? '<button class="btn btn--ghost btn--small" id="rq-prev">Newer</button>' : "") +
           (reqState.offset + 30 < d.total ? '<button class="btn btn--ghost btn--small" id="rq-next">Older</button>' : "") +
           "</div></div>";
+
+        function filterQs() {
+          return (reqState.kind ? "&kind=" + encodeURIComponent(reqState.kind) : "") +
+            (reqState.status ? "&status=" + encodeURIComponent(reqState.status) : "") +
+            (reqState.q ? "&q=" + encodeURIComponent(reqState.q) : "");
+        }
+        function updateBulk() {
+          var n = Object.keys(reqState.sel).length;
+          document.getElementById("bulk-bar").hidden = !n;
+          document.getElementById("bulk-count").textContent = n;
+        }
         document.getElementById("rq-kind").addEventListener("change", function () {
           reqState.kind = this.value; reqState.offset = 0; views.requests();
         });
+        document.getElementById("rq-status").addEventListener("change", function () {
+          reqState.status = this.value; reqState.offset = 0; views.requests();
+        });
         document.getElementById("rq-q").addEventListener("change", function () {
           reqState.q = this.value.trim(); reqState.offset = 0; views.requests();
+        });
+        main.querySelectorAll(".stat-card--click").forEach(function (card) {
+          card.addEventListener("click", function () {
+            reqState.status = reqState.status === card.getAttribute("data-status") ? "" : card.getAttribute("data-status");
+            reqState.offset = 0; views.requests();
+          });
+        });
+        main.querySelectorAll("[data-export]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            location.href = "/api/admin/requests/export?format=" + btn.getAttribute("data-export") + filterQs();
+          });
+        });
+        main.querySelectorAll("[data-bulk]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var refs = Object.keys(reqState.sel);
+            if (!refs.length) return;
+            location.href = "/api/admin/requests/export?format=" + btn.getAttribute("data-bulk") +
+              "&refs=" + encodeURIComponent(refs.join(","));
+          });
+        });
+        document.getElementById("bulk-clear").addEventListener("click", function () {
+          reqState.sel = {};
+          main.querySelectorAll("[data-sel], #sel-all").forEach(function (cb) { cb.checked = false; });
+          updateBulk();
+        });
+        document.getElementById("sel-all").addEventListener("change", function () {
+          var on = this.checked;
+          main.querySelectorAll("tr[data-ref]").forEach(function (row) {
+            var ref = row.getAttribute("data-ref");
+            row.querySelector("[data-sel]").checked = on;
+            if (on) reqState.sel[ref] = true; else delete reqState.sel[ref];
+          });
+          updateBulk();
+        });
+        main.querySelectorAll("tr[data-ref]").forEach(function (row) {
+          var ref = row.getAttribute("data-ref");
+          row.querySelector("[data-sel]").addEventListener("change", function () {
+            if (this.checked) reqState.sel[ref] = true; else delete reqState.sel[ref];
+            updateBulk();
+          });
+          row.querySelector("[data-dots]").addEventListener("click", function (e) {
+            e.stopPropagation();
+            var entries = [{ label: "View", action: function () { location.hash = "#requests/" + ref; } }];
+            if (manage) {
+              entries.push({ heading: "Set status" });
+              Object.keys(STATUS_LABELS).forEach(function (s) {
+                entries.push({ label: STATUS_LABELS[s], action: function () {
+                  requestAction(ref, { status: s }, views.requests);
+                } });
+              });
+              entries.push("-", { label: "Assign…", action: function () {
+                var who = prompt("Assign this request to:");
+                if (who !== null) requestAction(ref, { assignee: who.trim() }, views.requests);
+              } });
+            }
+            entries.push("-",
+              { label: "Download PDF", action: function () { location.href = "/api/admin/requests/" + encodeURIComponent(ref) + "/export?format=pdf"; } },
+              { label: "Download Excel", action: function () { location.href = "/api/admin/requests/" + encodeURIComponent(ref) + "/export?format=xlsx"; } },
+              { label: "Download CSV", action: function () { location.href = "/api/admin/requests/" + encodeURIComponent(ref) + "/export?format=csv"; } });
+            if (manage) {
+              entries.push("-", { label: "Delete request", danger: true, action: function () {
+                if (!confirm("Delete " + ref + " permanently? The submission and any attached file are removed and cannot be recovered.")) return;
+                api("/api/admin/requests/" + encodeURIComponent(ref) + "/delete", {}).then(function (r2) {
+                  if (!r2.ok) return apiErr(r2);
+                  delete reqState.sel[ref];
+                  toast("Request deleted.");
+                  views.requests();
+                });
+              } });
+            }
+            showMenu(this, entries);
+          });
         });
         var prev = document.getElementById("rq-prev"), next = document.getElementById("rq-next");
         if (prev) prev.addEventListener("click", function () { reqState.offset -= 30; views.requests(); });
@@ -285,6 +462,280 @@
         document.getElementById("jz-search").addEventListener("click", search);
         document.getElementById("jz-q").addEventListener("keydown", function (e) {
           if (e.key === "Enter") { e.preventDefault(); search(); }
+        });
+      });
+    },
+
+    media: function () {
+      api("/api/admin/media").then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        var u = d.usage || {};
+        main.innerHTML =
+          '<h1 class="admin-h1">Media</h1>' +
+          '<p class="admin-sub">Library uploads convert to WebP with metadata stripped. Site assets can be replaced safely — the original always stays and one click restores it.</p>' +
+          '<div class="stat-row">' +
+          '<div class="stat-card"><b>' + esc(fmtBytes(u.libraryBytes)) + "</b><span>Library storage</span></div>" +
+          '<div class="stat-card"><b>' + esc(fmtBytes(u.overridesBytes)) + "</b><span>Site replacements</span></div>" +
+          '<div class="stat-card"><b>' + esc(fmtBytes(u.glbBytes)) + "</b><span>3D model versions</span></div></div>" +
+          '<div class="admin-panel"><h2>Upload to library</h2><form class="admin-form" id="media-upload">' +
+          '<div><label for="mu-file">Image (PNG, JPEG or WebP · max 15 MB)</label><input id="mu-file" type="file" accept="image/png,image/jpeg,image/webp" required></div>' +
+          '<div><label for="mu-alt">Alt text (what the image shows)</label><input id="mu-alt" maxlength="300"></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Upload</button></div></form></div>' +
+          '<div class="admin-panel"><h2>Library (' + (d.library || []).length + ')</h2>' +
+          ((d.library || []).length ? '<div class="media-grid">' + d.library.map(function (m) {
+            return '<figure class="media-card" data-id="' + m.id + '">' +
+              '<img src="/media/' + esc(m.file) + '" alt="" loading="lazy">' +
+              '<figcaption><strong>' + esc(m.name) + "</strong>" +
+              '<span class="admin-inline-note">' + m.width + "×" + m.height + " · " + esc(fmtBytes(m.bytes)) + "</span>" +
+              '<input data-alt maxlength="300" placeholder="Alt text" value="' + esc(m.alt) + '">' +
+              '<span class="media-actions"><button class="btn btn--ghost btn--small" data-save-alt>Save alt</button>' +
+              '<button class="btn btn--ghost btn--small" data-copy>Copy URL</button>' +
+              '<button class="btn btn--ghost btn--small" data-del>Delete</button></span></figcaption></figure>';
+          }).join("") + "</div>" : '<p class="admin-inline-note">Nothing uploaded yet.</p>') + "</div>" +
+          '<div class="admin-panel"><h2>Site assets</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">Replacing keeps the same address, so every page using the file updates instantly.</p>' +
+          '<div class="table-scroll"><table class="admin-table"><thead><tr><th></th><th>File</th><th>Size</th><th>Used on</th><th>State</th><th></th></tr></thead><tbody>' +
+          (d.siteAssets || []).map(function (a) {
+            var img = a.ext === "glb" ? "" : '<img class="jz-thumb" src="/' + esc(a.path) + '?t=' + (a.overridden ? a.overrideBytes : 0) + '" alt="" loading="lazy">';
+            return '<tr data-path="' + esc(a.path) + '"><td>' + img + "</td>" +
+              "<td>" + esc(a.path.replace("assets/", "")) + "</td>" +
+              '<td class="muted">' + esc(fmtBytes(a.overridden ? a.overrideBytes : a.bytes)) + "</td>" +
+              '<td class="muted">' + esc((a.usedOn || []).slice(0, 3).join(", ")) + (a.usedOn && a.usedOn.length > 3 ? "…" : "") + "</td>" +
+              "<td>" + (a.overridden ? '<span class="badge-ok">replaced</span>' : '<span class="muted">original</span>') + "</td>" +
+              '<td class="cell-actions">' + (a.ext === "glb"
+                ? '<a class="btn btn--ghost btn--small" href="#brand">3D manager</a>'
+                : '<button class="btn btn--ghost btn--small" data-replace>Replace</button>' +
+                  (a.overridden ? ' <button class="btn btn--ghost btn--small" data-reset>Restore original</button>' : "")) +
+              "</td></tr>";
+          }).join("") + "</tbody></table></div></div>" +
+          '<input type="file" id="asset-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>';
+
+        document.getElementById("media-upload").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var f = document.getElementById("mu-file").files[0];
+          if (!f) return;
+          var fd = new FormData();
+          fd.append("file", f);
+          fd.append("alt", document.getElementById("mu-alt").value.trim());
+          apiUpload("/api/admin/media/upload", fd).then(function (r2) {
+            r2.ok ? (toast("Uploaded."), views.media()) : apiErr(r2);
+          });
+        });
+        main.querySelectorAll(".media-card").forEach(function (card) {
+          var id = card.getAttribute("data-id");
+          card.querySelector("[data-save-alt]").addEventListener("click", function () {
+            api("/api/admin/media/" + id + "/alt", { alt: card.querySelector("[data-alt]").value.trim() })
+              .then(function (r2) { r2.ok ? toast("Alt text saved.") : apiErr(r2); });
+          });
+          card.querySelector("[data-copy]").addEventListener("click", function () {
+            var url = location.origin + "/media/" + card.querySelector("img").getAttribute("src").split("/").pop();
+            (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+              .then(function () { toast("URL copied."); }, function () { prompt("Media URL:", url); });
+          });
+          card.querySelector("[data-del]").addEventListener("click", function () {
+            if (!confirm("Delete this image from the library?")) return;
+            api("/api/admin/media/" + id + "/delete", {}).then(function (r2) {
+              r2.ok ? views.media() : apiErr(r2);
+            });
+          });
+        });
+        var assetFile = document.getElementById("asset-file");
+        var pendingPath = null;
+        main.querySelectorAll("[data-replace]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            pendingPath = btn.closest("tr").getAttribute("data-path");
+            assetFile.value = "";
+            assetFile.click();
+          });
+        });
+        assetFile.addEventListener("change", function () {
+          var f = assetFile.files[0];
+          if (!f || !pendingPath) return;
+          var fd = new FormData();
+          fd.append("path", pendingPath);
+          fd.append("file", f);
+          apiUpload("/api/admin/media/replace-asset", fd).then(function (r2) {
+            r2.ok ? (toast("Asset replaced — the site now serves the new file."), views.media()) : apiErr(r2);
+          });
+        });
+        main.querySelectorAll("[data-reset]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var p = btn.closest("tr").getAttribute("data-path");
+            if (!confirm("Restore the original file for " + p + "?")) return;
+            api("/api/admin/media/reset-asset", { path: p }).then(function (r2) {
+              r2.ok ? (toast("Original restored."), views.media()) : apiErr(r2);
+            });
+          });
+        });
+      });
+    },
+
+    brand: function () {
+      api("/api/admin/brand").then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        var t = d.tokens || {};
+        var hero = d.hero || {};
+        var glb = d.glb || {};
+        var warn = (d.warnings || []).map(function (w) {
+          return '<p class="brand-warn">⚠ ' + esc(w) + "</p>";
+        }).join("");
+        main.innerHTML =
+          '<h1 class="admin-h1">Website &amp; Brand</h1>' +
+          '<p class="admin-sub">Colours, motion, identity assets and the 3D hero. Changes go live immediately and can always be reset.</p>' +
+          '<div class="admin-panel"><h2>Brand colours</h2><div id="brand-warnings">' + warn + "</div>" +
+          '<form class="admin-form" id="tokens-form">' +
+          Object.keys(d.labels || {}).map(function (k) {
+            return '<div><label for="tk-' + k + '">' + esc(d.labels[k]) + "</label>" +
+              '<span class="color-row"><input type="color" id="tk-' + k + '" value="' + esc(t[k] || d.defaults[k]) + '">' +
+              '<code>' + esc(t[k] || d.defaults[k]) + "</code></span></div>";
+          }).join("") +
+          '<div><label for="tk-radius">Corner radius scale (0–2 · 1 = default)</label>' +
+          '<input type="number" id="tk-radius" min="0" max="2" step="0.1" value="' + esc(t.radius == null ? 1 : t.radius) + '"></div>' +
+          '<div><label for="tk-motion">Animations</label><select id="tk-motion">' +
+          '<option value="on"' + (t.motion === false ? "" : " selected") + '>On (default)</option>' +
+          '<option value="off"' + (t.motion === false ? " selected" : "") + '>Off — calm site</option></select></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save brand</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" id="tokens-reset">Reset to defaults</button>' +
+          '<span class="admin-inline-note">Contrast is checked on save — warnings never block you.</span></div></form></div>' +
+          '<div class="admin-panel"><h2>Identity</h2><div class="table-scroll"><table class="admin-table"><thead>' +
+          "<tr><th>Asset</th><th>Preview</th><th>State</th><th></th></tr></thead><tbody>" +
+          (d.identity || []).map(function (s) {
+            var prev = s.kind === "pdflogo" ? '<span class="muted">used inside generated PDFs</span>'
+              : '<img class="ident-prev' + (s.slot === "logoDark" ? " ident-prev--dark" : "") + '" src="/' + esc(s.path) + '?t=' + Date.now() + '" alt="">';
+            return '<tr data-slot="' + esc(s.slot) + '"><td>' + esc(s.label) + "</td><td>" + prev + "</td>" +
+              "<td>" + (s.overridden ? '<span class="badge-ok">custom</span>' : '<span class="muted">default</span>') + "</td>" +
+              '<td class="cell-actions"><button class="btn btn--ghost btn--small" data-up>Upload new</button>' +
+              (s.overridden ? ' <button class="btn btn--ghost btn--small" data-rst>Reset</button>' : "") + "</td></tr>";
+          }).join("") + "</tbody></table></div>" +
+          '<input type="file" id="ident-file" hidden></div>' +
+          '<div class="admin-panel"><h2>3D hero model</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">Current model: ' +
+          (glb.overrideActive ? '<span class="badge-ok">custom upload</span>' : "original (" + esc(fmtBytes(glb.originalBytes)) + ")") +
+          ' · <a href="/" target="_blank" rel="noopener">preview homepage</a></p>' +
+          '<form class="admin-form" id="glb-upload-form">' +
+          '<div><label for="glb-file">Upload .glb (glTF 2.0 · max 40 MB)</label><input type="file" id="glb-file" accept=".glb" required></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Upload version</button>' +
+          (glb.overrideActive ? '<button class="btn btn--ghost btn--small" type="button" id="glb-reset">Switch back to original</button>' : "") +
+          "</div></form>" +
+          ((glb.versions || []).length
+            ? '<div class="table-scroll"><table class="admin-table"><thead><tr><th>Version</th><th>Size</th><th>Uploaded</th><th>State</th><th></th></tr></thead><tbody>' +
+              glb.versions.map(function (v) {
+                return '<tr data-file="' + esc(v.file) + '"><td>' + esc(v.file) + "</td><td class=\"muted\">" + esc(fmtBytes(v.bytes)) + "</td>" +
+                  '<td class="muted">' + esc(when(v.uploadedAt)) + "</td>" +
+                  "<td>" + (v.active ? '<span class="badge-ok">live</span>' : "") + "</td>" +
+                  '<td class="cell-actions">' + (v.active ? "" :
+                    '<button class="btn btn--ghost btn--small" data-glb-act>Make live</button> ' +
+                    '<button class="btn btn--ghost btn--small" data-glb-del>Delete</button>') + "</td></tr>";
+              }).join("") + "</tbody></table></div>" : "") + "</div>" +
+          '<div class="admin-panel"><h2>Hero camera</h2><form class="admin-form" id="hero-form">' +
+          '<div><label for="hc-camz">Distance (camz ' + d.heroRanges.camz[0] + "–" + d.heroRanges.camz[1] + ")</label>" +
+          '<input type="number" id="hc-camz" step="0.1" min="' + d.heroRanges.camz[0] + '" max="' + d.heroRanges.camz[1] + '" value="' + esc(hero.camz != null ? hero.camz : 5.2) + '"></div>' +
+          '<div><label for="hc-camy">Height (camy ' + d.heroRanges.camy[0] + "–" + d.heroRanges.camy[1] + ")</label>" +
+          '<input type="number" id="hc-camy" step="0.05" min="' + d.heroRanges.camy[0] + '" max="' + d.heroRanges.camy[1] + '" value="' + esc(hero.camy != null ? hero.camy : 0.9) + '"></div>' +
+          '<div><label for="hc-fov">Field of view (' + d.heroRanges.fov[0] + "–" + d.heroRanges.fov[1] + ")</label>" +
+          '<input type="number" id="hc-fov" step="1" min="' + d.heroRanges.fov[0] + '" max="' + d.heroRanges.fov[1] + '" value="' + esc(hero.fov != null ? hero.fov : 38) + '"></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save camera</button>' +
+          '<span class="admin-inline-note">Reload the homepage after saving to see the new framing.</span></div></form></div>';
+
+        document.getElementById("tokens-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var values = { radius: document.getElementById("tk-radius").value,
+                         motion: document.getElementById("tk-motion").value === "on" };
+          Object.keys(d.labels).forEach(function (k) {
+            values[k] = document.getElementById("tk-" + k).value;
+          });
+          api("/api/admin/brand/tokens", { values: values }).then(function (r2) {
+            if (!r2.ok) return apiErr(r2);
+            toast("Brand saved — live on the site now.");
+            document.getElementById("brand-warnings").innerHTML =
+              (r2.data.warnings || []).map(function (w) { return '<p class="brand-warn">⚠ ' + esc(w) + "</p>"; }).join("");
+          });
+        });
+        document.getElementById("tokens-reset").addEventListener("click", function () {
+          if (!confirm("Reset colours, radius and motion to the original design?")) return;
+          api("/api/admin/brand/tokens", { values: { motion: true } }).then(function (r2) {
+            r2.ok ? (toast("Brand reset."), views.brand()) : apiErr(r2);
+          });
+        });
+        var identFile = document.getElementById("ident-file");
+        var identSlot = null, identAccept = {
+          logoLight: "image/svg+xml", logoDark: "image/svg+xml",
+          favicon: "image/png,image/jpeg,image/webp", pdfLogo: "image/png,image/jpeg,image/webp"
+        };
+        main.querySelectorAll("[data-up]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            identSlot = btn.closest("tr").getAttribute("data-slot");
+            identFile.setAttribute("accept", identAccept[identSlot] || "");
+            identFile.value = "";
+            identFile.click();
+          });
+        });
+        identFile.addEventListener("change", function () {
+          var f = identFile.files[0];
+          if (!f || !identSlot) return;
+          var fd = new FormData();
+          fd.append("slot", identSlot);
+          fd.append("file", f);
+          apiUpload("/api/admin/brand/identity", fd).then(function (r2) {
+            r2.ok ? (toast("Updated."), views.brand()) : apiErr(r2);
+          });
+        });
+        main.querySelectorAll("[data-rst]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var slot = btn.closest("tr").getAttribute("data-slot");
+            if (!confirm("Reset this asset to the original?")) return;
+            api("/api/admin/brand/identity/reset", { slot: slot }).then(function (r2) {
+              r2.ok ? (toast("Reset."), views.brand()) : apiErr(r2);
+            });
+          });
+        });
+        document.getElementById("glb-upload-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var f = document.getElementById("glb-file").files[0];
+          if (!f) return;
+          var fd = new FormData();
+          fd.append("file", f);
+          toast("Uploading model…");
+          apiUpload("/api/admin/glb/upload", fd).then(function (r2) {
+            r2.ok ? (toast("Model uploaded — press “Make live” to publish it."), views.brand()) : apiErr(r2);
+          });
+        });
+        var glbReset = document.getElementById("glb-reset");
+        if (glbReset) glbReset.addEventListener("click", function () {
+          if (!confirm("Switch the homepage back to the original 3D model?")) return;
+          api("/api/admin/glb/reset", {}).then(function (r2) {
+            r2.ok ? (toast("Original model restored."), views.brand()) : apiErr(r2);
+          });
+        });
+        main.querySelectorAll("[data-glb-act]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var f = btn.closest("tr").getAttribute("data-file");
+            if (!confirm("Publish this model to the live homepage?")) return;
+            api("/api/admin/glb/activate", { file: f }).then(function (r2) {
+              r2.ok ? (toast("Model is live."), views.brand()) : apiErr(r2);
+            });
+          });
+        });
+        main.querySelectorAll("[data-glb-del]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var f = btn.closest("tr").getAttribute("data-file");
+            if (!confirm("Delete this uploaded version?")) return;
+            api("/api/admin/glb/delete", { file: f }).then(function (r2) {
+              r2.ok ? views.brand() : apiErr(r2);
+            });
+          });
+        });
+        document.getElementById("hero-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          api("/api/admin/hero", { values: {
+            camz: document.getElementById("hc-camz").value,
+            camy: document.getElementById("hc-camy").value,
+            fov: document.getElementById("hc-fov").value
+          } }).then(function (r2) {
+            r2.ok ? toast("Camera saved — reload the homepage to see it.") : apiErr(r2);
+          });
         });
       });
     },

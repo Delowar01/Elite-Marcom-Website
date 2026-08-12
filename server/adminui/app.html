@@ -7,8 +7,9 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="stylesheet" href="/styles.css?v=4">
-<link rel="stylesheet" href="/admin/assets/admin.css?v=2">
+<link rel="stylesheet" href="/admin/assets/admin.css?v=4">
 <script src="/js/theme-init.js?v=1"></script>
+<link rel="stylesheet" href="/theme-custom.css">
 </head>
 <body class="admin-body">
 <div class="admin-shell">
@@ -22,8 +23,8 @@
       <a href="#dashboard" data-view="dashboard">Dashboard</a>
       <a href="#requests" data-view="requests" data-perm="requests.view">Requests</a>
       <a href="#jasani" data-view="jasani" data-perm="jasani.view">Jasani</a>
-      <a href="#media" class="soon" aria-disabled="true">Media <span>Phase 2</span></a>
-      <a href="#brand" class="soon" aria-disabled="true">Website &amp; Brand <span>Phase 2</span></a>
+      <a href="#media" data-view="media" data-perm="media.manage">Media</a>
+      <a href="#brand" data-view="brand" data-perm="brand.edit">Website &amp; Brand</a>
       <a href="#pages" class="soon" aria-disabled="true">Pages <span>Phase 3</span></a>
       <a href="#seo" class="soon" aria-disabled="true">SEO <span>Phase 3</span></a>
       <a href="#editor" class="soon" aria-disabled="true">Visual editor <span>Phase 4</span></a>
@@ -54,6 +55,6 @@
   </main>
 </div>
 <div class="admin-toast" id="admin-toast" role="status" aria-live="polite" hidden></div>
-<script src="/admin/assets/app.js?v=2" defer></script>
+<script src="/admin/assets/app.js?v=4" defer></script>
 </body>
 </html>

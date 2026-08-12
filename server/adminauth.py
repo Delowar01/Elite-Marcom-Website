@@ -119,6 +119,18 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         updated_at INTEGER NOT NULL,
         updated_by TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS media (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        width INTEGER,
+        height INTEGER,
+        alt TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        created_by TEXT NOT NULL DEFAULT ''
+    );
     """)
     conn.commit()
 
@@ -444,6 +456,13 @@ def request_meta_set(reference: str, by: str, status: str | None = None,
              json.dumps(current["notes"], ensure_ascii=False), int(time.time()), by[:200]))
         conn.commit()
     return request_meta_get(reference)
+
+
+def request_meta_delete(reference: str) -> None:
+    with _lock:
+        conn = _connect()
+        conn.execute("DELETE FROM request_meta WHERE reference=?", (reference,))
+        conn.commit()
 
 
 def request_status_counts() -> dict[str, int]:
