@@ -420,3 +420,17 @@
   color-scheme: dark;
 }
 [data-theme="light"] .date-range input[type="date"] { color-scheme: light; }
+
+/* ---------- operations (Phase 6) ---------- */
+.ops-score { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-left: 10px; }
+.ops-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 10px; }
+.ops-check { display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); }
+.ops-check b { display: block; font-size: 0.86rem; }
+.ops-check span { color: var(--text-muted); font-size: 0.78rem; }
+.ops-dot { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; display: grid;
+  place-items: center; font-size: 0.72rem; font-weight: 800; color: #fff; }
+.ops-check--ok .ops-dot { background: #3fae72; }
+.ops-check--bad .ops-dot { background: #e0524e; }
+.ops-check--info .ops-dot { background: var(--violet-2); }
+.ops-check--bad { border-color: rgba(224, 82, 78, 0.5); }

@@ -144,6 +144,39 @@
     });
   })();
 
+  /* ---------- announcement bar (scheduled in the admin panel) ---------- */
+  (function announcement() {
+    fetch("/api/site/announcement").then(function (r) { return r.json(); }).then(function (a) {
+      if (!a || !a.show || !a.text) return;
+      var key = "em-announce-" + (a.id || "");
+      try { if (localStorage.getItem(key) === "1") return; } catch (e) { /* private mode */ }
+      var bar = doc.createElement("div");
+      bar.className = "em-announce" + (a.style === "quiet" ? " em-announce--quiet" : "");
+      bar.setAttribute("role", "region");
+      bar.setAttribute("aria-label", "Site announcement");
+      var msg = doc.createElement("span");
+      msg.textContent = a.text;
+      bar.appendChild(msg);
+      if (a.link) {
+        var link = doc.createElement("a");
+        link.href = a.link;
+        link.textContent = a.linkLabel || "Learn more";
+        bar.appendChild(link);
+      }
+      var close = doc.createElement("button");
+      close.type = "button";
+      close.className = "em-announce__close";
+      close.setAttribute("aria-label", "Dismiss announcement");
+      close.innerHTML = "&times;";
+      close.addEventListener("click", function () {
+        bar.remove();
+        try { localStorage.setItem(key, "1"); } catch (e) { /* ignore */ }
+      });
+      bar.appendChild(close);
+      doc.body.insertBefore(bar, doc.body.firstChild);
+    }).catch(function () { /* the site never depends on this */ });
+  })();
+
   /* ---------- scroll reveals ---------- */
   (function initReveals() {
     var items = doc.querySelectorAll(".reveal");

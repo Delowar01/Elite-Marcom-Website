@@ -333,12 +333,46 @@ def bake_page(page: str, lang: str = "en") -> str:
 def _sitemap_xml() -> str:
     today = time.strftime("%Y-%m-%d")
     urls = []
-    for page, cfg in PAGES.items():
-        loc = SITE_ORIGIN + ("/" if page == "index" else f"/{cfg['file']}")
-        urls.append(f"  <url><loc>{loc}</loc><lastmod>{today}</lastmod></url>")
+    prefixes = [""] + (["ar/"] if "ar" in languages() else [])
+    for prefix in prefixes:
+        for page, cfg in PAGES.items():
+            tail = prefix if page == "index" else f"{prefix}{cfg['file']}"
+            urls.append(f"  <url><loc>{SITE_ORIGIN}/{tail}</loc>"
+                        f"<lastmod>{today}</lastmod></url>")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
             + "\n".join(urls) + "\n</urlset>\n")
+
+
+def languages() -> list[str]:
+    from . import adminauth as aa
+
+    langs = aa.setting_get("site.languages") or ["en"]
+    return [l for l in langs if l in LANGS] or ["en"]
+
+
+_AR_SWITCH = ('<a class="lang-switch" href="{href}" hreflang="{lang}" lang="{lang}">{label}</a>')
+
+
+def localize(raw: str, lang: str) -> str:
+    """Turn a baked page into its Arabic edition: RTL document, /ar/ links,
+    and a language switch in the header. English pages get the switch too."""
+    enabled = languages()
+    switch = ""
+    if len(enabled) > 1:
+        switch = (_AR_SWITCH.format(href="/", lang="en", label="English") if lang == "ar"
+                  else _AR_SWITCH.format(href="/ar/", lang="ar", label="العربية"))
+    if lang == "ar":
+        raw = raw.replace('<html lang="en"', '<html lang="ar" dir="rtl"', 1)
+        # keep internal navigation inside the Arabic edition
+        raw = re.sub(r'href="/([a-z0-9-]+\.html)"', r'href="/ar/\1"', raw)
+        raw = re.sub(r'href="/"(\s|>)', r'href="/ar/"\1', raw)
+        raw = raw.replace('<link rel="canonical" href="https://www.elitemarcom.com/',
+                          '<link rel="canonical" href="https://www.elitemarcom.com/ar/')
+    if switch:
+        raw = raw.replace('<button class="icon-btn theme-toggle"',
+                          switch + '\n      <button class="icon-btn theme-toggle"', 1)
+    return raw
 
 
 def publish_all(by: str, note: str = "") -> dict:
@@ -346,12 +380,25 @@ def publish_all(by: str, note: str = "") -> dict:
 
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
     count = 0
+    langs = languages()
     for page, cfg in PAGES.items():
-        baked = bake_page(page, "en")
+        baked = localize(bake_page(page, "en"), "en")
         tmp = PUBLISHED_DIR / (cfg["file"] + ".tmp")
         tmp.write_text(baked, encoding="utf-8")
         tmp.replace(PUBLISHED_DIR / cfg["file"])
         count += 1
+    if "ar" in langs:
+        ar_dir = PUBLISHED_DIR / "ar"
+        ar_dir.mkdir(parents=True, exist_ok=True)
+        for page, cfg in PAGES.items():
+            baked = localize(bake_page(page, "ar"), "ar")
+            tmp = ar_dir / (cfg["file"] + ".tmp")
+            tmp.write_text(baked, encoding="utf-8")
+            tmp.replace(ar_dir / cfg["file"])
+            count += 1
+    else:
+        for stale in (PUBLISHED_DIR / "ar").glob("*.html"):
+            stale.unlink(missing_ok=True)
     (PUBLISHED_DIR / "sitemap.xml").write_text(_sitemap_xml(), encoding="utf-8")
     from . import design
 
@@ -417,8 +464,13 @@ def unpublish_all() -> bool:
     """Serve the original git HTML again (drafts are kept)."""
     if not PUBLISHED_DIR.exists():
         return False
-    for f in PUBLISHED_DIR.glob("*"):
+    for f in PUBLISHED_DIR.glob("*.html"):
         f.unlink(missing_ok=True)
+    (PUBLISHED_DIR / "sitemap.xml").unlink(missing_ok=True)
+    ar_dir = PUBLISHED_DIR / "ar"
+    if ar_dir.exists():
+        for f in ar_dir.glob("*.html"):
+            f.unlink(missing_ok=True)
     return True
 
 
@@ -428,9 +480,14 @@ _PUBLISHABLE = {cfg["file"] for cfg in PAGES.values()} | {"sitemap.xml"}
 def published_file(path: str) -> Path | None:
     """Called by the static server; must stay cheap and traversal-safe."""
     name = "index.html" if path in ("", ".", "/") else path
+    prefix = ""
+    if name.startswith("ar/") or name == "ar":
+        name = name[3:] or "index.html"
+        name = name or "index.html"
+        prefix = "ar/"
     if name not in _PUBLISHABLE:
         return None
-    p = PUBLISHED_DIR / name
+    p = PUBLISHED_DIR / prefix / name
     return p if p.is_file() else None
 
 

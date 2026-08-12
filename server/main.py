@@ -789,6 +789,20 @@ async def giveaways_notification(request: Request, body: GiveawayNotification):
 # ---------------- retention cleanup ----------------
 
 @app.on_event("startup")
+async def start_schedule_task():
+    async def loop():
+        while True:
+            try:
+                from . import backup
+
+                backup.run_due_publish()
+            except Exception:
+                pass
+            await asyncio.sleep(60)
+    asyncio.get_event_loop().create_task(loop())
+
+
+@app.on_event("startup")
 async def start_cleanup_task():
     async def loop():
         while True:
@@ -907,6 +921,30 @@ async def media_file(name: str):
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(path, media_type="image/webp",
                         headers={"Cache-Control": "public, max-age=604800, immutable"})
+
+
+@app.get("/api/site/announcement")
+async def site_announcement():
+    """Site-wide notice with an optional schedule window (admin-managed)."""
+    from . import adminauth
+
+    try:
+        enabled = bool(adminauth.setting_get("announce.enabled", False))
+        text = str(adminauth.setting_get("announce.text", "") or "")
+        starts = int(adminauth.setting_get("announce.startsAt", 0) or 0)
+        ends = int(adminauth.setting_get("announce.endsAt", 0) or 0)
+        link = str(adminauth.setting_get("announce.link", "") or "")
+        label = str(adminauth.setting_get("announce.linkLabel", "") or "")
+        style = str(adminauth.setting_get("announce.style", "brand") or "brand")
+    except Exception:
+        return JSONResponse({"show": False}, headers={"Cache-Control": "public, max-age=60"})
+    now = time.time()
+    show = bool(enabled and text and (not starts or now >= starts) and (not ends or now <= ends))
+    return JSONResponse(
+        {"show": show, "text": text if show else "", "link": link if show else "",
+         "linkLabel": label, "style": style,
+         "id": str(abs(hash((text, link))) % 10 ** 8) if show else ""},
+        headers={"Cache-Control": "public, max-age=60"})
 
 
 @app.get("/api/site/hero")

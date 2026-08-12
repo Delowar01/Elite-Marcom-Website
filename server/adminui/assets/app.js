@@ -1927,6 +1927,169 @@
       });
     },
 
+    operations: function () {
+      api("/api/admin/operations").then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        var a = d.announcement || {};
+        function localInput(ts) {
+          if (!ts) return "";
+          var dt = new Date(ts * 1000);
+          var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+          return dt.getFullYear() + "-" + pad(dt.getMonth() + 1) + "-" + pad(dt.getDate()) +
+                 "T" + pad(dt.getHours()) + ":" + pad(dt.getMinutes());
+        }
+        function toTs(value) {
+          if (!value) return 0;
+          var ms = new Date(value).getTime();
+          return isNaN(ms) ? 0 : Math.round(ms / 1000);
+        }
+        main.innerHTML =
+          '<h1 class="admin-h1">Operations</h1>' +
+          '<p class="admin-sub">Backups, scheduled publishing, the announcement bar and a health check of the whole site.</p>' +
+          '<div class="admin-panel"><h2>Security centre <span class="ops-score">' +
+          esc(d.score) + "/" + esc(d.total) + " security checks passing" +
+          (d.advisories ? " · " + esc(d.advisories) + " suggestion(s)" : "") + "</span></h2>" +
+          '<div class="ops-checks">' + (d.checks || []).map(function (c) {
+            return '<div class="ops-check ops-check--' + (c.ok ? "ok" : (c.weight === "info" ? "info" : "bad")) + '">' +
+              '<span class="ops-dot">' + (c.ok ? "✓" : (c.weight === "info" ? "i" : "!")) + "</span>" +
+              "<div><b>" + esc(c.label) + "</b><span>" + esc(c.detail) + "</span></div></div>";
+          }).join("") + "</div>" +
+          '<div class="stat-row" style="margin-top:18px;">' +
+          '<div class="stat-card"><b>' + esc(d.users.active) + "</b><span>Active accounts</span></div>" +
+          '<div class="stat-card"><b>' + esc(d.sessions) + "</b><span>Open sessions</span></div>" +
+          '<div class="stat-card"><b>' + esc((d.failedLogins || []).length) + "</b><span>Failed sign-ins (7 days)</span></div>" +
+          '<div class="stat-card"><b>' + esc(d.retention.submissions) + "</b><span>Days requests are kept</span></div></div>" +
+          ((d.failedLogins || []).length
+            ? '<div class="table-scroll"><table class="admin-table"><thead><tr><th>When</th><th>Account</th><th>Reason</th></tr></thead><tbody>' +
+              d.failedLogins.map(function (f) {
+                return '<tr><td class="muted">' + esc(when(f.ts)) + "</td><td>" + esc(f.email) +
+                  '</td><td class="muted">' + esc(f.detail) + "</td></tr>";
+              }).join("") + "</tbody></table></div>" : "") + "</div>" +
+
+          '<div class="admin-panel"><h2>Backups</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">A backup holds all page content, design changes, settings, rental items and media files. ' +
+          'Customer submissions are deliberately excluded — they are encrypted personal data with their own retention rules. ' +
+          (d.lastBackup ? "Last download: " + esc(when(d.lastBackup)) + "." : "No backup downloaded yet.") + "</p>" +
+          '<div class="admin-actions" style="margin-top:0;"><a class="btn btn--primary btn--small" href="/api/admin/backup">Download backup</a></div>' +
+          '<h3 class="ins-h3" style="margin-top:20px;">Restore from a backup</h3>' +
+          '<form class="admin-form" id="restore-form">' +
+          '<div><label for="rs-file">Backup file (.zip)</label><input type="file" id="rs-file" accept=".zip" required></div>' +
+          '<div><label for="rs-confirm">Type RESTORE to confirm</label><input id="rs-confirm" placeholder="RESTORE" maxlength="10"></div>' +
+          '<div class="full" id="rs-preview"></div>' +
+          '<div class="full admin-actions"><button class="btn btn--ghost btn--small" type="button" id="rs-check">Check file</button>' +
+          '<button class="btn btn--ghost btn--small" type="submit">Restore</button>' +
+          '<span class="admin-inline-note">Restoring replaces current content, design and settings. Admin accounts and customer requests are untouched.</span></div></form></div>' +
+
+          '<div class="admin-panel"><h2>Scheduled publishing</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">' +
+          (d.schedule && d.schedule.at
+            ? "Publishing automatically on <b>" + esc(when(d.schedule.at)) + "</b> (set by " + esc(d.schedule.by) + ")."
+            : "Nothing scheduled — publishing happens only when someone presses Publish.") +
+          (d.lastPublish ? " Last publish: " + esc(when(d.lastPublish.ts)) + "." : "") + "</p>" +
+          '<form class="admin-form" id="sched-form">' +
+          '<div><label for="sc-at">Publish at</label><input type="datetime-local" id="sc-at" value="' +
+          esc(localInput(d.schedule ? d.schedule.at : 0)) + '"></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Schedule publish</button>' +
+          (d.schedule && d.schedule.at ? '<button class="btn btn--ghost btn--small" type="button" id="sc-clear">Cancel schedule</button>' : "") +
+          '<span class="admin-inline-note">Your saved drafts go live at that moment — nothing publishes on its own otherwise.</span></div></form></div>' +
+
+          '<div class="admin-panel"><h2>Announcement bar</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">A dismissible strip at the top of every page — for Ramadan collections, event presence or opening hours.</p>' +
+          '<form class="admin-form" id="ann-form">' +
+          '<div><label for="an-enabled">Show the bar</label><select id="an-enabled">' +
+          '<option value="off"' + (a["announce.enabled"] ? "" : " selected") + ">Off</option>" +
+          '<option value="on"' + (a["announce.enabled"] ? " selected" : "") + ">On</option></select></div>" +
+          '<div><label for="an-style">Style</label><select id="an-style">' +
+          '<option value="brand"' + (a["announce.style"] === "quiet" ? "" : " selected") + ">Brand gradient</option>" +
+          '<option value="quiet"' + (a["announce.style"] === "quiet" ? " selected" : "") + ">Quiet</option></select></div>" +
+          '<div class="full"><label for="an-text">Message</label><input id="an-text" maxlength="200" value="' +
+          esc(a["announce.text"] || "") + '" placeholder="Visit us at Cityscape, stand B21"></div>' +
+          '<div><label for="an-link">Link (optional)</label><input id="an-link" maxlength="200" value="' +
+          esc(a["announce.link"] || "") + '" placeholder="/contact.html"></div>' +
+          '<div><label for="an-label">Link label</label><input id="an-label" maxlength="60" value="' +
+          esc(a["announce.linkLabel"] || "") + '" placeholder="Book a meeting"></div>' +
+          '<div><label for="an-from">Show from (optional)</label><input type="datetime-local" id="an-from" value="' +
+          esc(localInput(a["announce.startsAt"])) + '"></div>' +
+          '<div><label for="an-to">Show until (optional)</label><input type="datetime-local" id="an-to" value="' +
+          esc(localInput(a["announce.endsAt"])) + '"></div>' +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save announcement</button>' +
+          '<a class="btn btn--ghost btn--small" href="/" target="_blank" rel="noopener">View site</a></div></form></div>' +
+
+          '<div class="admin-panel"><h2>Languages</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:12px;">English is always published. Turning Arabic on publishes a right-to-left Arabic edition at /ar/ and adds a language switch to the header — fill the Arabic text in Pages or the Visual editor first.</p>' +
+          '<form class="admin-form" id="lang-form"><div><label for="lg-mode">Published languages</label>' +
+          '<select id="lg-mode"><option value="en"' + (d.languages.indexOf("ar") === -1 ? " selected" : "") + ">English only</option>" +
+          '<option value="en,ar"' + (d.languages.indexOf("ar") !== -1 ? " selected" : "") + ">English + Arabic</option></select></div>" +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save languages</button>' +
+          '<span class="admin-inline-note">Press Publish afterwards for the change to reach the live site.</span></div></form></div>';
+
+        document.getElementById("rs-check").addEventListener("click", function () {
+          var f = document.getElementById("rs-file").files[0];
+          if (!f) { toast("Choose a backup file first.", true); return; }
+          var fd = new FormData();
+          fd.append("file", f);
+          apiUpload("/api/admin/backup/inspect", fd).then(function (r2) {
+            if (!r2.ok) return apiErr(r2);
+            var c = r2.data.counts;
+            document.getElementById("rs-preview").innerHTML =
+              '<p class="admin-inline-note">Backup from <b>' + esc(r2.data.manifest.createdAtHuman) +
+              "</b> — " + esc(c.content) + " content entries, " + esc(c.designs) + " design records, " +
+              esc(c.rentals) + " rental items, " + esc(c.media) + " media files.</p>";
+          });
+        });
+        document.getElementById("restore-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var f = document.getElementById("rs-file").files[0];
+          if (!f) { toast("Choose a backup file first.", true); return; }
+          if (!confirm("Restore this backup? Current content, design and settings will be replaced.")) return;
+          var fd = new FormData();
+          fd.append("file", f);
+          fd.append("confirm", document.getElementById("rs-confirm").value.trim());
+          apiUpload("/api/admin/backup/restore", fd).then(function (r2) {
+            r2.ok ? (toast("Backup restored — review the pages, then publish."), views.operations()) : apiErr(r2);
+          });
+        });
+        document.getElementById("sched-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var at = toTs(document.getElementById("sc-at").value);
+          if (!at) { toast("Pick a date and time.", true); return; }
+          api("/api/admin/schedule-publish", { at: at }).then(function (r2) {
+            r2.ok ? (toast("Publishing scheduled."), views.operations()) : apiErr(r2);
+          });
+        });
+        var scClear = document.getElementById("sc-clear");
+        if (scClear) scClear.addEventListener("click", function () {
+          api("/api/admin/schedule-publish", { at: 0 }).then(function (r2) {
+            r2.ok ? (toast("Schedule cancelled."), views.operations()) : apiErr(r2);
+          });
+        });
+        document.getElementById("ann-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          api("/api/admin/settings", { values: {
+            "announce.enabled": document.getElementById("an-enabled").value === "on",
+            "announce.text": document.getElementById("an-text").value.trim(),
+            "announce.link": document.getElementById("an-link").value.trim(),
+            "announce.linkLabel": document.getElementById("an-label").value.trim(),
+            "announce.style": document.getElementById("an-style").value,
+            "announce.startsAt": toTs(document.getElementById("an-from").value),
+            "announce.endsAt": toTs(document.getElementById("an-to").value)
+          } }).then(function (r2) {
+            r2.ok ? (toast("Announcement saved."), views.operations()) : apiErr(r2);
+          });
+        });
+        document.getElementById("lang-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          api("/api/admin/settings", { values: {
+            "site.languages": document.getElementById("lg-mode").value.split(","),
+            "site.defaultLanguage": "en"
+          } }).then(function (r2) {
+            r2.ok ? (toast("Languages saved — publish to apply."), views.operations()) : apiErr(r2);
+          });
+        });
+      });
+    },
+
     users: function () {
       api("/api/admin/users").then(function (r) {
         if (!r.ok) return apiErr(r);

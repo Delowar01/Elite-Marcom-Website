@@ -50,5 +50,9 @@ documentation). Non-negotiable rules from it:
 - Site Insights is first-party and cookieless: no raw IP or user-agent is
   stored, visitor keys use a salt that rotates daily, and GA4 only loads when
   an admin sets a measurement id (`analytics.ga4Id`).
+- Backups (Operations) carry content, design, settings, rentals and media —
+  never customer submissions, which stay encrypted with their own retention.
+- Arabic publishes a full RTL edition under `/ar/` when `site.languages`
+  includes `ar`; both editions are baked by the same publish action.
 - Workflow: develop on `claude/markdown-file-instructions-y9jr50`, push, and
   fast-forward `main` (the user pulls from `main` to test locally).

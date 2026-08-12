@@ -1146,3 +1146,172 @@ def test_insights_custom_date_range_and_reports():
 
     actions = {e["action"] for e in aa.audit_list(limit=10)}
     assert "insights.exported" in actions
+
+
+# ---------------- Phase 6: backups, schedule, announcements, Arabic ----------------
+
+def test_backup_download_inspect_and_restore():
+    import io as _io
+    import zipfile as _zip
+
+    me = client.get("/api/admin/me").json()
+    # put something distinctive in the panel first
+    client.post("/api/admin/pages/index",
+                json={"lang": "en", "values": {"hero.title1": "Backup marker"}},
+                headers={"X-CSRF": me["csrf"]})
+    res = client.get("/api/admin/backup")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    blob = res.content
+    with _zip.ZipFile(_io.BytesIO(blob)) as z:
+        names = z.namelist()
+        assert "manifest.json" in names and "data.json" in names
+        data = json.loads(z.read("data.json"))
+    assert any(r["key"] == "hero.title1" and r["value"] == "Backup marker"
+               for r in data["content"])
+    # customer submissions must never travel in an operational backup
+    dump = blob.decode("latin-1")
+    assert "Amira Hassan" not in dump and "falconevents" not in dump
+
+    # change content, then restore the backup and watch it come back
+    client.post("/api/admin/pages/index",
+                json={"lang": "en", "values": {"hero.title1": "Changed after backup"}},
+                headers={"X-CSRF": me["csrf"]})
+    fields = {f["key"]: f for f in client.get("/api/admin/pages/index").json()["regions"]}
+    assert fields["hero.title1"]["value"] == "Changed after backup"
+
+    inspect = client.post("/api/admin/backup/inspect",
+                          files={"file": ("b.zip", blob, "application/zip")},
+                          headers={"X-CSRF": me["csrf"]})
+    assert inspect.status_code == 200 and inspect.json()["counts"]["content"] >= 1
+
+    no_confirm = client.post("/api/admin/backup/restore",
+                             files={"file": ("b.zip", blob, "application/zip")},
+                             data={"confirm": "yes"}, headers={"X-CSRF": me["csrf"]})
+    assert no_confirm.status_code == 400
+
+    ok = client.post("/api/admin/backup/restore",
+                     files={"file": ("b.zip", blob, "application/zip")},
+                     data={"confirm": "RESTORE"}, headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200, ok.text
+    fields = {f["key"]: f for f in client.get("/api/admin/pages/index").json()["regions"]}
+    assert fields["hero.title1"]["value"] == "Backup marker"
+
+    junk = client.post("/api/admin/backup/restore",
+                       files={"file": ("x.zip", b"not a zip at all", "application/zip")},
+                       data={"confirm": "RESTORE"}, headers={"X-CSRF": me["csrf"]})
+    assert junk.status_code == 400
+    actions = {e["action"] for e in aa.audit_list(limit=12)}
+    assert "backup.downloaded" in actions and "backup.restored" in actions
+
+
+def test_scheduled_publish_runs_when_due():
+    from server import backup, content
+
+    me = client.get("/api/admin/me").json()
+    future = int(time.time()) + 3600
+    res = client.post("/api/admin/schedule-publish", json={"at": future},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200 and res.json()["at"] == future
+    assert client.get("/api/admin/operations").json()["schedule"]["at"] == future
+    assert backup.run_due_publish() is None       # not due yet, nothing published
+    past = client.post("/api/admin/schedule-publish", json={"at": int(time.time()) - 600},
+                       headers={"X-CSRF": me["csrf"]})
+    assert past.status_code == 400                 # the past is refused up front
+    aa.setting_set("publish.scheduledAt", int(time.time()) - 5)   # simulate the moment arriving
+    result = backup.run_due_publish()
+    assert result and result["pages"] >= 11
+    assert "Backup marker" in client.get("/").text
+    assert backup.get_schedule()["at"] == 0        # fires once, then clears
+    actions = {e["action"] for e in aa.audit_list(limit=8)}
+    assert "site.published_scheduled" in actions
+    client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+
+
+def test_announcement_bar_schedule_window():
+    me = client.get("/api/admin/me").json()
+    assert client.get("/api/site/announcement").json()["show"] is False
+    ok = client.post("/api/admin/settings", json={"values": {
+        "announce.enabled": True, "announce.text": "Visit us at Cityscape, stand B21",
+        "announce.link": "/contact.html", "announce.linkLabel": "Book a meeting",
+        "announce.style": "brand"}}, headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    live = client.get("/api/site/announcement").json()
+    assert live["show"] is True and "Cityscape" in live["text"] and live["id"]
+    # a future window hides it again
+    client.post("/api/admin/settings",
+                json={"values": {"announce.startsAt": int(time.time()) + 86400}},
+                headers={"X-CSRF": me["csrf"]})
+    assert client.get("/api/site/announcement").json()["show"] is False
+    client.post("/api/admin/settings", json={"values": {"announce.startsAt": 0,
+                                                        "announce.endsAt": int(time.time()) - 10}},
+                headers={"X-CSRF": me["csrf"]})
+    assert client.get("/api/site/announcement").json()["show"] is False
+    # off-site links are refused
+    bad = client.post("/api/admin/settings",
+                      json={"values": {"announce.link": "javascript:alert(1)"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    client.post("/api/admin/settings", json={"values": {"announce.enabled": False,
+                                                        "announce.endsAt": 0}},
+                headers={"X-CSRF": me["csrf"]})
+
+
+def test_arabic_edition_publishes_rtl_pages():
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/pages/index",
+                json={"lang": "ar", "values": {"hero.title1": "تجارب استثنائية"}},
+                headers={"X-CSRF": me["csrf"]})
+    # English only: no Arabic edition, no switch
+    client.post("/api/admin/settings", json={"values": {"site.languages": ["en"]}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert client.get("/ar/index.html").status_code == 404
+    assert "lang-switch" not in client.get("/").text
+
+    # switch Arabic on and publish
+    client.post("/api/admin/settings", json={"values": {"site.languages": ["en", "ar"]}},
+                headers={"X-CSRF": me["csrf"]})
+    pub = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert pub.status_code == 200 and pub.json()["pages"] >= 22   # both editions
+    ar = client.get("/ar/index.html")
+    assert ar.status_code == 200
+    assert 'lang="ar"' in ar.text and 'dir="rtl"' in ar.text
+    assert "تجارب استثنائية" in ar.text
+    assert 'href="/ar/about.html"' in ar.text        # navigation stays in the Arabic edition
+    assert 'hreflang="en"' in ar.text                # switch back to English
+    assert client.get("/ar/").status_code == 200
+    english = client.get("/").text
+    assert 'lang="en"' in english and 'hreflang="ar"' in english
+    assert "تجارب" not in english
+    sitemap = client.get("/sitemap.xml").text
+    assert "/ar/about.html" in sitemap
+    # turning Arabic off removes the edition on the next publish
+    client.post("/api/admin/settings", json={"values": {"site.languages": ["en"]}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert client.get("/ar/index.html").status_code == 404
+    client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+
+
+def test_security_centre_and_operations_permissions():
+    res = client.get("/api/admin/operations")
+    assert res.status_code == 200
+    d = res.json()
+    labels = {c["label"] for c in d["checks"]}
+    assert {"HTTPS origin", "Bot protection", "Activity log integrity"} <= labels
+    gates = [c for c in d["checks"] if c["weight"] != "info"]
+    assert d["total"] == len(gates) and 0 <= d["score"] <= d["total"]
+    assert d["advisories"] == sum(1 for c in d["checks"] if c["weight"] == "info" and not c["ok"])
+    assert next(c for c in d["checks"] if c["label"] == "Activity log integrity")["ok"] is True
+    assert d["users"]["owners"] >= 1 and d["sessions"] >= 1
+    # no secret value is ever echoed
+    blob = json.dumps(d)
+    assert "JASANI" not in blob.upper() or "token is configured" in blob
+    for secret in (aa.config.EM_DATA_KEY, aa.config.EM_ADMIN_SESSION_SECRET):
+        assert secret not in blob
+    # only settings managers may see it
+    editor = TestClient(app)
+    sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
+    assert editor.get("/api/admin/operations").status_code == 403
+    assert editor.get("/api/admin/backup").status_code == 403

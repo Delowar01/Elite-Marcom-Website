@@ -347,6 +347,13 @@ SETTINGS_KEYS = {
     "analytics.enabled": bool,       # first-party measurement on/off
     "analytics.ga4Id": str,          # optional GA4 measurement id (G-XXXXXXX)
     "analytics.retentionDays": int,  # how long raw events are kept
+    "announce.enabled": bool,        # site-wide announcement bar
+    "announce.text": str,
+    "announce.link": str,
+    "announce.linkLabel": str,
+    "announce.style": str,
+    "announce.startsAt": int,
+    "announce.endsAt": int,
 }
 
 
@@ -378,6 +385,13 @@ async def admin_settings_save(request: Request, body: SettingsBody,
                                 detail="A GA4 measurement id looks like G-XXXXXXXXXX.")
         if key == "analytics.retentionDays":
             value = max(30, min(1000, int(value)))
+        if key == "announce.link" and value and not re.match(r"^(https://|/|#|mailto:|tel:)", str(value)):
+            raise HTTPException(status_code=400,
+                                detail="The announcement link must be a site path or an https:// address.")
+        if key == "announce.style" and value not in ("brand", "quiet"):
+            raise HTTPException(status_code=400, detail="Unknown announcement style.")
+        if key in ("announce.startsAt", "announce.endsAt"):
+            value = max(0, min(4102444800, int(value)))
         if isinstance(value, list):
             value = [str(v)[:200] for v in value][:20]
         elif isinstance(value, str):
@@ -1237,6 +1251,155 @@ async def admin_insights_export(request: Request, days: int = 30, start: str = "
                     headers={"Content-Disposition": f'attachment; filename="{name}"',
                              "Cache-Control": "no-store",
                              "X-Content-Type-Options": "nosniff"})
+
+
+# ---------------- operations: backups, schedule, security (Phase 6) ----------------
+
+@router.get("/api/admin/operations")
+async def admin_operations(request: Request):
+    require_perm(request, "settings.manage")
+    from . import analytics, backup, content
+
+    users = aa.list_users()
+    audit_recent = aa.audit_list(limit=400)
+    week_ago = time.time() - 7 * 86400
+    failed = [e for e in audit_recent if e["action"] == "login.failed" and e["ts"] >= week_ago]
+    sessions = sum(len(aa.list_sessions(u["id"])) for u in users if u["active"])
+    owners = [u for u in users if u["role"] == "owner" and u["active"]]
+    no_2fa = [u["email"] for u in users if u["active"] and not u["totp_enabled"]]
+    never = [u["email"] for u in users if u["active"] and not u["last_login_at"]]
+
+    checks = []
+
+    def check(ok, label, detail, weight="high"):
+        checks.append({"ok": bool(ok), "label": label, "detail": detail, "weight": weight})
+
+    check(config.IS_PROD, "Production mode",
+          "Running in production." if config.IS_PROD
+          else "Development mode — fine while testing, switch EM_ENV=production when live.",
+          "info")
+    check(any(o.startswith("https://") for o in config.ALLOWED_ORIGINS), "HTTPS origin",
+          "An https:// origin is configured." if any(o.startswith("https://") for o in config.ALLOWED_ORIGINS)
+          else "No https:// origin configured yet — required before going live.")
+    check(bool(config.TURNSTILE_SECRET and config.TURNSTILE_SITE_KEY), "Bot protection",
+          "Cloudflare Turnstile is configured." if config.TURNSTILE_SECRET
+          else "Turnstile keys are not set — public forms lose their bot check in production.")
+    check(not no_2fa, "Two-factor authentication",
+          "Every active account has completed 2FA." if not no_2fa
+          else f"Waiting for first sign-in / 2FA setup: {', '.join(no_2fa[:4])}", "info")
+    chain = aa.audit_verify_chain()
+    check(chain["ok"], "Activity log integrity",
+          f"{chain['checked']} entries verified, chain intact." if chain["ok"]
+          else f"Chain broken at entry {chain['brokenAt']} — investigate immediately.")
+    check(len(owners) >= 2, "Owner accounts",
+          f"{len(owners)} active owner account(s)." +
+          ("" if len(owners) >= 2 else " Consider a second owner so access is never lost."), "info")
+    check(len(failed) < 20, "Failed sign-ins (7 days)",
+          f"{len(failed)} failed attempt(s) in the last 7 days.")
+    check(bool(config.JASANI_API_TOKEN), "Supplier token",
+          "Jasani token is configured (never shown here)." if config.JASANI_API_TOKEN
+          else "No supplier token set — the gifts catalog serves cached data only.", "info")
+    last_backup = int(aa.setting_get("backup.lastAt", 0) or 0)
+    check(last_backup and last_backup > time.time() - 30 * 86400, "Recent backup",
+          f"Last backup {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(last_backup))}."
+          if last_backup else "No backup has been downloaded yet.", "info")
+
+    gates = [c for c in checks if c["weight"] != "info"]
+    return {
+        "checks": checks,
+        "score": sum(1 for c in gates if c["ok"]),
+        "total": len(gates),
+        "advisories": sum(1 for c in checks if c["weight"] == "info" and not c["ok"]),
+        "sessions": sessions,
+        "users": {"total": len(users), "active": sum(1 for u in users if u["active"]),
+                  "owners": len(owners), "neverSignedIn": never},
+        "failedLogins": [{"ts": e["ts"], "email": e["user_email"], "detail": e["detail"][:80]}
+                         for e in failed[:10]],
+        "schedule": backup.get_schedule(),
+        "lastPublish": content.last_publish(),
+        "lastBackup": last_backup,
+        "announcement": {key: aa.setting_get(key, "" if key not in
+                                             ("announce.enabled", "announce.startsAt", "announce.endsAt")
+                                             else (False if key == "announce.enabled" else 0))
+                         for key in ("announce.enabled", "announce.text", "announce.link",
+                                     "announce.linkLabel", "announce.style",
+                                     "announce.startsAt", "announce.endsAt")},
+        "retention": {"submissions": config.RETENTION_SUBMISSIONS_DAYS,
+                      "careers": config.RETENTION_CAREERS_DAYS,
+                      "insights": int(aa.setting_get("analytics.retentionDays",
+                                                     analytics.RETENTION_DAYS_DEFAULT) or 0)},
+        "languages": aa.setting_get("site.languages") or ["en"],
+    }
+
+
+@router.get("/api/admin/backup")
+async def admin_backup_download(request: Request):
+    session = require_perm(request, "settings.manage")
+    from . import backup, exports
+
+    blob, manifest = backup.create()
+    aa.setting_set("backup.lastAt", int(time.time()))
+    aa.audit(session, "backup.downloaded", "operations",
+             {"bytes": manifest["bytes"], "mediaFiles": manifest["mediaFiles"]}, _ip_hash(request))
+    name = exports.export_filename("zip", manifest["createdAtHuman"][:10], prefix="backup")
+    return Response(content=blob, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"',
+                             "Cache-Control": "no-store"})
+
+
+@router.post("/api/admin/backup/restore")
+async def admin_backup_restore(request: Request, file: UploadFile = File(...),
+                               confirm: str = Form(default=""),
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "settings.manage")
+    require_csrf(request, session, x_csrf)
+    from . import backup
+
+    if confirm != "RESTORE":
+        raise HTTPException(status_code=400,
+                            detail='Type RESTORE to confirm — this replaces the current content.')
+    blob = await file.read()
+    try:
+        info = backup.restore(blob, session["email"])
+    except backup.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    aa.audit(session, "backup.restored", "operations",
+             {"counts": info["counts"], "files": info.get("restoredFiles", 0)}, _ip_hash(request))
+    return info
+
+
+@router.post("/api/admin/backup/inspect")
+async def admin_backup_inspect(request: Request, file: UploadFile = File(...),
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "settings.manage")
+    require_csrf(request, session, x_csrf)
+    from . import backup
+
+    try:
+        return backup.inspect(await file.read())
+    except backup.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ScheduleBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    at: int = 0
+
+
+@router.post("/api/admin/schedule-publish")
+async def admin_schedule_publish(request: Request, body: ScheduleBody,
+                                 x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import backup
+
+    try:
+        schedule = backup.set_schedule(body.at, session["email"])
+    except backup.BackupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    aa.audit(session, "publish.scheduled" if body.at else "publish.schedule_cleared",
+             "pages", {"at": body.at}, _ip_hash(request))
+    return schedule
 
 
 # ---------------- dashboard ----------------
