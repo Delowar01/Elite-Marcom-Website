@@ -764,3 +764,41 @@ def test_pages_and_rentals_permissions():
     sign_in(editor, "editor@elitemarcom.com", "editor-long-pass")
     assert editor.get("/api/admin/pages").status_code == 200   # content.edit
     assert editor.get("/api/admin/rentals").status_code == 403  # no rentals.manage
+
+
+# ---------------- Phase 4: visual editor ----------------
+
+def test_visual_editor_page_injects_bridge_and_is_frameable():
+    res = client.get("/admin/visual/index")
+    assert res.status_code == 200
+    assert "editor-bridge.js" in res.text
+    assert 'data-em="hero.title1"' in res.text
+    # drafts appear in the visual preview too
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/pages/index",
+                json={"lang": "en", "values": {"hero.eyebrow": "Visual test eyebrow"}},
+                headers={"X-CSRF": me["csrf"]})
+    assert "Visual test eyebrow" in client.get("/admin/visual/index").text
+    client.post("/api/admin/pages/index",
+                json={"lang": "en", "values": {"hero.eyebrow": ""}},
+                headers={"X-CSRF": me["csrf"]})
+    # the ONE frameable page: same-origin only, still CSP-protected
+    csp = res.headers["content-security-policy"]
+    assert "frame-ancestors 'self'" in csp
+    assert res.headers["x-frame-options"] == "SAMEORIGIN"
+    # everything else stays unframeable, including the plain preview
+    prev = client.get("/admin/preview/index")
+    assert "frame-ancestors 'none'" in prev.headers["content-security-policy"]
+    assert prev.headers["x-frame-options"] == "DENY"
+    assert "editor-bridge" not in prev.text
+    # public pages never carry the bridge
+    assert "editor-bridge" not in client.get("/index.html").text
+    assert client.get("/admin/visual/nope").status_code == 404
+
+
+def test_visual_editor_requires_content_permission():
+    sales = TestClient(app)
+    sign_in(sales, "sales@elitemarcom.com", "another-long-pass")
+    assert sales.get("/admin/visual/index").status_code == 403
+    anon = TestClient(app)
+    assert anon.get("/admin/visual/index").status_code == 401

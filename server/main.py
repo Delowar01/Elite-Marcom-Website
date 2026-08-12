@@ -50,13 +50,17 @@ CSP = (
     f"img-src 'self' data: https://i.ytimg.com {_SUPPLIER_IMG}; "
     "font-src 'self'; "
     "connect-src 'self' blob: https://challenges.cloudflare.com; "
-    "frame-src https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com; "
+    "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com; "
     "frame-ancestors 'none'; "
     "object-src 'none'; "
     "base-uri 'self'; "
     "form-action 'self'; "
     "worker-src 'self' blob:"
 )
+
+# the visual-editor preview is the ONE page allowed inside a same-origin
+# iframe (the admin shell); it still requires an authenticated admin session
+CSP_FRAMEABLE = CSP.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
 
 
 @app.middleware("http")
@@ -66,11 +70,12 @@ async def security_headers(request: Request, call_next):
         if length and length.isdigit() and int(length) > MAX_BODY_BYTES:
             return JSONResponse({"detail": "Request too large."}, status_code=413)
     response = await call_next(request)
-    response.headers["Content-Security-Policy"] = CSP
+    frameable = request.url.path.startswith("/admin/visual/")
+    response.headers["Content-Security-Policy"] = CSP_FRAMEABLE if frameable else CSP
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
-    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if frameable else "DENY"
     if config.IS_PROD:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if "server" in response.headers:

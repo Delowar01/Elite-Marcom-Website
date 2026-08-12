@@ -1016,6 +1016,22 @@ async def admin_page_preview(request: Request, page: str, lang: str = "en"):
                     headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
 
 
+@router.get("/admin/visual/{page}", include_in_schema=False)
+async def admin_page_visual(request: Request, page: str, lang: str = "en"):
+    """The visual editor's iframe document: the draft-baked page with the
+    click-to-edit bridge script injected (same-origin framing only)."""
+    require_perm(request, "content.edit")
+    from . import content
+
+    if page not in content.PAGES or lang not in content.LANGS:
+        raise HTTPException(status_code=404, detail="Unknown page.")
+    baked = content.bake_page(page, lang)
+    bridge = '<script src="/admin/assets/editor-bridge.js?v=1" defer></script></body>'
+    baked = baked.replace("</body>", bridge, 1)
+    return Response(content=baked, media_type="text/html; charset=utf-8",
+                    headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
 @router.post("/api/admin/pages-publish")
 async def admin_pages_publish(request: Request, x_csrf: str | None = Header(default=None)):
     session = require_perm(request, "content.edit")

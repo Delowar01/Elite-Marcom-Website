@@ -228,6 +228,31 @@
     });
   }
 
+  /* ---------- visual editor state + iframe messages ---------- */
+  var edState = { page: "index", lang: "en", vw: "desktop", outlines: true,
+                  changed: {}, fields: {}, selected: null,
+                  selectKey: null, postFrame: null };
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== location.origin || !ev.data || typeof ev.data !== "object") return;
+    if (!document.getElementById("ed-frame")) return; // editor not on screen
+    if (ev.data.type === "em-select" && edState.selectKey) {
+      edState.selectKey(ev.data.key);
+    } else if (ev.data.type === "em-nav-blocked") {
+      toast("Links are disabled while editing — use the page selector above.");
+    } else if (ev.data.type === "em-ready" && edState.postFrame) {
+      edState.postFrame({ type: "em-outlines", on: edState.outlines });
+      // re-apply unsaved live edits after an iframe reload
+      Object.keys(edState.changed).forEach(function (key) {
+        var f = edState.fields[key];
+        var d = document.createElement("div");
+        d.textContent = edState.changed[key] || (f ? f.original : "");
+        edState.postFrame({ type: "em-update", key: key,
+                            html: d.innerHTML.replace(/\n/g, "<br>") });
+      });
+      if (edState.selected) edState.postFrame({ type: "em-focus", key: edState.selected });
+    }
+  });
+
   /* ---------- page editor ---------- */
   var pageLang = "en";
 
@@ -990,6 +1015,180 @@
       });
     },
 
+    editor: function () {
+      var VIEWPORTS = { desktop: 1440, tablet: 834, mobile: 390 };
+      var st = edState;
+      Promise.all([
+        api("/api/admin/pages/" + st.page + "?lang=" + st.lang),
+        api("/api/admin/pages/_global?lang=" + st.lang),
+        api("/api/admin/pages")
+      ]).then(function (rs) {
+        if (!rs[0].ok || !rs[1].ok || !rs[2].ok) return apiErr(rs[0].ok ? (rs[1].ok ? rs[2] : rs[1]) : rs[0]);
+        st.fields = {};
+        rs[0].data.regions.concat(rs[0].data.seo).forEach(function (f) {
+          st.fields[f.key] = { label: f.label, kind: f.kind, original: f.original,
+                               value: f.value, scope: st.page };
+        });
+        rs[1].data.regions.forEach(function (f) {
+          st.fields[f.key] = { label: f.label, kind: f.kind, original: f.original,
+                               value: f.value, scope: "_global" };
+        });
+        var pageOpts = rs[2].data.pages.filter(function (p) { return p.regions > 0; })
+          .map(function (p) {
+            return '<option value="' + esc(p.page) + '"' + (p.page === st.page ? " selected" : "") + ">" +
+                   esc(p.label) + "</option>";
+          }).join("");
+        main.innerHTML =
+          '<div class="ed-toolbar">' +
+          '<select id="ed-page">' + pageOpts + "</select>" +
+          '<span class="ed-group">' +
+          '<button class="btn btn--small ' + (st.lang === "en" ? "btn--primary" : "btn--ghost") + '" data-edlang="en">EN</button>' +
+          '<button class="btn btn--small ' + (st.lang === "ar" ? "btn--primary" : "btn--ghost") + '" data-edlang="ar">AR</button></span>' +
+          '<span class="ed-group">' + Object.keys(VIEWPORTS).map(function (v) {
+            var labels = { desktop: "🖥 Desktop", tablet: "📱 Tablet", mobile: "📱 Mobile" };
+            return '<button class="btn btn--small ' + (st.vw === v ? "btn--primary" : "btn--ghost") + '" data-edvw="' + v + '">' + labels[v] + "</button>";
+          }).join("") + "</span>" +
+          '<label class="ed-outline-toggle"><input type="checkbox" id="ed-outlines"' + (st.outlines ? " checked" : "") + "> Show editable areas</label>" +
+          '<span class="admin-inline-note" id="ed-dirty"></span>' +
+          '<span class="ed-spacer"></span>' +
+          '<button class="btn btn--ghost btn--small" id="ed-save" disabled>Save draft</button>' +
+          '<button class="btn btn--primary btn--small" id="ed-publish">Publish site</button>' +
+          "</div>" +
+          '<div class="ed-body"><div class="ed-canvas" id="ed-canvas"><div class="ed-frame-wrap" id="ed-wrap">' +
+          '<iframe id="ed-frame" src="/admin/visual/' + esc(st.page) + "?lang=" + st.lang + '" title="Page preview"></iframe>' +
+          "</div></div>" +
+          '<aside class="ed-panel" id="ed-panel"><p class="admin-inline-note">Click any highlighted area in the page to edit it. ' +
+          (st.lang === "ar" ? "Arabic saves as a draft and publishes when Arabic is enabled." : "") + "</p></aside></div>";
+
+        var frame = document.getElementById("ed-frame");
+        var wrap = document.getElementById("ed-wrap");
+        var canvas = document.getElementById("ed-canvas");
+
+        function fit() {
+          var w = VIEWPORTS[st.vw];
+          var k = Math.min(1, (canvas.clientWidth - 20) / w);
+          frame.style.width = w + "px";
+          frame.style.height = Math.max(400, (canvas.clientHeight - 20) / k) + "px";
+          wrap.style.transform = "scale(" + k + ")";
+          wrap.style.width = w + "px";
+        }
+        fit();
+        window.addEventListener("resize", fit);
+
+        function dirtyCount() {
+          return Object.keys(st.changed).length;
+        }
+        function refreshDirty() {
+          document.getElementById("ed-dirty").textContent =
+            dirtyCount() ? dirtyCount() + " unsaved change(s)" : "";
+          document.getElementById("ed-save").disabled = !dirtyCount();
+        }
+        function liveHtml(text) {
+          var d = document.createElement("div");
+          d.textContent = text;
+          return d.innerHTML.replace(/\n/g, "<br>");
+        }
+        function postFrame(msg) {
+          if (frame.contentWindow) frame.contentWindow.postMessage(msg, location.origin);
+        }
+        st.postFrame = postFrame;
+
+        function selectKey(key) {
+          var f = st.fields[key];
+          var panel = document.getElementById("ed-panel");
+          if (!f) {
+            panel.innerHTML = '<p class="admin-inline-note">This area is not editable yet.</p>';
+            return;
+          }
+          st.selected = key;
+          var current = key in st.changed ? st.changed[key] : (f.value || f.original);
+          panel.innerHTML =
+            "<h2>" + esc(f.label) + "</h2>" +
+            '<p class="admin-inline-note">' + (f.scope === "_global" ? "Applies to every page." : "This page only.") + "</p>" +
+            (f.kind === "multiline"
+              ? '<textarea id="ed-input" rows="6" maxlength="2000">' + esc(current) + "</textarea>"
+              : '<input id="ed-input" maxlength="300" value="' + esc(current) + '">') +
+            '<p class="admin-inline-note" style="margin-top:8px;">Original: ' + esc(f.original || "—") + "</p>" +
+            '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-revert">Use original text</button></div>';
+          var input = document.getElementById("ed-input");
+          input.focus();
+          input.addEventListener("input", function () {
+            st.changed[key] = input.value;
+            postFrame({ type: "em-update", key: key, html: liveHtml(input.value || f.original) });
+            refreshDirty();
+          });
+          document.getElementById("ed-revert").addEventListener("click", function () {
+            input.value = "";
+            st.changed[key] = "";
+            postFrame({ type: "em-update", key: key, html: liveHtml(f.original) });
+            refreshDirty();
+            toast("Will use the original text after saving.");
+          });
+        }
+        st.selectKey = selectKey;
+
+        function guardedSwitch(fn) {
+          if (dirtyCount() && !confirm("You have unsaved changes — discard them?")) return;
+          st.changed = {};
+          fn();
+          views.editor();
+        }
+        document.getElementById("ed-page").addEventListener("change", function () {
+          var v = this.value;
+          guardedSwitch(function () { st.page = v; });
+        });
+        main.querySelectorAll("[data-edlang]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var v = btn.getAttribute("data-edlang");
+            if (v === st.lang) return;
+            guardedSwitch(function () { st.lang = v; });
+          });
+        });
+        main.querySelectorAll("[data-edvw]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            st.vw = btn.getAttribute("data-edvw");
+            main.querySelectorAll("[data-edvw]").forEach(function (b) {
+              b.className = "btn btn--small " + (b === btn ? "btn--primary" : "btn--ghost");
+            });
+            fit();
+          });
+        });
+        document.getElementById("ed-outlines").addEventListener("change", function () {
+          st.outlines = this.checked;
+          postFrame({ type: "em-outlines", on: st.outlines });
+        });
+        document.getElementById("ed-save").addEventListener("click", function () {
+          var byScope = {};
+          Object.keys(st.changed).forEach(function (key) {
+            var scope = st.fields[key] ? st.fields[key].scope : st.page;
+            (byScope[scope] = byScope[scope] || {})[key] = st.changed[key];
+          });
+          var saves = Object.keys(byScope).map(function (scope) {
+            return api("/api/admin/pages/" + encodeURIComponent(scope),
+                       { lang: st.lang, values: byScope[scope] });
+          });
+          Promise.all(saves).then(function (results) {
+            var bad = results.find(function (r) { return !r.ok; });
+            if (bad) return apiErr(bad);
+            Object.keys(st.changed).forEach(function (key) {
+              if (st.fields[key]) st.fields[key].value = st.changed[key];
+            });
+            st.changed = {};
+            refreshDirty();
+            toast("Draft saved — publish when you are ready.");
+          });
+        });
+        document.getElementById("ed-publish").addEventListener("click", function () {
+          if (dirtyCount()) { toast("Save your draft first.", true); return; }
+          if (!confirm("Publish all pages to the live site now?")) return;
+          api("/api/admin/pages-publish", {}).then(function (r2) {
+            r2.ok ? toast("Published " + r2.data.pages + " pages — live now.") : apiErr(r2);
+          });
+        });
+        refreshDirty();
+      });
+    },
+
     users: function () {
       api("/api/admin/users").then(function (r) {
         if (!r.ok) return apiErr(r);
@@ -1136,6 +1335,7 @@
     document.querySelectorAll(".admin-nav a").forEach(function (a) {
       a.classList.toggle("is-active", a.getAttribute("data-view") === name);
     });
+    main.classList.toggle("admin-main--wide", name === "editor");
     main.innerHTML = '<div class="admin-loading">Loading…</div>';
     views[name](param);
   }

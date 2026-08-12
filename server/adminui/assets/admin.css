@@ -221,6 +221,47 @@
 .stat-row--tight { margin-bottom: 14px; }
 .jz-thumb { width: 42px; height: 42px; object-fit: contain; border-radius: 8px; background: #fff; }
 
+/* ---------- visual editor (Phase 4) ---------- */
+.admin-main--wide { max-width: none; }
+.ed-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.ed-toolbar select {
+  padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border-strong);
+  background: var(--panel-2); color: var(--text); font: inherit; font-size: 0.9rem;
+}
+.ed-group { display: inline-flex; gap: 4px; }
+.ed-spacer { flex: 1; }
+.ed-outline-toggle {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem;
+  color: var(--text-soft); cursor: pointer;
+}
+.ed-outline-toggle input { accent-color: var(--orange-2); width: 15px; height: 15px; }
+.ed-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px;
+  height: calc(100vh - 190px); min-height: 480px;
+}
+.ed-canvas {
+  overflow: auto; border: 1px solid var(--border-strong); border-radius: 14px;
+  background: repeating-conic-gradient(var(--panel-2) 0% 25%, transparent 0% 50%) 0 0 / 22px 22px;
+  padding: 10px;
+}
+.ed-frame-wrap { transform-origin: top left; }
+#ed-frame { border: 0; display: block; background: #fff; border-radius: 8px; box-shadow: var(--shadow-1); }
+.ed-panel {
+  border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
+  padding: 18px; overflow-y: auto;
+}
+.ed-panel h2 { font-size: 1rem; margin-bottom: 8px; }
+.ed-panel textarea, .ed-panel input {
+  width: 100%; padding: 11px 13px; border-radius: 11px; margin-top: 10px;
+  border: 1px solid var(--border-strong); background: var(--panel-2);
+  color: var(--text); font: inherit;
+}
+@media (max-width: 1100px) {
+  .ed-body { grid-template-columns: 1fr; height: auto; }
+  .ed-canvas { height: 60vh; }
+  .ed-panel { max-height: 320px; }
+}
+
 /* ---------- pages editor (Phase 3) ---------- */
 .lang-tabs { display: flex; gap: 8px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
 .page-field label .badge-ok { font-size: 0.68rem; margin-left: 6px; }
