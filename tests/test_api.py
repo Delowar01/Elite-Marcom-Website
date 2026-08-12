@@ -185,6 +185,20 @@ def test_rental_enquiry_success():
     assert res.json()["reference"].startswith("RN-")
 
 
+def test_rental_enquiry_with_days():
+    res = client.post("/api/rentals/enquiries",
+                      json=rental_payload(items=[{"productId": "rent-display-75", "quantity": 2, "days": 5}]),
+                      headers=ORIGIN)
+    assert res.status_code == 200, res.text
+
+
+def test_rental_enquiry_rejects_invalid_days():
+    res = client.post("/api/rentals/enquiries",
+                      json=rental_payload(items=[{"productId": "rent-display-75", "quantity": 1, "days": 9999}]),
+                      headers=ORIGIN)
+    assert res.status_code == 422
+
+
 def test_rental_unknown_product_rejected():
     res = client.post("/api/rentals/enquiries",
                       json=rental_payload(items=[{"productId": "forged-item", "quantity": 1}]),

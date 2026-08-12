@@ -627,3 +627,26 @@
 .pref-note textarea:focus-visible { border-color: var(--orange-2); outline: none; }
 @media (max-width: 560px) { .pref-grid { grid-template-columns: 1fr; } }
 .request-item__pref { font-size: 0.76rem; color: var(--violet-soft); margin: 2px 0 0; }
+
+/* ---------- rental theming — violet accent distinguishes it from gifts ---------- */
+.labeled-control { display: flex; flex-direction: column; gap: 6px; }
+.labeled-control > span {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.catalog-grid--rental .product-card:hover { border-color: var(--violet-soft); box-shadow: var(--shadow-1); }
+.catalog-grid--rental .product-card__badges .chip--violet { border-color: var(--violet-soft); }
+.pdp--rental .pdp__thumbs button.is-active,
+.pdp--rental .pdp__thumbs button:hover { border-color: var(--violet-soft); }
+.pdp--rental .pdp__back:hover { color: var(--violet-soft); }
+.pdp--rental .pdp__gallery .carousel { border-color: var(--border-strong); }
+.pdp--rental .pdp__actions { align-items: flex-end; }
+.gifts-contact--rental {
+  background:
+    radial-gradient(120% 160% at 0% 0%, rgba(118, 86, 214, 0.18), transparent 55%),
+    radial-gradient(120% 160% at 100% 100%, rgba(237, 108, 38, 0.10), transparent 55%),
+    var(--surface);
+}
+.request-item__row { flex-wrap: wrap; }
+.request-item__row .labeled-control { gap: 3px; }
+.request-item__row .labeled-control > span { font-size: 0.62rem; }

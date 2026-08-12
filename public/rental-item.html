@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Product — Corporate Gifts | Elite Marcom</title>
-<meta name="description" content="Corporate gift product details — images, availability, branding options and private request workflow from Elite Marcom's live KSA and UAE catalogs.">
-<link rel="canonical" href="https://www.elitemarcom.com/product.html">
+<title>Rental Item | Elite Marcom</title>
+<meta name="description" content="Rental item details — images, availability, specifications and the private rental request workflow across KSA and the UAE.">
+<link rel="canonical" href="https://www.elitemarcom.com/rental-item.html">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Product — Corporate Gifts | Elite Marcom">
-<meta property="og:description" content="Corporate gift product details — images, availability, branding options and private request workflow from Elite Marcom's live KSA and UAE catalogs.">
+<meta property="og:title" content="Rental Item | Elite Marcom">
+<meta property="og:description" content="Rental item details — images, availability, specifications and the private rental request workflow across KSA and the UAE.">
 <meta property="og:image" content="https://www.elitemarcom.com/assets/portfolio/branded-collection.webp">
-<meta property="og:url" content="https://www.elitemarcom.com/product.html">
+<meta property="og:url" content="https://www.elitemarcom.com/rental-item.html">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Product — Corporate Gifts | Elite Marcom">
-<meta name="twitter:description" content="Corporate gift product details — images, availability, branding options and private request workflow from Elite Marcom's live KSA and UAE catalogs.">
+<meta name="twitter:title" content="Rental Item | Elite Marcom">
+<meta name="twitter:description" content="Rental item details — images, availability, specifications and the private rental request workflow across KSA and the UAE.">
 <meta name="twitter:image" content="https://www.elitemarcom.com/assets/portfolio/branded-collection.webp">
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
@@ -39,8 +39,8 @@
         <li><a href="/about.html">About</a></li>
         <li><a href="/services.html">Services</a></li>
         <li><a href="/projects.html">Projects</a></li>
-        <li><a href="/giveaways.html" aria-current="page">Corporate Gifts</a></li>
-        <li><a href="/rental.html">Rental</a></li>
+        <li><a href="/giveaways.html">Corporate Gifts</a></li>
+        <li><a href="/rental.html" aria-current="page">Rental</a></li>
         <li><a href="/careers.html">Careers</a></li>
         <li><a href="/contact.html">Contact</a></li>
       </ul>
@@ -73,8 +73,8 @@
       <li><a href="/about.html"><span class="num">02</span>About Us</a></li>
       <li><a href="/services.html"><span class="num">03</span>Services</a></li>
       <li><a href="/projects.html"><span class="num">04</span>Projects</a></li>
-      <li><a href="/giveaways.html" aria-current="page"><span class="num">05</span>Corporate Gifts</a></li>
-      <li><a href="/rental.html"><span class="num">06</span>Items for Rental</a></li>
+      <li><a href="/giveaways.html"><span class="num">05</span>Corporate Gifts</a></li>
+      <li><a href="/rental.html" aria-current="page"><span class="num">06</span>Items for Rental</a></li>
       <li><a href="/careers.html"><span class="num">07</span>Careers</a></li>
       <li><a href="/contact.html"><span class="num">08</span>Contact Us</a></li>
     </ol>
@@ -86,11 +86,11 @@
 </aside>
 
 <main id="main">
-  <section class="section section--first" aria-labelledby="pdp-title" style="padding-top: clamp(130px, 15vh, 180px);">
+  <section class="section section--first pdp--rental" aria-labelledby="rip-title" style="padding-top: clamp(130px, 15vh, 180px);">
     <div class="container">
-      <a class="pdp__back" href="/giveaways.html">← Back to Corporate Gifts</a>
+      <a class="pdp__back" href="/rental.html">← Back to Items for Rental</a>
 
-      <div id="pdp-loading" class="pdp" aria-hidden="true">
+      <div id="rip-loading" class="pdp" aria-hidden="true">
         <div class="skeleton-card"><div class="sk sk-media" style="aspect-ratio:1/1;"></div></div>
         <div>
           <div class="sk sk-line" style="width:30%;height:16px;margin:0 0 14px;"></div>
@@ -101,126 +101,105 @@
         </div>
       </div>
 
-      <div class="empty-state" id="pdp-missing" hidden>
-        <h3>This product is no longer available</h3>
-        <p>It may have left the catalog or changed market. <a href="/giveaways.html">Browse the full Corporate Gifts catalog</a>.</p>
+      <div class="empty-state" id="rip-missing" hidden>
+        <h3>This item is no longer available</h3>
+        <p>It may have left the inventory. <a href="/rental.html">Browse the full rental inventory</a>.</p>
       </div>
 
-      <article class="pdp" id="pdp" hidden>
+      <article class="pdp" id="rip" hidden>
         <div class="pdp__left">
           <div class="pdp__gallery">
-            <div class="carousel" id="pdp-carousel" aria-label="Product images">
-              <div class="carousel__track" id="pdp-track"></div>
+            <div class="carousel" id="rip-carousel" aria-label="Item images">
+              <div class="carousel__track" id="rip-track"></div>
             </div>
-            <div class="pdp__thumbs" id="pdp-thumbs" role="group" aria-label="Choose image"></div>
+            <div class="pdp__thumbs" id="rip-thumbs" role="group" aria-label="Choose image"></div>
           </div>
-          <div class="pdp__section pdp__specs-wrap" id="pdp-specs-section" hidden>
-            <h2>Specifications</h2>
-            <div class="spec-table" id="pdp-specs"></div>
+          <div class="pdp__section pdp__specs-wrap" id="rip-specs-section" hidden>
+            <h2>What's included</h2>
+            <ul class="service-points" id="rip-specs"></ul>
           </div>
         </div>
         <div class="pdp__info">
-          <div class="pdp__meta-row" id="pdp-badges"></div>
-          <h1 id="pdp-title"></h1>
-          <p class="pdp__meta-row"><span class="product-card__code" id="pdp-code"></span></p>
-          <p><span class="availability" id="pdp-availability"></span></p>
-          <div class="pdp__variants" id="pdp-variants" hidden></div>
-          <div class="pdp__section pdp__desc" id="pdp-desc-section" hidden>
+          <div class="pdp__meta-row" id="rip-badges"></div>
+          <h1 id="rip-title"></h1>
+          <p class="pdp__meta-row"><span class="product-card__code" id="rip-code"></span></p>
+          <p><span class="availability" id="rip-availability"></span></p>
+          <div class="pdp__section pdp__desc" id="rip-desc-section" hidden>
             <h2>Description</h2>
-            <p id="pdp-description"></p>
+            <p id="rip-description"></p>
           </div>
-          <div class="pdp__section" id="pdp-colors-section" hidden>
-            <h2>Other colours</h2>
-            <div class="pdp__colors" id="pdp-colors"></div>
+          <div class="pdp__section rental-lines" id="rip-request-section">
+            <h2>Rental request</h2>
+            <p class="pref-hint">Choose how many units and for how many days your event needs this item — availability and pricing are confirmed privately.</p>
+            <div class="pdp__actions" id="rip-actions"></div>
           </div>
-          <div class="pdp__section" id="pdp-branding-section" hidden>
-            <h2>Branding options</h2>
-            <ul class="service-points" id="pdp-branding"></ul>
-          </div>
-          <div class="pdp__section" id="pdp-pref-section">
-            <h2>Your branding preference <span class="pref-tag">optional</span></h2>
-            <p class="pref-hint">Choose or suggest a printing area and method — it travels with your request and is confirmed after technical review.</p>
-            <div class="pref-grid">
-              <div class="variant-field">
-                <label for="pref-area">Preferred area</label>
-                <select id="pref-area"></select>
-              </div>
-              <div class="variant-field">
-                <label for="pref-method">Preferred method</label>
-                <select id="pref-method"></select>
-              </div>
-              <div class="pref-note">
-                <label for="pref-note">Notes / suggested position</label>
-                <textarea id="pref-note" maxlength="500" rows="2" placeholder="e.g. Centre our logo on the top surface, single colour print"></textarea>
-              </div>
-            </div>
-          </div>
-          <div class="pdp__actions" id="pdp-actions"></div>
           <div class="pdp__section">
-            <p class="text-muted" style="font-size:0.88rem;margin:0;">No public prices — add the product to your request and receive one clear private proposal. Availability is confirmed at submission.</p>
+            <p class="text-muted" style="font-size:0.88rem;margin:0;">No public prices — delivery, installation and collection are quoted together in one private proposal. Availability is confirmed at submission.</p>
           </div>
         </div>
       </article>
 
-      <div class="gifts-contact" style="margin-top:64px;">
+      <div class="gifts-contact gifts-contact--rental" style="margin-top:64px;">
         <div class="gifts-contact__copy">
-          <h2>Need this customised — or something we don't list?</h2>
-          <p>Custom branding, bespoke packaging, wider sourcing and special requests are our daily work. Talk to us directly.</p>
+          <h2>Need something we don't list — or a full event setup?</h2>
+          <p>Staging, AV, furniture and production support are our daily work. Tell us the brief and we will equip it end to end.</p>
         </div>
         <div class="gifts-contact__actions">
-          <a class="btn btn--primary" href="mailto:info@elitemarcom.com?subject=Custom%20corporate%20gifts" data-magnetic>info@elitemarcom.com</a>
-          <a class="btn btn--violet" href="https://wa.me/966599255995" rel="noopener" target="_blank">WhatsApp us</a>
+          <a class="btn btn--violet" href="mailto:info@elitemarcom.com?subject=Rental%20request" data-magnetic>info@elitemarcom.com</a>
+          <a class="btn btn--ghost" href="https://wa.me/966599255995" rel="noopener" target="_blank">WhatsApp us</a>
         </div>
       </div>
     </div>
   </section>
 
   <!-- Notify dialog -->
-  <div class="dialog-scrim" id="pdp-notify-dialog" role="presentation">
-    <div class="dialog dialog--narrow" role="dialog" aria-modal="true" aria-labelledby="pdp-notify-title" tabindex="-1">
+  <div class="dialog-scrim" id="rip-notify-dialog" role="presentation">
+    <div class="dialog dialog--narrow" role="dialog" aria-modal="true" aria-labelledby="rip-notify-title" tabindex="-1">
       <button class="icon-btn dialog__close" type="button" aria-label="Close notification form">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
-      <h2 id="pdp-notify-title">Notify me when available</h2>
-      <p class="text-muted" id="pdp-notify-product" style="font-size:0.9rem;"></p>
-      <form id="pdp-notify-form" novalidate>
+      <h2 id="rip-notify-title">Notify me when available</h2>
+      <p class="text-muted" id="rip-notify-product" style="font-size:0.9rem;"></p>
+      <form id="rip-notify-form" novalidate>
         <div class="form-grid">
-          <div class="form-field"><label for="pn-name">Full name <span class="req" aria-hidden="true">*</span></label><input id="pn-name" name="fullName" type="text" required minlength="2" maxlength="120" data-autofocus><span class="field-error" aria-live="polite"></span></div>
-          <div class="form-field"><label for="pn-company">Company <span class="req" aria-hidden="true">*</span></label><input id="pn-company" name="company" type="text" required maxlength="160"><span class="field-error" aria-live="polite"></span></div>
-          <div class="form-field"><label for="pn-email">Email <span class="req" aria-hidden="true">*</span></label><input id="pn-email" name="email" type="email" required maxlength="200"><span class="field-error" aria-live="polite"></span></div>
-          <div class="form-field"><label for="pn-phone">Phone <span class="req" aria-hidden="true">*</span></label><input id="pn-phone" name="phone" type="tel" required pattern="[0-9+()., -]{7,32}" maxlength="32"><span class="field-error" aria-live="polite"></span></div>
-          <div class="form-field form-field--full"><label for="pn-message">Message (optional)</label><textarea id="pn-message" name="message" maxlength="3000"></textarea><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="rn-name">Full name <span class="req" aria-hidden="true">*</span></label><input id="rn-name" name="fullName" type="text" required minlength="2" maxlength="120" data-autofocus><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="rn-company">Company <span class="req" aria-hidden="true">*</span></label><input id="rn-company" name="company" type="text" required maxlength="160"><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="rn-email">Email <span class="req" aria-hidden="true">*</span></label><input id="rn-email" name="email" type="email" required maxlength="200"><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="rn-phone">Phone <span class="req" aria-hidden="true">*</span></label><input id="rn-phone" name="phone" type="tel" required pattern="[0-9+()., -]{7,32}" maxlength="32"><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="rn-from">Needed from</label><input id="rn-from" name="requiredFrom" type="date"><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field"><label for="rn-until">Needed until</label><input id="rn-until" name="requiredUntil" type="date"><span class="field-error" aria-live="polite"></span></div>
+          <div class="form-field form-field--full"><label for="rn-message">Message (optional)</label><textarea id="rn-message" name="message" maxlength="3000"></textarea><span class="field-error" aria-live="polite"></span></div>
           <div class="form-field form-field--full">
             <div class="consent-row">
-              <input id="pn-consent" name="consent" type="checkbox" required>
-              <label for="pn-consent">I consent to Elite Marcom contacting me about this product's availability, as described in the <a href="/privacy.html">Privacy Notice</a>. <span class="req" aria-hidden="true">*</span></label>
+              <input id="rn-consent" name="consent" type="checkbox" required>
+              <label for="rn-consent">I consent to Elite Marcom contacting me about this item's availability, as described in the <a href="/privacy.html">Privacy Notice</a>. <span class="req" aria-hidden="true">*</span></label>
             </div>
             <span class="field-error" aria-live="polite"></span>
           </div>
           <p class="hp-field" aria-hidden="true"><label>Leave this field empty<input type="text" name="website" tabindex="-1" autocomplete="off"></label></p>
         </div>
-        <div style="margin-top:22px;"><button class="btn btn--primary" type="submit">Request notification</button></div>
+        <div style="margin-top:22px;"><button class="btn btn--violet" type="submit">Request notification</button></div>
         <p class="form-status" role="status" aria-live="polite"></p>
       </form>
     </div>
   </div>
 
-  <a class="request-fab" href="/giveaways.html" hidden>
-    Request list <span class="count" id="pdp-fab-count">0</span>
+  <a class="request-fab" href="/rental.html" hidden>
+    Rental list <span class="count" id="rip-fab-count">0</span>
   </a>
 </main>
 
 <!-- Fullscreen image viewer: swipe · arrows · zoom (body-level: page sections
      use transforms, which would turn position:fixed into a local overlay) -->
-<div class="lightbox" id="pdp-lightbox" role="dialog" aria-modal="true" aria-label="Product image viewer" hidden>
+<div class="lightbox" id="rip-lightbox" role="dialog" aria-modal="true" aria-label="Item image viewer" hidden>
   <button class="icon-btn lightbox__close" type="button" aria-label="Close image viewer">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
   </button>
   <button class="lightbox__nav lightbox__nav--prev" type="button" aria-label="Previous image">&#8249;</button>
-  <div class="lightbox__track" id="pdp-lightbox-track"></div>
+  <div class="lightbox__track" id="rip-lightbox-track"></div>
   <button class="lightbox__nav lightbox__nav--next" type="button" aria-label="Next image">&#8250;</button>
   <div class="lightbox__bar">
-    <span class="lightbox__count" id="pdp-lightbox-count"></span>
+    <span class="lightbox__count" id="rip-lightbox-count"></span>
     <button class="lightbox__zoom" type="button" aria-label="Toggle zoom">Zoom</button>
   </div>
 </div>
@@ -270,6 +249,6 @@
 
 <script src="/js/site.js?v=4" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/product.js?v=7" defer></script>
+<script src="/js/rental-item.js?v=1" defer></script>
 </body>
 </html>

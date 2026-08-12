@@ -383,6 +383,13 @@ class RequestItem(BaseModel):
     branding: BrandingPreference | None = None
 
 
+class RentalItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    productId: str = Field(min_length=1, max_length=80)
+    quantity: int = Field(ge=1, le=1000)
+    days: int = Field(default=1, ge=1, le=365)
+
+
 class RentalEnquiry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     fullName: str
@@ -396,7 +403,7 @@ class RentalEnquiry(BaseModel):
     notes: str = ""
     consent: bool
     market: Literal["ksa", "uae"]
-    items: list[RequestItem] = Field(min_length=1, max_length=50)
+    items: list[RentalItem] = Field(min_length=1, max_length=50)
     challenge: str
     consentVersion: str
     website: str = ""
@@ -412,7 +419,7 @@ class RentalEnquiry(BaseModel):
         return v
 
 
-def canonical_rental_items(items: list[RequestItem], market: str) -> list[dict]:
+def canonical_rental_items(items: list[RentalItem], market: str) -> list[dict]:
     """Re-derive item facts from canonical server data; reject forged posts."""
     inventory = {p["id"]: p for p in load_rentals()}
     out = []
@@ -426,7 +433,8 @@ def canonical_rental_items(items: list[RequestItem], market: str) -> list[dict]:
         if item.quantity > stock:
             raise HTTPException(status_code=400, detail=f"Only {stock} unit(s) of “{p['name']}” are available — please adjust the quantity.")
         out.append({"productId": p["id"], "code": p["code"], "name": p["name"],
-                    "market": market, "quantity": item.quantity, "stockAtSubmission": stock})
+                    "market": market, "quantity": item.quantity, "days": item.days,
+                    "stockAtSubmission": stock})
     return out
 
 

@@ -41,9 +41,11 @@
       all[m] = all[m].filter(function (it) {
         return it && typeof it.id === "string" && typeof it.qty === "number" && it.qty >= 1 && it.market === m;
       }).slice(0, MAX_ITEMS).map(function (it) {
+        var days = typeof it.days === "number" ? Math.floor(it.days) : 1;
         return { id: String(it.id).slice(0, 80), code: String(it.code || "").slice(0, 80),
                  name: String(it.name || "").slice(0, 200), image: String(it.image || "").slice(0, 500),
-                 market: m, qty: Math.min(1000, Math.floor(it.qty)) };
+                 market: m, qty: Math.min(1000, Math.floor(it.qty)),
+                 days: Math.max(1, Math.min(365, days)) };
       });
     });
     return all;
@@ -128,6 +130,7 @@
     buildCategories();
     reconcile();
     render();
+    restoreReturnState();
   }
 
   /* silent refresh every five minutes */
@@ -178,22 +181,52 @@
     return { cls: "availability--out", label: "Currently unavailable" };
   }
 
+  function productUrl(p) {
+    return "/rental-item.html?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(p.id);
+  }
+
+  /* remember scroll position so "Back" from an item lands where the visitor left */
+  var RETURN_KEY = "em-rental-return";
+  function saveReturnState() {
+    try {
+      sessionStorage.setItem(RETURN_KEY, JSON.stringify({ y: window.scrollY, market: market, t: Date.now() }));
+    } catch (e) { /* storage unavailable */ }
+  }
+  function restoreReturnState() {
+    var raw = null;
+    try {
+      raw = sessionStorage.getItem(RETURN_KEY);
+      sessionStorage.removeItem(RETURN_KEY);
+    } catch (e) { return; }
+    if (!raw) return;
+    var st = null;
+    try { st = JSON.parse(raw); } catch (e) { return; }
+    if (!st || st.market !== market || Date.now() - (st.t || 0) > 30 * 60 * 1000) return;
+    window.scrollTo(0, st.y || 0);
+  }
+
   function cardHtml(p) {
     var av = availability(p);
     var inReq = findRequest(p.id);
     var max = stockFor(p);
     var canOrder = max > 0;
+    /* slideable media with auto-hide arrows, same as the gifts catalog */
+    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : [])).slice(0, 8);
+    var slides = imgs.map(function (src) {
+      return '<img src="' + EM.escapeHtml(src) + '" alt="" loading="lazy" width="480" height="480" draggable="false">';
+    }).join("");
     return (
-      '<div class="product-card__media">' +
-        (p.image ? '<img src="' + EM.escapeHtml(p.image) + '" alt="" loading="lazy" width="400" height="300">' : "") +
+      '<div class="product-card__media carousel">' +
+        '<div class="carousel__track">' + slides + "</div>" +
         '<div class="product-card__badges">' +
           (p.category ? '<span class="chip">' + EM.escapeHtml(p.category) + "</span>" : "") +
-          (p.featured ? '<span class="chip chip--orange">Featured</span>' : "") +
+          (p.featured ? '<span class="chip chip--violet">Featured</span>' : "") +
         "</div>" +
       "</div>" +
       '<div class="product-card__body">' +
-        '<span class="product-card__code">' + EM.escapeHtml(p.code) + " · " + market.toUpperCase() + "</span>" +
+        '<span class="product-card__code"><span>' + EM.escapeHtml(p.code) + "</span><span>" + market.toUpperCase() + "</span></span>" +
         '<h3 class="product-card__name">' + EM.escapeHtml(p.name) + "</h3>" +
+        '<span class="product-card__meta">' + EM.escapeHtml([p.category, "For rent"].filter(Boolean).join(" · ")) + "</span>" +
         '<span class="availability ' + av.cls + '">' + EM.escapeHtml(av.label) + "</span>" +
         '<div class="product-card__actions">' +
           (canOrder
@@ -202,9 +235,8 @@
                 '<input type="number" inputmode="numeric" value="' + (inReq ? inReq.qty : 1) + '" min="1" max="' + max + '" aria-label="Requested quantity">' +
                 '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
               "</div>" +
-              '<button class="btn btn--primary btn--small" type="button" data-add>' + (inReq ? "Update request" : "Add to request") + "</button>"
-            : '<button class="btn btn--violet btn--small" type="button" data-notify>Notify when available</button>') +
-          '<button class="btn btn--ghost btn--small" type="button" data-details>View details</button>' +
+              '<button class="btn btn--violet btn--small" type="button" data-add>' + (inReq ? "Update request" : "Add to request") + "</button>"
+            : '<button class="btn btn--ghost btn--small" type="button" data-notify>Notify when available</button>') +
         "</div>" +
       "</div>");
   }
@@ -216,8 +248,27 @@
     list.forEach(function (p) {
       var card = document.createElement("article");
       card.className = "product-card";
+      card.setAttribute("role", "link");
+      card.setAttribute("tabindex", "0");
+      card.setAttribute("aria-label", p.name + " — open item page");
       card.innerHTML = cardHtml(p);
       bindCard(card, p);
+      /* the whole card opens the item page — except its own controls */
+      card.addEventListener("click", function (e) {
+        if (e.target.closest("input, .qty-control, .carousel__btn, .carousel__dots")) return;
+        if (e.target.closest("button") && !e.target.closest("a")) return;
+        saveReturnState();
+        location.href = productUrl(p);
+      });
+      card.addEventListener("keydown", function (e) {
+        if ((e.key === "Enter" || e.key === " ") && e.target === card) {
+          e.preventDefault();
+          saveReturnState();
+          location.href = productUrl(p);
+        }
+      });
+      var mediaEl = card.querySelector(".product-card__media");
+      if (mediaEl && EM.carousel) EM.carousel(mediaEl);
       grid.appendChild(card);
     });
     if (els.count) {
@@ -238,6 +289,7 @@
   function bindCard(card, p) {
     var qtyInput = card.querySelector(".qty-control input");
     var max = stockFor(p) || 1;
+    if (qtyInput) qtyInput.addEventListener("change", function () { clampQty(qtyInput, max); });
     card.querySelectorAll("[data-qty-minus]").forEach(function (b) {
       b.addEventListener("click", function () { qtyInput.value = String(Math.max(1, clampQty(qtyInput, max) - 1)); });
     });
@@ -246,26 +298,26 @@
     });
     var addBtn = card.querySelector("[data-add]");
     if (addBtn) addBtn.addEventListener("click", function () {
-      addToRequest(p, clampQty(qtyInput, max));
+      addToRequest(p, clampQty(qtyInput, max), 1);
       addBtn.textContent = "Update request";
     });
-    var detBtn = card.querySelector("[data-details]");
-    if (detBtn) detBtn.addEventListener("click", function () { openDetail(p); });
     var notBtn = card.querySelector("[data-notify]");
     if (notBtn) notBtn.addEventListener("click", function () { openNotify(p); });
   }
 
-  function addToRequest(p, qty) {
+  function addToRequest(p, qty, days) {
     var existing = findRequest(p.id);
     if (existing) {
       existing.qty = qty;
+      if (days) existing.days = days;
       EM.toast("Rental list updated — " + p.name + " × " + qty, "ok");
     } else {
       if (marketList().length >= MAX_ITEMS) {
         EM.toast("A request can contain up to " + MAX_ITEMS + " items.", "err");
         return;
       }
-      requests[market].push({ id: p.id, code: p.code, name: p.name, image: p.image || "", market: market, qty: qty });
+      requests[market].push({ id: p.id, code: p.code, name: p.name, image: p.image || "",
+                              market: market, qty: qty, days: days || 1 });
       EM.toast("Added to rental list — " + p.name + " × " + qty, "ok");
     }
     saveRequests();
@@ -321,42 +373,6 @@
     });
   });
 
-  /* ---------- detail drawer ---------- */
-  var detailDrawer = EM.drawer(document.getElementById("rent-detail-drawer"), document.getElementById("rent-detail-scrim"));
-  var detailBody = document.getElementById("rent-detail-body");
-
-  function openDetail(p) {
-    var av = availability(p);
-    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []));
-    var gallery = imgs.map(function (src, i) {
-      return '<figure class="media-frame" style="aspect-ratio:4/3;margin-bottom:10px;"><img src="' + EM.escapeHtml(src) + '" alt="' + EM.escapeHtml(p.name) + ' — image ' + (i + 1) + '" loading="lazy"></figure>';
-    }).join("");
-    var specs = (p.specs || []).map(function (s) { return "<li>" + EM.escapeHtml(s) + "</li>"; }).join("");
-    var inReq = findRequest(p.id);
-    var max = stockFor(p);
-    detailBody.innerHTML =
-      gallery +
-      '<span class="product-card__code">' + EM.escapeHtml(p.code) + " · " + market.toUpperCase() + "</span>" +
-      "<h3 style=\"margin:6px 0 8px;\">" + EM.escapeHtml(p.name) + "</h3>" +
-      (p.category ? '<span class="chip">' + EM.escapeHtml(p.category) + "</span> " : "") +
-      ((p.tags || []).slice(0, 6).map(function (t) { return '<span class="chip">' + EM.escapeHtml(t) + "</span>"; }).join(" ")) +
-      '<p style="margin-top:12px;"><span class="availability ' + av.cls + '">' + EM.escapeHtml(av.label) + "</span></p>" +
-      (p.description ? "<p>" + EM.escapeHtml(p.description) + "</p>" : "") +
-      (specs ? "<h4 style=\"margin:14px 0 8px;\">Specifications</h4><ul class=\"service-points\">" + specs + "</ul>" : "") +
-      '<div class="product-card__actions" style="margin-top:18px;">' +
-        (max > 0
-          ? '<div class="qty-control" aria-label="Quantity">' +
-              '<button type="button" data-qty-minus aria-label="Decrease quantity">−</button>' +
-              '<input type="number" inputmode="numeric" value="' + (inReq ? inReq.qty : 1) + '" min="1" max="' + max + '" aria-label="Requested quantity">' +
-              '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
-            "</div>" +
-            '<button class="btn btn--primary btn--small" type="button" data-add>' + (inReq ? "Update request" : "Add to request") + "</button>"
-          : '<button class="btn btn--violet btn--small" type="button" data-notify>Notify when available</button>') +
-      "</div>";
-    bindCard(detailBody, p);
-    detailDrawer.open();
-  }
-
   /* ---------- request drawer ---------- */
   var requestDrawer = EM.drawer(document.getElementById("rent-request-drawer"), document.getElementById("rent-request-scrim"));
   var requestBody = document.getElementById("rent-request-body");
@@ -378,16 +394,22 @@
             '<p class="request-item__name">' + EM.escapeHtml(it.name) + "</p>" +
             '<p class="request-item__meta">' + EM.escapeHtml(it.code) + " · " + it.market.toUpperCase() + "</p>" +
             '<div class="request-item__row">' +
+              '<div class="labeled-control"><span>Qty</span>' +
               '<div class="qty-control"><button type="button" data-r-minus aria-label="Decrease quantity">−</button>' +
               '<input type="number" inputmode="numeric" value="' + it.qty + '" min="1" max="' + max + '" aria-label="Quantity for ' + EM.escapeHtml(it.name) + '">' +
-              '<button type="button" data-r-plus aria-label="Increase quantity">+</button></div>' +
+              '<button type="button" data-r-plus aria-label="Increase quantity">+</button></div></div>' +
+              '<div class="labeled-control"><span>Days</span>' +
+              '<div class="qty-control"><button type="button" data-d-minus aria-label="Fewer days">−</button>' +
+              '<input type="number" inputmode="numeric" data-days value="' + (it.days || 1) + '" min="1" max="365" aria-label="Rental days for ' + EM.escapeHtml(it.name) + '">' +
+              '<button type="button" data-d-plus aria-label="More days">+</button></div></div>' +
               '<button type="button" class="request-item__remove" data-r-remove>Remove</button>' +
             "</div>" +
           "</div></div>";
       }).join("");
     requestBody.querySelectorAll(".request-item").forEach(function (row) {
       var idx = parseInt(row.getAttribute("data-idx"), 10);
-      var input = row.querySelector("input");
+      var input = row.querySelector("input:not([data-days])");
+      var daysInput = row.querySelector("input[data-days]");
       var it = marketList()[idx];
       var p = itemById[it.id];
       var max = p ? stockFor(p) : it.qty;
@@ -397,9 +419,18 @@
         it.qty = v;
         saveRequests();
       }
+      function commitDays(v) {
+        v = Math.max(1, Math.min(365, Math.floor(v) || 1));
+        daysInput.value = String(v);
+        it.days = v;
+        saveRequests();
+      }
       row.querySelector("[data-r-minus]").addEventListener("click", function () { commit(parseInt(input.value, 10) - 1); });
       row.querySelector("[data-r-plus]").addEventListener("click", function () { commit(parseInt(input.value, 10) + 1); });
       input.addEventListener("change", function () { commit(parseInt(input.value, 10)); });
+      row.querySelector("[data-d-minus]").addEventListener("click", function () { commitDays(parseInt(daysInput.value, 10) - 1); });
+      row.querySelector("[data-d-plus]").addEventListener("click", function () { commitDays(parseInt(daysInput.value, 10) + 1); });
+      daysInput.addEventListener("change", function () { commitDays(parseInt(daysInput.value, 10)); });
       row.querySelector("[data-r-remove]").addEventListener("click", function () {
         requests[market].splice(idx, 1);
         saveRequests();
@@ -431,7 +462,9 @@
     requestDrawer.close();
     var list = marketList();
     enquirySummary.textContent = list.length + " item" + (list.length === 1 ? "" : "s") + " · " +
-      market.toUpperCase() + " — " + list.map(function (it) { return it.name + " × " + it.qty; }).slice(0, 4).join(", ") +
+      market.toUpperCase() + " — " + list.map(function (it) {
+        return it.name + " × " + it.qty + " (" + (it.days || 1) + " day" + ((it.days || 1) === 1 ? "" : "s") + ")";
+      }).slice(0, 4).join(", ") +
       (list.length > 4 ? "…" : "");
     enquiryDlg.open();
   });
@@ -459,7 +492,9 @@
         notes: enquiryForm.notes.value.trim(),
         consent: enquiryForm.consent.checked,
         market: market,
-        items: marketList().map(function (it) { return { productId: it.id, quantity: it.qty }; })
+        items: marketList().map(function (it) {
+          return { productId: it.id, quantity: it.qty, days: it.days || 1 };
+        })
       };
     },
     onSuccess: function () {

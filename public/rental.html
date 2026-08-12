@@ -19,7 +19,7 @@
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
 <link rel="stylesheet" href="/styles.css?v=3">
-<link rel="stylesheet" href="/pages.css?v=7">
+<link rel="stylesheet" href="/pages.css?v=8">
 <script src="/js/theme-init.js?v=1"></script>
 </head>
 <body>
@@ -149,7 +149,7 @@
         </div>
       </div>
 
-      <div class="catalog-grid" id="rent-grid" aria-busy="true"></div>
+      <div class="catalog-grid catalog-grid--gifts catalog-grid--rental" id="rent-grid" aria-busy="true"></div>
       <div class="empty-state" id="rent-empty" hidden>
         <h3>No items match this view</h3>
         <p>Adjust the search or filters — or <button type="button" class="link-arrow" id="rent-clear">clear everything</button>.</p>
@@ -186,18 +186,6 @@
       <button class="btn btn--primary" type="button" id="rent-request-submit">Continue to request form</button>
       <p class="text-muted" style="font-size:0.8rem;margin:0;">No prices, no payment — availability is confirmed and pricing supplied privately.</p>
     </div>
-  </aside>
-
-  <!-- Detail drawer -->
-  <div class="drawer-scrim" id="rent-detail-scrim"></div>
-  <aside class="drawer" id="rent-detail-drawer" role="dialog" aria-modal="true" aria-labelledby="rent-detail-title" aria-hidden="true">
-    <div class="drawer__head">
-      <h2 id="rent-detail-title">Item details</h2>
-      <button class="icon-btn" type="button" data-drawer-close aria-label="Close item details">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-    </div>
-    <div class="drawer__body" id="rent-detail-body"></div>
   </aside>
 
   <!-- Request form dialog -->
@@ -316,6 +304,6 @@
 
 <script src="/js/site.js?v=4" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/rental.js?v=1" defer></script>
+<script src="/js/rental.js?v=2" defer></script>
 </body>
 </html>

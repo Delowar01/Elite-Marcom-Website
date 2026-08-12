@@ -1,239 +1,248 @@
 {
-  "products": [
-    {
-      "id": "rent-display-75",
-      "code": "EM-R-001",
-      "name": "75-inch 4K Professional Display",
-      "category": "Displays & LED",
-      "featured": true,
-      "image": "/assets/services/led-display.webp",
-      "images": [
-        "/assets/services/led-display.webp"
-      ],
-      "description": "A 75-inch 4K professional display on a heavy-duty freestanding mount — ideal for stands, stages and registration areas. Delivered, installed and tested by our technicians.",
-      "tags": [
-        "display",
-        "screen",
-        "4k",
-        "presentation"
-      ],
-      "specs": [
-        "75-inch 4K UHD panel",
-        "Freestanding heavy-duty mount",
-        "HDMI / USB-C playback",
-        "Portrait or landscape mounting",
-        "Delivery, installation and collection included"
-      ],
-      "stockByMarket": {
-        "ksa": 6,
-        "uae": 4
-      }
-    },
-    {
-      "id": "rent-camera-kit",
-      "code": "EM-R-002",
-      "name": "Professional Camera & Video Kit",
-      "category": "Photo & Video",
-      "featured": true,
-      "image": "/assets/services/camera-body.webp",
-      "images": [
-        "/assets/services/camera-body.webp",
-        "/assets/portfolio/media-production.webp"
-      ],
-      "description": "A complete professional capture kit — full-frame body, lens set, audio and support — ready for event coverage, interviews and content days.",
-      "tags": [
-        "camera",
-        "video",
-        "photography",
-        "production"
-      ],
-      "specs": [
-        "Full-frame camera body",
-        "Zoom and prime lens set",
-        "Wireless microphone kit",
-        "Tripod and stabiliser",
-        "Batteries, media and charger case"
-      ],
-      "stockByMarket": {
-        "ksa": 3,
-        "uae": 2
-      }
-    },
-    {
-      "id": "rent-lounge-set",
-      "code": "EM-R-003",
-      "name": "Premium Event Lounge Set",
-      "category": "Furniture",
-      "featured": true,
-      "image": "/assets/services/interior-lounge.webp",
-      "images": [
-        "/assets/services/interior-lounge.webp"
-      ],
-      "description": "A curated lounge arrangement — sofa, armchairs, coffee table and accent lighting — that gives stands and majlis areas a composed, premium feel.",
-      "tags": [
-        "furniture",
-        "lounge",
-        "seating",
-        "majlis"
-      ],
-      "specs": [
-        "Three-seat sofa and two armchairs",
-        "Coffee and side tables",
-        "Accent lighting",
-        "Neutral premium upholstery",
-        "Configured to your floor plan"
-      ],
-      "stockByMarket": {
-        "ksa": 5,
-        "uae": 3
-      }
-    },
-    {
-      "id": "rent-stage-lighting",
-      "code": "EM-R-004",
-      "name": "Stage Lighting Package",
-      "category": "Lighting & AV",
-      "featured": false,
-      "image": "/assets/portfolio/event-stage.webp",
-      "images": [
-        "/assets/portfolio/event-stage.webp",
-        "/assets/portfolio/live-experience.webp"
-      ],
-      "description": "A stage lighting package with moving heads, wash fixtures and control — programmed and operated by our lighting technicians.",
-      "tags": [
-        "lighting",
-        "stage",
-        "av",
-        "show"
-      ],
-      "specs": [
-        "Moving-head and wash fixtures",
-        "DMX control desk",
-        "Truss and rigging",
-        "On-site lighting operator available",
-        "Programmed to your show flow"
-      ],
-      "stockByMarket": {
-        "ksa": 2,
-        "uae": 2
-      }
-    },
-    {
-      "id": "rent-registration-counter",
-      "code": "EM-R-005",
-      "name": "Branded Registration Counter",
-      "category": "Counters & Kiosks",
-      "featured": false,
-      "image": "/assets/services/registration-counter.webp",
-      "images": [
-        "/assets/services/registration-counter.webp"
-      ],
-      "description": "A clean-lined registration counter with integrated storage and full-wrap branding produced to your artwork.",
-      "tags": [
-        "counter",
-        "registration",
-        "branding",
-        "welcome"
-      ],
-      "specs": [
-        "Full-wrap custom branding",
-        "Internal shelf and storage",
-        "Cable management",
-        "Optional stool set",
-        "Installed and dressed on site"
-      ],
-      "stockByMarket": {
-        "ksa": 8,
-        "uae": 5
-      }
-    },
-    {
-      "id": "rent-coffee-station",
-      "code": "EM-R-006",
-      "name": "Corporate Coffee Station",
-      "category": "Hospitality",
-      "featured": false,
-      "image": "/assets/portfolio/hospitality-space.webp",
-      "images": [
-        "/assets/portfolio/hospitality-space.webp",
-        "/assets/about/hospitality-catering.webp"
-      ],
-      "description": "A staffed specialty coffee station — machine, barista and branded service ware — that turns waiting time into hospitality.",
-      "tags": [
-        "coffee",
-        "barista",
-        "hospitality",
-        "catering"
-      ],
-      "specs": [
-        "Professional espresso machine",
-        "Trained barista included",
-        "Branded cups available",
-        "Milk alternatives on request",
-        "Consumables for agreed volumes"
-      ],
-      "stockByMarket": {
-        "ksa": 4,
-        "uae": 0
-      }
-    },
-    {
-      "id": "rent-touch-kiosk",
-      "code": "EM-R-007",
-      "name": "Interactive Touchscreen Kiosk",
-      "category": "Counters & Kiosks",
-      "featured": false,
-      "image": "/assets/services/stand-ai.webp",
-      "images": [
-        "/assets/services/stand-ai.webp"
-      ],
-      "description": "A floor-standing interactive touchscreen kiosk for product showcases, wayfinding and registration — loaded with your content before show day.",
-      "tags": [
-        "kiosk",
-        "touchscreen",
-        "interactive",
-        "digital"
-      ],
-      "specs": [
-        "43-inch multi-touch panel",
-        "Floor-standing enclosure",
-        "Content loaded and tested pre-show",
-        "Windows or Android playback",
-        "Optional custom vinyl wrap"
-      ],
-      "stockByMarket": {
-        "ksa": 5,
-        "uae": 3
-      }
-    },
-    {
-      "id": "rent-cocktail-set",
-      "code": "EM-R-008",
-      "name": "Exhibition Cocktail Furniture Set",
-      "category": "Furniture",
-      "featured": false,
-      "image": "/assets/portfolio/modern-majlis.webp",
-      "images": [
-        "/assets/portfolio/modern-majlis.webp"
-      ],
-      "description": "High cocktail tables and stools for fast, standing conversations — the workhorse set for busy exhibition stands and networking corners.",
-      "tags": [
-        "furniture",
-        "cocktail",
-        "tables",
-        "networking"
-      ],
-      "specs": [
-        "Four high cocktail tables",
-        "Eight matching stools",
-        "Optional branded table wraps",
-        "Compact footprint",
-        "Same-day setup"
-      ],
-      "stockByMarket": {
-        "ksa": 10,
-        "uae": 6
-      }
-    }
-  ]
+ "products": [
+  {
+   "id": "rent-display-75",
+   "code": "EM-R-001",
+   "name": "75-inch 4K Professional Display",
+   "category": "Displays & LED",
+   "featured": true,
+   "image": "/assets/services/led-display.webp",
+   "images": [
+    "/assets/services/led-display.webp",
+    "/assets/services/registration-counter.webp"
+   ],
+   "description": "A 75-inch 4K professional display on a heavy-duty freestanding mount — ideal for stands, stages and registration areas. Delivered, installed and tested by our technicians.",
+   "tags": [
+    "display",
+    "screen",
+    "4k",
+    "presentation"
+   ],
+   "specs": [
+    "75-inch 4K UHD panel",
+    "Freestanding heavy-duty mount",
+    "HDMI / USB-C playback",
+    "Portrait or landscape mounting",
+    "Delivery, installation and collection included"
+   ],
+   "stockByMarket": {
+    "ksa": 6,
+    "uae": 4
+   }
+  },
+  {
+   "id": "rent-camera-kit",
+   "code": "EM-R-002",
+   "name": "Professional Camera & Video Kit",
+   "category": "Photo & Video",
+   "featured": true,
+   "image": "/assets/services/camera-body.webp",
+   "images": [
+    "/assets/services/camera-body.webp",
+    "/assets/portfolio/media-production.webp",
+    "/assets/services/photographer.webp"
+   ],
+   "description": "A complete professional capture kit — full-frame body, lens set, audio and support — ready for event coverage, interviews and content days.",
+   "tags": [
+    "camera",
+    "video",
+    "photography",
+    "production"
+   ],
+   "specs": [
+    "Full-frame camera body",
+    "Zoom and prime lens set",
+    "Wireless microphone kit",
+    "Tripod and stabiliser",
+    "Batteries, media and charger case"
+   ],
+   "stockByMarket": {
+    "ksa": 3,
+    "uae": 2
+   }
+  },
+  {
+   "id": "rent-lounge-set",
+   "code": "EM-R-003",
+   "name": "Premium Event Lounge Set",
+   "category": "Furniture",
+   "featured": true,
+   "image": "/assets/services/interior-lounge.webp",
+   "images": [
+    "/assets/services/interior-lounge.webp",
+    "/assets/services/interior-kitchen.webp"
+   ],
+   "description": "A curated lounge arrangement — sofa, armchairs, coffee table and accent lighting — that gives stands and majlis areas a composed, premium feel.",
+   "tags": [
+    "furniture",
+    "lounge",
+    "seating",
+    "majlis"
+   ],
+   "specs": [
+    "Three-seat sofa and two armchairs",
+    "Coffee and side tables",
+    "Accent lighting",
+    "Neutral premium upholstery",
+    "Configured to your floor plan"
+   ],
+   "stockByMarket": {
+    "ksa": 5,
+    "uae": 3
+   }
+  },
+  {
+   "id": "rent-stage-lighting",
+   "code": "EM-R-004",
+   "name": "Stage Lighting Package",
+   "category": "Lighting & AV",
+   "featured": false,
+   "image": "/assets/portfolio/event-stage.webp",
+   "images": [
+    "/assets/portfolio/event-stage.webp",
+    "/assets/portfolio/live-experience.webp",
+    "/assets/services/led-display.webp"
+   ],
+   "description": "A stage lighting package with moving heads, wash fixtures and control — programmed and operated by our lighting technicians.",
+   "tags": [
+    "lighting",
+    "stage",
+    "av",
+    "show"
+   ],
+   "specs": [
+    "Moving-head and wash fixtures",
+    "DMX control desk",
+    "Truss and rigging",
+    "On-site lighting operator available",
+    "Programmed to your show flow"
+   ],
+   "stockByMarket": {
+    "ksa": 2,
+    "uae": 2
+   }
+  },
+  {
+   "id": "rent-registration-counter",
+   "code": "EM-R-005",
+   "name": "Branded Registration Counter",
+   "category": "Counters & Kiosks",
+   "featured": false,
+   "image": "/assets/services/registration-counter.webp",
+   "images": [
+    "/assets/services/registration-counter.webp",
+    "/assets/services/led-display.webp"
+   ],
+   "description": "A clean-lined registration counter with integrated storage and full-wrap branding produced to your artwork.",
+   "tags": [
+    "counter",
+    "registration",
+    "branding",
+    "welcome"
+   ],
+   "specs": [
+    "Full-wrap custom branding",
+    "Internal shelf and storage",
+    "Cable management",
+    "Optional stool set",
+    "Installed and dressed on site"
+   ],
+   "stockByMarket": {
+    "ksa": 8,
+    "uae": 5
+   }
+  },
+  {
+   "id": "rent-coffee-station",
+   "code": "EM-R-006",
+   "name": "Corporate Coffee Station",
+   "category": "Hospitality",
+   "featured": false,
+   "image": "/assets/portfolio/hospitality-space.webp",
+   "images": [
+    "/assets/portfolio/hospitality-space.webp",
+    "/assets/about/hospitality-catering.webp",
+    "/assets/services/interior-kitchen.webp",
+    "/assets/services/interior-lounge.webp"
+   ],
+   "description": "A staffed specialty coffee station — machine, barista and branded service ware — that turns waiting time into hospitality.",
+   "tags": [
+    "coffee",
+    "barista",
+    "hospitality",
+    "catering"
+   ],
+   "specs": [
+    "Professional espresso machine",
+    "Trained barista included",
+    "Branded cups available",
+    "Milk alternatives on request",
+    "Consumables for agreed volumes"
+   ],
+   "stockByMarket": {
+    "ksa": 4,
+    "uae": 0
+   }
+  },
+  {
+   "id": "rent-touch-kiosk",
+   "code": "EM-R-007",
+   "name": "Interactive Touchscreen Kiosk",
+   "category": "Counters & Kiosks",
+   "featured": false,
+   "image": "/assets/services/stand-ai.webp",
+   "images": [
+    "/assets/services/stand-ai.webp",
+    "/assets/services/registration-counter.webp"
+   ],
+   "description": "A floor-standing interactive touchscreen kiosk for product showcases, wayfinding and registration — loaded with your content before show day.",
+   "tags": [
+    "kiosk",
+    "touchscreen",
+    "interactive",
+    "digital"
+   ],
+   "specs": [
+    "43-inch multi-touch panel",
+    "Floor-standing enclosure",
+    "Content loaded and tested pre-show",
+    "Windows or Android playback",
+    "Optional custom vinyl wrap"
+   ],
+   "stockByMarket": {
+    "ksa": 5,
+    "uae": 3
+   }
+  },
+  {
+   "id": "rent-cocktail-set",
+   "code": "EM-R-008",
+   "name": "Exhibition Cocktail Furniture Set",
+   "category": "Furniture",
+   "featured": false,
+   "image": "/assets/portfolio/modern-majlis.webp",
+   "images": [
+    "/assets/portfolio/modern-majlis.webp",
+    "/assets/services/interior-lounge.webp"
+   ],
+   "description": "High cocktail tables and stools for fast, standing conversations — the workhorse set for busy exhibition stands and networking corners.",
+   "tags": [
+    "furniture",
+    "cocktail",
+    "tables",
+    "networking"
+   ],
+   "specs": [
+    "Four high cocktail tables",
+    "Eight matching stools",
+    "Optional branded table wraps",
+    "Compact footprint",
+    "Same-day setup"
+   ],
+   "stockByMarket": {
+    "ksa": 10,
+    "uae": 6
+   }
+  }
+ ]
 }
