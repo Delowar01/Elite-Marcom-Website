@@ -11,6 +11,7 @@
   --adm-radius: 16px;
   --adm-radius-sm: 10px;
   --adm-control-h: 40px;
+  --adm-control-sm: 34px;   /* compact: inside table rows and cards */
 
   /* layered surfaces: page → card → inset */
   --adm-card: rgba(37, 45, 61, 0.55);
@@ -45,11 +46,13 @@ html[data-theme="light"] .admin-body {
   --adm-shadow-2: 0 2px 8px rgba(97, 84, 68, 0.12), 0 26px 64px rgba(97, 84, 68, 0.18);
   --adm-ring: 0 0 0 1px rgba(255, 255, 255, 0.7) inset;
   --adm-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0) 46%);
-  --adm-ok: #1f8f57;
+  /* darkened against their own tint: at #1f8f57 the small bold text on a
+     12% green chip measured 3.49:1, under the 4.5 needed at that size */
+  --adm-ok: #146b43;
   --adm-ok-bg: rgba(31, 143, 87, 0.12);
-  --adm-warn: #a9761a;
+  --adm-warn: #8a5f12;
   --adm-warn-bg: rgba(169, 118, 26, 0.13);
-  --adm-bad: #c8393a;
+  --adm-bad: #ab2b2c;
   --adm-bad-bg: rgba(200, 57, 58, 0.11);
   --adm-info: #2f6dbd;
   --adm-info-bg: rgba(47, 109, 189, 0.11);
@@ -667,3 +670,70 @@ html[data-theme="light"] .admin-body {
   .act-item { flex-wrap: wrap; gap: 4px 12px; }
   .act-item span { margin-left: 0; }
 }
+
+
+/* ============================================================
+   Screen-by-screen consistency
+   Measured across all fifteen views in both themes: controls of the same
+   kind were rendering at different heights from one panel to the next, and
+   a few inputs fell through to browser defaults entirely. One size per
+   role, applied wherever the control appears rather than per screen.
+   ============================================================ */
+
+/* buttons: 34 and 36px side by side read as a mistake, not a hierarchy */
+.admin-body .btn,
+.admin-body .btn--small {
+  min-height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1.1;
+}
+.admin-body .btn--small { padding: 7px 14px; }
+.admin-body .icon-btn { width: 36px; height: 36px; }
+
+/* every text control in the panel, including the ones that were never
+   matched by a form selector and fell back to the browser default —
+   a 19px role select in the users table, a 31px alt field on a media card */
+.admin-main input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
+.admin-main select,
+.admin-main textarea {
+  font: inherit; font-size: 0.9rem; color: var(--text);
+  background: var(--adm-inset);
+  border: 1px solid var(--adm-line-strong); border-radius: var(--adm-radius-sm);
+  padding: 8px 12px;
+}
+/* an exact height, not a floor: min-height still let padding and font
+   differences leak through as 42 / 44 / 46px controls sitting in one row */
+.admin-main input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
+.admin-main select {
+  height: var(--adm-control-h); min-height: var(--adm-control-h);
+}
+.admin-main textarea { min-height: 0; }
+.admin-main input:focus-visible, .admin-main select:focus-visible, .admin-main textarea:focus-visible {
+  outline: 2px solid var(--orange-2); outline-offset: 1px; border-color: transparent;
+}
+/* compact contexts keep their own, equally consistent, size */
+.admin-main .admin-table input:not([type="checkbox"]),
+.admin-main .admin-table select,
+.admin-main .media-card input,
+.admin-main .gal-item input,
+.admin-main .ed-panel .ed-fields input,
+.admin-main .ed-panel .ed-fields select {
+  height: var(--adm-control-sm); min-height: var(--adm-control-sm);
+  padding: 6px 10px; font-size: 0.85rem;
+}
+.admin-main textarea { height: auto; min-height: 0; }
+
+/* a bare filter or results panel with no title reads as a floating box */
+.panel-title {
+  font-size: 0.95rem; font-weight: 700; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+
+/* Delta chips were rendering grey: they are spans inside a stat card, and
+   ".stat-card span" outscores ".stat-delta--up" on specificity, so every
+   trend chip took the muted label colour and a rise never read as a rise.
+   Match the card in the selector so the semantic colour actually lands. */
+.stat-card .stat-delta { font-size: 0.73rem; }
+.stat-card .stat-delta--up { color: var(--adm-ok); background: var(--adm-ok-bg); }
+.stat-card .stat-delta--down { color: var(--adm-bad); background: var(--adm-bad-bg); }
+.stat-card .stat-delta--flat { color: var(--text-soft); background: var(--adm-inset); }

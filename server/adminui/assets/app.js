@@ -606,7 +606,7 @@
             return '<div class="stat-card stat-card--click" data-status="' + s + '"><b>' + esc(counts[s] || 0) +
                    "</b><span>" + esc(STATUS_LABELS[s] || s) + "</span></div>";
           }).join("") + "</div>" +
-          '<div class="admin-panel"><div class="req-filters">' +
+          '<div class="admin-panel"><h2>Find a request</h2><div class="req-filters">' +
           '<select id="rq-kind"><option value="">All types</option>' + kindOpts + "</select>" +
           '<select id="rq-status"><option value="">All statuses</option>' + statusOpts + "</select>" +
           '<input id="rq-q" placeholder="Search reference (e.g. GV-XXXX)" maxlength="20" value="' + esc(reqState.q) + '">' +
@@ -767,7 +767,10 @@
         main.innerHTML =
           '<h1 class="admin-h1">Jasani console</h1>' +
           '<p class="admin-sub">The supplier allows ' + esc(b.limit) + " primary calls per day (UAE time). The website serves the cached snapshot; refresh only when needed.</p>" +
-          (d.tokenConfigured ? "" : '<div class="admin-panel"><p class="badge-bad">No supplier token configured — set JASANI_API_TOKEN in .env.</p></div>') +
+          (d.tokenConfigured ? "" : '<div class="admin-panel"><h2>Supplier connection</h2>' +
+            '<p class="badge-bad">No supplier token configured — set JASANI_API_TOKEN on the server.</p>' +
+            '<p class="admin-inline-note">Until it is set the site serves the local preview catalogue ' +
+            "and no supplier call is attempted.</p></div>") +
           '<div class="admin-panel"><h2>Daily call budget</h2>' +
           '<div class="gauge gauge--split"><div class="gauge__fill' + (b.autoRemaining === 0 ? " gauge__fill--max" : "") +
           '" style="width:' + pct + '%"></div>' +
@@ -2793,7 +2796,8 @@
           '<p class="admin-sub">Append-only and hash-chained — ' +
           (chain.ok ? '<span class="badge-ok">chain intact (' + esc(chain.checked) + " entries verified)</span>"
                     : '<span class="badge-bad">chain broken at entry ' + esc(chain.brokenAt) + "!</span>") + "</p>" +
-          '<div class="admin-panel"><div class="table-scroll"><table class="admin-table"><thead>' +
+          '<div class="admin-panel"><h2>Recorded actions</h2>' +
+          '<div class="table-scroll"><table class="admin-table"><thead>' +
           "<tr><th>When</th><th>Who</th><th>Action</th><th>Module</th><th>Detail</th></tr></thead><tbody>" +
           (r.data.entries || []).map(function (a) {
             return "<tr><td class=\"muted\">" + esc(when(a.ts)) + "</td><td>" + esc(a.user_email) +
