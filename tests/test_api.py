@@ -760,10 +760,53 @@ def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):
 
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
     monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_AUTO_BUDGET", 5)
     assert all(jasani._budget_ok() for _ in range(5))
     assert jasani._budget_ok() is False
     jasani._budget_exhaust()
     assert jasani._budget_ok() is False
+    assert jasani._budget_ok(manual=True) is False     # a 403 stops everything
+
+
+def test_jasani_reserves_the_last_call_for_a_manual_sync(tmp_path, monkeypatch):
+    """Background refreshes stop one short of the limit so a person can always
+    force a sync; only an explicitly manual call may use the reserve."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_AUTO_BUDGET", 4)
+
+    assert all(jasani._budget_ok() for _ in range(4))       # automatic work
+    assert jasani._budget_ok() is False                     # reserve is off limits
+    status = jasani.budget_status()
+    assert status == {**status, "used": 4, "remaining": 1, "autoLimit": 4,
+                      "autoRemaining": 0, "reserved": 1, "limit": 5}
+    assert jasani._budget_ok(manual=True) is True           # the person gets it
+    assert jasani._budget_ok(manual=True) is False          # and no more
+    assert jasani.budget_status()["remaining"] == 0
+
+
+def test_jasani_refuses_two_syncs_of_one_market_at_once(tmp_path, monkeypatch):
+    """A double-click, or two admins pressing refresh together, must not spend
+    two calls doing identical work."""
+    import asyncio
+
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "tok")
+
+    async def scenario():
+        held = jasani._refresh_lock("uae")
+        async with held:                       # pretend a sync is already running
+            with pytest.raises(jasani.SupplierUnavailable) as exc:
+                await jasani.force_refresh("uae", "stock")
+            return str(exc.value)
+
+    assert "already running" in asyncio.run(scenario())
+    # each market has its own lock, so KSA is unaffected
+    assert jasani._refresh_lock("ksa") is not jasani._refresh_lock("uae")
 
 
 def test_jasani_refunds_calls_the_supplier_never_served(tmp_path, monkeypatch):

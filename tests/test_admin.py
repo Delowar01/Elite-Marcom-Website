@@ -421,7 +421,8 @@ def test_jasani_refresh_stock_success_and_audit(tmp_path, monkeypatch):
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
     _seed_jasani_cache(tmp_path)
 
-    async def fake_apply(market, products):
+    async def fake_apply(market, products, manual=False):
+        assert manual is True          # an admin pressing refresh is a manual sync
         for p in products:
             p["stock"]["available"] = 77
 

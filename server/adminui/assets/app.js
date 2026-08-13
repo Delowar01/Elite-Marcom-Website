@@ -724,9 +724,17 @@
           '<p class="admin-sub">The supplier allows ' + esc(b.limit) + " primary calls per day (UAE time). The website serves the cached snapshot; refresh only when needed.</p>" +
           (d.tokenConfigured ? "" : '<div class="admin-panel"><p class="badge-bad">No supplier token configured — set JASANI_API_TOKEN in .env.</p></div>') +
           '<div class="admin-panel"><h2>Daily call budget</h2>' +
-          '<div class="gauge"><div class="gauge__fill' + (b.remaining === 0 ? " gauge__fill--max" : "") + '" style="width:' + pct + '%"></div></div>' +
+          '<div class="gauge gauge--split"><div class="gauge__fill' + (b.autoRemaining === 0 ? " gauge__fill--max" : "") +
+          '" style="width:' + pct + '%"></div>' +
+          (b.reserved ? '<i class="gauge__reserve" style="width:' +
+            Math.round((b.reserved / Math.max(1, b.limit)) * 100) + '%"></i>' : "") + "</div>" +
           '<p class="admin-inline-note">' + esc(b.used) + " of " + esc(b.limit) + " used · " + esc(b.remaining) +
-          " remaining · resets in about " + resetH + "h " + resetM + "m (UAE day " + esc(b.day) + ")</p></div>" +
+          " remaining · resets in about " + resetH + "h " + resetM + "m (UAE day " + esc(b.day) + ")" +
+          (b.reserved
+            ? "<br>Automatic refreshes stop after " + esc(b.autoLimit) + " (" + esc(b.autoRemaining) +
+              " left). The last " + esc(b.reserved) + " call" + (b.reserved === 1 ? " is" : "s are") +
+              " held back for a manual sync by an owner or admin."
+            : "") + "</p></div>" +
           '<div class="jz-grid">' + marketCard("ksa", "Saudi Arabia — giftsksa.com") + marketCard("uae", "UAE — jasani.ae") + "</div>" +
           '<div class="admin-panel"><h2>Printing manuals cache</h2><p class="admin-inline-note">' +
           esc(d.manuals.cachedPdfs) + " PDF(s) cached (" + (d.manuals.bytes / (1024 * 1024)).toFixed(1) + " MB) · " +
@@ -741,8 +749,11 @@
           btn.addEventListener("click", function () {
             var what = btn.getAttribute("data-refresh"), market = btn.getAttribute("data-market");
             var cost = what === "products" ? 2 : 1;
+            var reserve = b.autoRemaining < cost && b.remaining >= cost;
             if (!confirm("This uses " + cost + " of the " + b.limit + " daily supplier calls (" +
-                         b.remaining + " remaining). Continue?")) return;
+                         b.remaining + " remaining)." +
+                         (reserve ? " It will use the call reserved for manual syncs." : "") +
+                         " Continue?")) return;
             btn.disabled = true;
             api("/api/admin/jasani/refresh", { market: market, what: what }).then(function (r2) {
               btn.disabled = false;

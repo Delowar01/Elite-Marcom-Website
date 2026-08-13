@@ -667,8 +667,12 @@ async def admin_jasani_refresh(request: Request, body: JasaniRefreshBody,
         raise HTTPException(status_code=400, detail="Unknown market.")
     if body.what not in ("products", "stock"):
         raise HTTPException(status_code=400, detail="Refresh either products or stock.")
+    # The reserved call exists so a person can always force a sync; only an
+    # owner or admin may reach into it. Other roles with jasani.refresh keep
+    # working against the automatic allowance.
+    privileged = session["role"] in ("owner", "admin")
     try:
-        result = await jasani.force_refresh(body.market, body.what)
+        result = await jasani.force_refresh(body.market, body.what, manual=privileged)
     except jasani.SupplierUnavailable as exc:
         aa.audit(session, "jasani.refresh_failed", "jasani",
                  {"market": body.market, "what": body.what, "reason": str(exc)[:200]},

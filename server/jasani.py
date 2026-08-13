@@ -6,6 +6,7 @@ The supplier token never reaches the browser.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import threading
@@ -59,13 +60,20 @@ def _write_budget(budget: dict) -> None:
         pass
 
 
-def _budget_ok() -> bool:
+def _budget_ok(manual: bool = False) -> bool:
+    """Spend one primary call.
+
+    Background work stops at SUPPLIER_AUTO_BUDGET so the remaining call stays
+    available for a person: when the catalogue is visibly wrong, an owner or
+    admin must still be able to force a sync. Only an explicitly manual
+    refresh may reach into that reserve."""
     day = _uae_day()
+    ceiling = config.SUPPLIER_DAILY_BUDGET if manual else config.SUPPLIER_AUTO_BUDGET
     with _lock:
         budget = _read_budget()
         if budget["day"] != day:
             budget = {"day": day, "count": 0}
-        if budget["count"] >= config.SUPPLIER_DAILY_BUDGET:
+        if budget["count"] >= ceiling:
             return False
         budget["count"] += 1
         _write_budget(budget)
@@ -144,13 +152,19 @@ def _host(market: str) -> str:
     return host
 
 
-async def _fetch(url: str, expected_host: str, primary: bool = True) -> tuple[bytes, str]:
+async def _fetch(url: str, expected_host: str, primary: bool = True,
+                 manual: bool = False) -> tuple[bytes, str]:
     """primary=True marks the rate-limited product/price/stock endpoints;
-    branding endpoints are documented outside the daily limit."""
+    branding endpoints are documented outside the daily limit. manual=True is
+    an admin-triggered sync, the only thing allowed to use the reserved call."""
     if not config.JASANI_API_TOKEN:
         raise SupplierUnavailable("no supplier token configured")
-    if primary and not _budget_ok():
-        raise SupplierUnavailable("daily supplier budget exhausted")
+    if primary and not _budget_ok(manual):
+        raise SupplierUnavailable(
+            "daily supplier budget exhausted"
+            if manual else
+            "automatic supplier calls are used up for today — the reserved call "
+            "is available from the Jasani console")
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != expected_host or parsed.port not in (None, 443):
         if primary:
@@ -676,10 +690,10 @@ def _resolve_color_options(products: list[dict]) -> None:
         p["colorOptions"] = opts[:12]
 
 
-async def _fetch_products(market: str) -> list[dict]:
+async def _fetch_products(market: str, manual: bool = False) -> list[dict]:
     """One primary Product API call, normalized. Raises SupplierUnavailable."""
     host = _host(market)
-    raw, ctype = await _fetch(f"https://{host}/products/all/{_token()}", host)
+    raw, ctype = await _fetch(f"https://{host}/products/all/{_token()}", host, manual=manual)
     records = _parse_records(raw, ctype)[: config.SUPPLIER_MAX_RECORDS]
     products = [p for p in (normalize_product(r, market) for r in records) if p]
     if not products:
@@ -693,10 +707,10 @@ async def _fetch_products(market: str) -> list[dict]:
     return products
 
 
-async def _apply_stock(market: str, products: list[dict]) -> None:
+async def _apply_stock(market: str, products: list[dict], manual: bool = False) -> None:
     """One primary Stock API call merged onto products. Raises SupplierUnavailable."""
     host = _host(market)
-    raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{_token()}", host)
+    raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{_token()}", host, manual=manual)
     stock_records = _parse_records(raw_s, ctype_s)[: config.SUPPLIER_MAX_RECORDS]
     matched = _merge_stock(products, stock_records)
     in_stock = sum(1 for p in products if p["stock"]["available"] > 0)
@@ -716,37 +730,63 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
     refreshes: the product feed refreshes about once per day and the stock
     feed about twice per day; everything else is served from the last-known-
     good snapshot. Raises SupplierUnavailable only when nothing is cached."""
-    cached = _read_cache(market)
-    now = time.time()
-    products_fresh = bool(cached) and now - cached.get("fetchedAt", 0) < config.PRODUCT_REFRESH_HOURS * 3600
-    stock_fresh = bool(cached) and now - cached.get("stockAt", cached.get("fetchedAt", 0)) < config.STOCK_REFRESH_HOURS * 3600
+    def read_state():
+        cached = _read_cache(market)
+        now = time.time()
+        return cached, now, (
+            bool(cached) and now - cached.get("fetchedAt", 0) < config.PRODUCT_REFRESH_HOURS * 3600
+        ), (
+            bool(cached) and now - cached.get("stockAt", cached.get("fetchedAt", 0))
+            < config.STOCK_REFRESH_HOURS * 3600
+        )
+
+    cached, now, products_fresh, stock_fresh = read_state()
     if products_fresh and stock_fresh:
         return cached["products"], "cache"
-    if not products_fresh:
-        try:
-            products = await _fetch_products(market)
-            stock_at = 0.0
+
+    # One upstream refresh per market at a time. Without this a burst of
+    # visitors arriving on a due cache would each start their own sync and
+    # spend the day's calls on identical work.
+    lock = _refresh_lock(market)
+    if lock.locked() and cached:
+        return cached["products"], "stale"
+    async with lock:
+        # whoever waited on the lock takes the snapshot the winner just wrote
+        cached, now, products_fresh, stock_fresh = read_state()
+        if products_fresh and stock_fresh:
+            return cached["products"], "cache"
+
+        if not products_fresh:
             try:
-                await _apply_stock(market, products)
-                stock_at = now
+                products = await _fetch_products(market)
+                stock_at = 0.0
+                try:
+                    await _apply_stock(market, products)
+                    stock_at = now
+                except SupplierUnavailable as exc:
+                    # best-effort: the product payload may carry stock already
+                    print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
+                    record_attempt(market, "stock", False, str(exc))
+                _write_cache(market, products, fetched_at=now, stock_at=stock_at)
+                if stock_at:
+                    record_attempt(market, "products", True, f"{len(products)} products with stock")
+                return products, "live"
             except SupplierUnavailable as exc:
-                # best-effort: the product payload may carry stock already
-                print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
-            _write_cache(market, products, fetched_at=now, stock_at=stock_at)
+                record_attempt(market, "products", False, str(exc))
+                if cached:
+                    return cached["products"], "stale"
+                raise
+        # products are fresh; only the stock snapshot is due — refresh it in place
+        products = cached["products"]
+        try:
+            await _apply_stock(market, products)
+            _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
+            record_attempt(market, "stock", True, f"{len(products)} products")
             return products, "live"
-        except SupplierUnavailable:
-            if cached:
-                return cached["products"], "stale"
-            raise
-    # products are fresh; only the stock snapshot is due — refresh it in place
-    products = cached["products"]
-    try:
-        await _apply_stock(market, products)
-        _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
-        return products, "live"
-    except SupplierUnavailable:
-        # keep serving the products snapshot with the previous stock values
-        return products, "cache"
+        except SupplierUnavailable as exc:
+            # keep serving the products snapshot with the previous stock values
+            record_attempt(market, "stock", False, str(exc))
+            return products, "cache"
 
 
 # ---------------- admin console (Phase 1) ----------------
@@ -765,6 +805,9 @@ def budget_status() -> dict:
     reset_in = int(86400 - (uae_now % 86400))
     return {"day": day, "used": used, "limit": config.SUPPLIER_DAILY_BUDGET,
             "remaining": max(0, config.SUPPLIER_DAILY_BUDGET - used),
+            "autoLimit": config.SUPPLIER_AUTO_BUDGET,
+            "autoRemaining": max(0, config.SUPPLIER_AUTO_BUDGET - used),
+            "reserved": max(0, config.SUPPLIER_DAILY_BUDGET - config.SUPPLIER_AUTO_BUDGET),
             "resetInSeconds": reset_in}
 
 
@@ -813,45 +856,61 @@ def manuals_status() -> dict:
             "bytes": size}
 
 
-async def force_refresh(market: str, what: str) -> dict:
+_refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+def _refresh_lock(market: str) -> asyncio.Lock:
+    """One in-flight sync per market. Two admins pressing refresh together, or
+    a double-click, must not spend two calls on the same work."""
+    lock = _refresh_locks.get(market)
+    if lock is None:
+        lock = _refresh_locks[market] = asyncio.Lock()
+    return lock
+
+
+async def force_refresh(market: str, what: str, manual: bool = True) -> dict:
     """Admin-triggered refresh. what='products' does a full products+stock
     refetch (2 primary calls); what='stock' refreshes stock onto the cached
     products (1 primary call). Raises SupplierUnavailable when the budget is
     exhausted or upstream fails — the cached snapshot is left untouched."""
-    now = time.time()
-    if what == "products":
-        try:
-            products = await _fetch_products(market)
-        except SupplierUnavailable as exc:
-            record_attempt(market, "products", False, str(exc))
-            raise
-        stock_at = 0.0
-        try:
-            await _apply_stock(market, products)
-            stock_at = now
-        except SupplierUnavailable as exc:
-            print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
-            record_attempt(market, "stock", False, str(exc))
-        _write_cache(market, products, fetched_at=now, stock_at=stock_at)
-        if stock_at:
-            record_attempt(market, "products", True,
-                           f"{len(products)} products with stock")
-        return {"refreshed": "products", "products": len(products),
-                "stockApplied": stock_at > 0}
-    if what == "stock":
-        cached = _read_cache(market)
-        if not cached or not cached.get("products"):
-            raise SupplierUnavailable("no cached products — run a full product refresh first")
-        products = cached["products"]
-        try:
-            await _apply_stock(market, products)
-        except SupplierUnavailable as exc:
-            record_attempt(market, "stock", False, str(exc))
-            raise
-        _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
-        record_attempt(market, "stock", True, f"{len(products)} products")
-        return {"refreshed": "stock", "products": len(products), "stockApplied": True}
-    raise ValueError("unknown refresh target")
+    lock = _refresh_lock(market)
+    if lock.locked():
+        raise SupplierUnavailable("a sync for this market is already running")
+    async with lock:
+        now = time.time()
+        if what == "products":
+            try:
+                products = await _fetch_products(market, manual=manual)
+            except SupplierUnavailable as exc:
+                record_attempt(market, "products", False, str(exc))
+                raise
+            stock_at = 0.0
+            try:
+                await _apply_stock(market, products, manual=manual)
+                stock_at = now
+            except SupplierUnavailable as exc:
+                print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
+                record_attempt(market, "stock", False, str(exc))
+            _write_cache(market, products, fetched_at=now, stock_at=stock_at)
+            if stock_at:
+                record_attempt(market, "products", True,
+                               f"{len(products)} products with stock")
+            return {"refreshed": "products", "products": len(products),
+                    "stockApplied": stock_at > 0}
+        if what == "stock":
+            cached = _read_cache(market)
+            if not cached or not cached.get("products"):
+                raise SupplierUnavailable("no cached products — run a full product refresh first")
+            products = cached["products"]
+            try:
+                await _apply_stock(market, products, manual=manual)
+            except SupplierUnavailable as exc:
+                record_attempt(market, "stock", False, str(exc))
+                raise
+            _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
+            record_attempt(market, "stock", True, f"{len(products)} products")
+            return {"refreshed": "stock", "products": len(products), "stockApplied": True}
+        raise ValueError("unknown refresh target")
 
 
 def search_cached(market: str, q: str, limit: int = 30) -> list[dict]:
