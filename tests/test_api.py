@@ -848,14 +848,26 @@ def test_printing_manual_embeds_each_area_image():
                   "areaHeightMm": 20, "image": None, "rect": None,
                   "colorChoices": "", "leadTime": ""})
 
+    # the product photo at the head of the manual is a separate image from the
+    # per-area views, and was never covered until a manual turned up without one
+    import base64 as _b64
+    photo = _b64.b64decode(_png_b64(512, 384, "RGB", "PNG"))   # a size no area uses
+
     pdf = manuals.build_manual({"id": "1", "code": "ITGL 1291", "name": "Test product",
-                                "brand": "Jasani"}, areas, "uae", None)
+                                "brand": "Jasani"}, areas, "uae", photo)
     assert pdf[:5] == b"%PDF-"
     embedded = {(int(w), int(h)) for w, h in
                 zip(re.findall(rb"/Width\s+(\d+)", pdf), re.findall(rb"/Height\s+(\d+)", pdf))}
     for size in sizes:
         assert size in embedded, f"{size} missing from the manual"
-    assert b"Area image unavailable" in pdf or True   # the artwork-less area still draws
+    assert (512, 384) in embedded, "the product photo is missing from the manual"
+    # and a manual generated without a photo still builds, just without one
+    no_photo = manuals.build_manual({"id": "1", "code": "ITGL 1291", "name": "Test product",
+                                     "brand": "Jasani"}, areas, "uae", None)
+    assert no_photo[:5] == b"%PDF-"
+    assert (512, 384) not in {(int(w), int(h)) for w, h in
+                              zip(re.findall(rb"/Width\s+(\d+)", no_photo),
+                                  re.findall(rb"/Height\s+(\d+)", no_photo))}
 
 
 def test_branding_artwork_rejects_what_cannot_be_drawn():
