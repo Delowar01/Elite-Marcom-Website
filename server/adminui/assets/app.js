@@ -841,6 +841,9 @@
         main.innerHTML =
           '<h1 class="admin-h1">Pages &amp; SEO</h1>' +
           '<p class="admin-sub">Edit text and SEO per page, preview privately, then publish the whole site in one click. The original design always stays safe in the code.</p>' +
+          '<div class="admin-panel" id="hidden-panel"><div class="panel-head"><h2>Hidden on the site</h2>' +
+          '<span class="admin-inline-note">Anything switched off in the visual editor, in one place</span></div>' +
+          '<div id="hidden-list"><p class="admin-inline-note">Loading…</p></div></div>' +
           '<div class="admin-panel"><h2>Publishing</h2>' +
           (d.staleBuild ? '<p class="ins-alert ins-alert--warn">The site code was updated after your last publish — press <b>Publish site</b> once so the live pages pick up the newest version.</p>' : "") +
           '<p class="admin-inline-note" style="margin-bottom:12px;">' +
@@ -872,6 +875,47 @@
               '<td class="cell-actions"><a class="btn btn--ghost btn--small" href="#pages/' + esc(p.page) + '">Edit</a> ' +
               '<a class="btn btn--ghost btn--small" href="/admin/preview/' + esc(p.page) + '" target="_blank" rel="noopener">Preview</a></td></tr>';
           }).join("") + "</tbody></table></div></div>";
+        /* what is currently hidden anywhere on the site, and how to put it back */
+        function loadHidden() {
+          var box = document.getElementById("hidden-list");
+          if (!box) return;
+          api("/api/admin/design-hidden").then(function (r2) {
+            if (!r2.ok) { box.innerHTML = '<p class="admin-inline-note">Could not load.</p>'; return; }
+            var rows = r2.data.hidden || [];
+            var LABELS = { base: "desktop", tablet: "tablet", mobile: "mobile" };
+            box.innerHTML = rows.length
+              ? '<div class="table-scroll"><table class="admin-table"><thead><tr>' +
+                "<th>What</th><th>Page</th><th>Hidden on</th><th></th></tr></thead><tbody>" +
+                rows.map(function (h) {
+                  return "<tr><td><b>" + esc(h.label) + "</b><br>" +
+                    '<span class="admin-inline-note">' + esc(h.kind) + " · " + esc(h.path) + "</span></td>" +
+                    '<td class="muted">' + esc(h.page === "_global" ? "every page" : h.page) + "</td>" +
+                    "<td>" + h.breakpoints.map(function (b2) {
+                      return '<span class="status-pill">' + esc(LABELS[b2] || b2) + "</span>";
+                    }).join(" ") + "</td>" +
+                    '<td class="cell-actions"><button class="btn btn--ghost btn--small" data-unhide="' +
+                    esc(h.page) + "|" + esc(h.kind) + "|" + esc(h.path) + '">Show again</button></td></tr>';
+                }).join("") + "</tbody></table></div>"
+              : '<p class="admin-inline-note">Nothing is hidden — every section and element is visible. ' +
+                "To hide something, open the <b>Visual editor</b>, click it, and use Visibility " +
+                "(or the eye button in the Sections list for a whole section).</p>";
+            box.querySelectorAll("[data-unhide]").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                var parts = btn.getAttribute("data-unhide").split("|");
+                btn.disabled = true;
+                api("/api/admin/design-hidden/restore",
+                    { page: parts[0], kind: parts[1], path: parts[2] }).then(function (r3) {
+                  btn.disabled = false;
+                  if (!r3.ok) return apiErr(r3);
+                  toast("Shown again — publish to put it live.");
+                  loadHidden();
+                });
+              });
+            });
+          });
+        }
+        loadHidden();
+
         document.getElementById("pub-btn").addEventListener("click", function () {
           if (!confirm("Publish all pages to the live site now?")) return;
           api("/api/admin/pages-publish", {}).then(function (r2) {

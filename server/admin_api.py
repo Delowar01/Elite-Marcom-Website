@@ -1066,6 +1066,38 @@ async def admin_design_get(request: Request, page: str):
             "breakpoints": list(design.BREAKPOINTS)}
 
 
+@router.get("/api/admin/design-hidden")
+async def admin_design_hidden(request: Request):
+    """Everything currently hidden anywhere on the site."""
+    require_perm(request, "content.edit")
+    from . import design
+
+    return {"hidden": design.hidden_index(), "breakpoints": list(design.BREAKPOINTS)}
+
+
+class UnhideBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    page: str = Field(max_length=60)
+    kind: str = Field(max_length=12)
+    path: str = Field(max_length=300)
+
+
+@router.post("/api/admin/design-hidden/restore")
+async def admin_design_unhide(request: Request, body: UnhideBody,
+                              x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import design
+
+    if body.kind not in ("element", "section"):
+        raise HTTPException(status_code=400, detail="Unknown kind.")
+    if not design.unhide(body.page, body.kind, body.path, session["email"]):
+        raise HTTPException(status_code=404, detail="That item is no longer hidden.")
+    aa.audit(session, "design.unhidden", "content",
+             {"page": body.page, "kind": body.kind, "path": body.path}, _ip_hash(request))
+    return {"ok": True, "hidden": design.hidden_index()}
+
+
 class DesignBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     doc: dict

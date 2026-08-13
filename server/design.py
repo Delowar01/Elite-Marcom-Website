@@ -216,6 +216,65 @@ def set_doc(page: str, doc: dict, by: str) -> dict:
     return clean
 
 
+def hidden_index() -> list[dict]:
+    """Everything currently hidden across the site, with enough detail to
+    put it back.
+
+    Hiding is set per element and per breakpoint deep inside the visual
+    editor's inspector, and per section in its section list, which means a
+    thing switched off months ago on one page at one width is effectively
+    lost — nobody remembers where to look. This is the one list that answers
+    "what is turned off right now"."""
+    from . import content
+
+    known = set(content.PAGES) | {"_global"}
+    out: list[dict] = []
+    for row in all_docs():
+        page = str(row.get("page") or "")
+        if page not in known:
+            continue
+        doc = row.get("doc") or {}
+        if isinstance(doc, str):       # all_docs() hands back the stored JSON
+            try:
+                doc = json.loads(doc)
+            except ValueError:
+                continue
+        for path, spec in (doc.get("elements") or {}).items():
+            breakpoints = [bp for bp in BREAKPOINTS if (spec.get("hidden") or {}).get(bp) is True]
+            if breakpoints:
+                out.append({"page": page, "kind": "element", "path": path,
+                            "label": path, "breakpoints": breakpoints})
+        # a section is hidden by having its id in the section 'removed' list
+        for sid in ((doc.get("sections") or {}).get("removed") or []):
+            out.append({"page": page, "kind": "section", "path": sid,
+                        "label": f"Section {sid}", "breakpoints": list(BREAKPOINTS)})
+    out.sort(key=lambda o: (o["page"], o["kind"], o["path"]))
+    return out
+
+
+def unhide(page: str, kind: str, path: str, by: str) -> bool:
+    """Put one hidden element or section back on every breakpoint."""
+    doc = get_doc(page)
+    if kind == "section":
+        sections = doc.get("sections") or {}
+        removed = list(sections.get("removed") or [])
+        if path not in removed:
+            return False
+        sections["removed"] = [s for s in removed if s != path]
+        if not sections["removed"]:
+            sections.pop("removed", None)
+        doc["sections"] = sections
+    else:
+        spec = (doc.get("elements") or {}).get(path)
+        if not spec or not (spec.get("hidden") or {}):
+            return False
+        spec.pop("hidden", None)
+        if not spec:
+            doc["elements"].pop(path, None)
+    set_doc(page, doc, by)
+    return True
+
+
 def all_docs() -> list[dict]:
     from . import adminauth as aa
 

@@ -1336,6 +1336,47 @@ def test_security_centre_and_operations_permissions():
 
 # ---------------- Email settings in the admin panel ----------------
 
+def test_hidden_index_lists_everything_switched_off_and_restores_it():
+    """Hiding lives per element, per breakpoint, deep in the editor's
+    inspector. Without one list of what is currently off, something hidden
+    months ago on one page at one width is effectively lost."""
+    from server import design
+
+    me = client.get("/api/admin/me").json()
+    design.set_doc("index", {
+        "elements": {"[data-em-sec=s2]>div>a": {"hidden": {"mobile": True, "tablet": True}}},
+        "sections": {"removed": ["s3"]},
+    }, "owner@elitemarcom.com")
+
+    listed = client.get("/api/admin/design-hidden")
+    assert listed.status_code == 200
+    rows = listed.json()["hidden"]
+    element = next(r for r in rows if r["kind"] == "element")
+    section = next(r for r in rows if r["kind"] == "section")
+    assert element["page"] == "index"
+    assert element["breakpoints"] == ["tablet", "mobile"]      # only where it is off
+    assert section["path"] == "s3"
+
+    # putting it back is one call, and needs the same permission plus CSRF
+    assert client.post("/api/admin/design-hidden/restore",
+                       json={"page": "index", "kind": "element",
+                             "path": "[data-em-sec=s2]>div>a"}).status_code == 403
+    ok = client.post("/api/admin/design-hidden/restore",
+                     json={"page": "index", "kind": "element",
+                           "path": "[data-em-sec=s2]>div>a"},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200
+    remaining = {r["kind"] for r in ok.json()["hidden"]}
+    assert "element" not in remaining and "section" in remaining
+    # restoring something already visible is reported, not silently accepted
+    again = client.post("/api/admin/design-hidden/restore",
+                        json={"page": "index", "kind": "element",
+                              "path": "[data-em-sec=s2]>div>a"},
+                        headers={"X-CSRF": me["csrf"]})
+    assert again.status_code == 404
+    design.set_doc("index", {"elements": {}, "sections": {}}, "owner@elitemarcom.com")
+
+
 def test_dashboard_reports_real_system_state():
     """Every dashboard figure comes from the live system — no placeholders."""
     res = client.get("/api/admin/dashboard")
