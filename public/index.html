@@ -19,8 +19,14 @@
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
 <link rel="preload" href="/assets/logo-light.svg" as="image">
+<!-- the hero model and its module graph are the critical path: start them
+     with the document rather than after the script chain resolves -->
+<link rel="preload" href="/assets/aces-exhibition.glb" as="fetch" type="model/gltf-binary">
+<link rel="modulepreload" href="/vendor/three/three.module.min.js">
+<link rel="modulepreload" href="/vendor/three/GLTFLoader.js">
+<link rel="modulepreload" href="/vendor/three/DRACOLoader.js">
 <link rel="stylesheet" href="/styles.css?v=7">
-<link rel="stylesheet" href="/home.css?v=4">
+<link rel="stylesheet" href="/home.css?v=5">
 <script src="/js/theme-init.js?v=1"></script>
 <script type="application/ld+json">
 {
@@ -401,6 +407,6 @@
 <script src="/js/site.js?v=6" defer></script>
 <script src="/js/insights.js?v=1" defer></script>
 <script src="/js/home.js?v=1" defer></script>
-<script type="module" src="/js/hero-3d.js?v=4"></script>
+<script type="module" src="/js/hero-3d.js?v=5"></script>
 </body>
 </html>

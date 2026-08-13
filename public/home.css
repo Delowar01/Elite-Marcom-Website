@@ -67,6 +67,21 @@
   border-top-color: var(--orange-2);
   animation: hero-spin 1s linear infinite;
 }
+/* once the download reports a length the ring fills for real, so a slow
+   connection shows progress instead of a spinner that could mean anything */
+.hero__stage.is-loading.is-determinate .hero__stage-inner::before {
+  border: 0; animation: none;
+  background: conic-gradient(var(--orange-2) calc(var(--glb-p, 0) * 1%), var(--skeleton) 0);
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 62%);
+  mask: radial-gradient(circle, transparent 60%, #000 62%);
+  transition: background 0.2s linear;
+}
+.hero__stage.is-loading.is-determinate .hero__stage-inner::after {
+  content: attr(data-loading-label);
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  font-size: 0.72rem; font-weight: 700; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
 @keyframes hero-spin { to { transform: rotate(360deg); } }
 
 /* vertical scroll cue — centered in the gap between the copy and the model */

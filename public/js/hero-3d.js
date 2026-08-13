@@ -48,9 +48,42 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
   var heroCfg = fetch("/api/site/hero").then(function (r) {
     return r.ok ? r.json() : {};
   }).catch(function () { return {}; });
+  /* Stream the model so the loading state can be honest about progress, and
+     so a slow connection shows movement rather than a spinner that could mean
+     anything. Falls back to a plain read when the length is not advertised. */
+  function readWithProgress(res) {
+    var total = parseInt(res.headers.get("content-length") || "0", 10);
+    if (!total || !res.body || !res.body.getReader) return res.arrayBuffer();
+    if (stageWrap) stageWrap.classList.add("is-determinate");
+    var reader = res.body.getReader();
+    var chunks = [];
+    var done = 0;
+    return new Promise(function (resolve, reject) {
+      (function pump() {
+        reader.read().then(function (step) {
+          if (step.done) {
+            var out = new Uint8Array(done);
+            var at = 0;
+            chunks.forEach(function (c) { out.set(c, at); at += c.length; });
+            resolve(out.buffer);
+            return;
+          }
+          chunks.push(step.value);
+          done += step.value.length;
+          var pct = Math.min(99, Math.round((done / total) * 100));
+          if (stage) {
+            stage.style.setProperty("--glb-p", String(pct));
+            stage.setAttribute("data-loading-label", pct + "%");
+          }
+          pump();
+        }).catch(reject);
+      }());
+    });
+  }
+
   var preload = fetch(GLB_URL).then(function (r) {
     if (!r.ok) throw new Error("glb http " + r.status);
-    return r.arrayBuffer();
+    return readWithProgress(r);
   }).then(function (buffer) {
     return heroCfg.then(function (cfg) {
       adminHero = cfg || {};
@@ -205,11 +238,16 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
     });
 
     /* load model */
+    /* The mesh is Draco-compressed, so nothing can be parsed until the decoder
+       is fetched and instantiated. Starting that now overlaps it with the
+       model download instead of waiting for the bytes to land first. */
+    var loader = new GLTFLoader();
+    var draco = new DRACOLoader();
+    draco.setDecoderPath("/vendor/three/draco/");
+    try { draco.preload(); } catch (e) { /* decoder loads on demand instead */ }
+    loader.setDRACOLoader(draco);
+
     preload.then(function (buffer) {
-      var loader = new GLTFLoader();
-      var draco = new DRACOLoader();
-      draco.setDecoderPath("/vendor/three/draco/");
-      loader.setDRACOLoader(draco);
       loader.parse(buffer, "/assets/", function (gltf) {
         var model = gltf.scene;
 
@@ -250,8 +288,10 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
         camera.position.set(0, CAM_Y, CAM_Z);
         fitCamera();
 
-        if (stageWrap) stageWrap.classList.remove("is-loading");
+        if (stageWrap) stageWrap.classList.remove("is-loading", "is-determinate");
+        stage.removeAttribute("data-loading-label");
         if (cue) cue.classList.add("is-ready");
+        try { draco.dispose(); } catch (e) { /* already released */ }
         resize();
 
         if (reduceMotion) {

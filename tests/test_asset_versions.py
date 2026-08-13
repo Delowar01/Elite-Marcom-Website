@@ -18,7 +18,11 @@ HTML_DIRS = (BASE / "public", BASE / "server" / "adminui")
 # version because there is no cached copy to bust.
 DYNAMIC = {"/theme-custom.css"}
 
-REF = re.compile(r'(?:href|src)="(/[^"?]+\.(?:css|js))(\?v=([^"]*))?"')
+# Only real references count: a rel="preload"/"modulepreload" hint has to byte-
+# match the request the browser will make anyway (for modules, the bare import
+# specifier), so adding a ?v= there would stop the preload being used at all.
+PRELOAD = re.compile(r'rel="(?:module)?preload"')
+REF = re.compile(r'<(?:link|script)[^>]*?(?:href|src)="(/[^"?]+\.(?:css|js))(\?v=([^"]*))?"[^>]*>')
 
 
 def html_files() -> list[pathlib.Path]:
@@ -30,8 +34,12 @@ def html_files() -> list[pathlib.Path]:
 def references() -> list[tuple[pathlib.Path, str, str | None]]:
     found = []
     for page in html_files():
-        for path, _, version in REF.findall(page.read_text(encoding="utf-8")):
-            found.append((page, path, version or None))
+        for tag in re.finditer(r"<(?:link|script)\b[^>]*>", page.read_text(encoding="utf-8")):
+            if PRELOAD.search(tag.group(0)):
+                continue
+            m = REF.match(tag.group(0))
+            if m:
+                found.append((page, m.group(1), m.group(3) if m.group(2) else None))
     return found
 
 
