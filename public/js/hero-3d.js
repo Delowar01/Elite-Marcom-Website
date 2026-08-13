@@ -43,6 +43,8 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
     return isNaN(v) ? fallback : v;
   }
   var CAM_Z = 5.6, CAM_Y = 1.15, CAM_FOV = 38;
+  /* how much of the stage the model fills; 1 = the largest that never clips */
+  var SIZE = 1;
 
   /* Preload the GLB bytes (and admin camera overrides) without blocking hero text. */
   var heroCfg = fetch("/api/site/hero").then(function (r) {
@@ -90,6 +92,7 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
       CAM_Z = tune("camz", 5.6);
       CAM_Y = tune("camy", 1.15);
       CAM_FOV = tune("fov", 38);
+      SIZE = tune("size", 1);
       return buffer;
     });
   });
@@ -200,11 +203,20 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
          sits up to sweepR nearer the lens, which costs that much extra room */
       var needH = (sweepR * EDGE_CLEARANCE) / Math.sin(hHalf);
       var needV = ((sweepH + Math.abs(LOOK_Y)) * EDGE_CLEARANCE) / Math.tan(vHalf) + sweepR;
-      var need = Math.max(needH, needV);
+      /* This distance frames the worst rotation, so at SIZE = 1 the model is
+         as large as it can be and still never touch an edge. Apparent size is
+         inversely proportional to distance, so the admin's factor divides it:
+         above 1 the model fills more of the stage and its corners may reach
+         the edge as it turns, which is the trade the setting exists to offer. */
+      var need = Math.max(needH, needV) / Math.max(0.2, SIZE);
       var dy = camera.position.y - LOOK_Y;
       var z = Math.sqrt(Math.max(need * need - dy * dy, 0.04));
-      /* honour a wider admin/query framing, never a tighter one */
-      camera.position.z = Math.max(CAM_Z, z);
+      /* camz is a floor only while the model is being kept inside the frame.
+         Once size asks for more than the safe maximum the admin has chosen a
+         tighter framing on purpose, and a leftover distance from the markup
+         must not quietly cap it — which is what made 130% and 160% render
+         identically until this was measured. */
+      camera.position.z = SIZE <= 1 ? Math.max(CAM_Z, z) : z;
       camera.lookAt(0, LOOK_Y, 0);
       camera.updateProjectionMatrix();
     }

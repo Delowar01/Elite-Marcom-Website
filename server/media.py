@@ -503,7 +503,11 @@ def glb_delete_version(file_name: str) -> bool:
     return True
 
 
-HERO_RANGES = {"camz": (2.0, 12.0), "camy": (0.0, 4.0), "fov": (20.0, 70.0)}
+# size is a fraction of the largest framing that never clips at any rotation:
+# 1.0 is that maximum, above it the model fills more and its corners can reach
+# the canvas edge as it turns.
+HERO_RANGES = {"camz": (2.0, 12.0), "camy": (0.0, 4.0), "fov": (20.0, 70.0),
+               "size": (0.6, 1.6)}
 
 
 def get_hero_config() -> dict:

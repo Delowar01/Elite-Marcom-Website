@@ -753,3 +753,13 @@ html[data-theme="light"] .admin-body {
 .slot--next { border-color: var(--orange-2); color: var(--orange-2); }
 /* the hour has passed but the sync has not run — it catches up on the next tick */
 .slot--due { border-color: var(--adm-warn); color: var(--adm-warn); background: var(--adm-warn-bg); }
+
+
+/* ---------- range control (hero model size) ---------- */
+.admin-main input[type="range"] {
+  width: 100%; height: auto; min-height: 0; padding: 0;
+  background: none; border: 0; accent-color: var(--orange-2); cursor: pointer;
+}
+.admin-form label output {
+  font-variant-numeric: tabular-nums; color: var(--orange-2); font-weight: 800;
+}

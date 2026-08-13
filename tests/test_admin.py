@@ -1400,6 +1400,41 @@ def test_hidden_index_lists_everything_switched_off_and_restores_it():
     design.set_doc("index", {"elements": {}, "sections": {}}, "owner@elitemarcom.com")
 
 
+def test_hero_model_size_is_admin_controlled_and_clamped():
+    """Fitting the camera to the worst rotation stopped the model clipping and
+    also stopped anyone making it bigger; size is the control that gives that
+    back without letting a value silently reintroduce the crop everywhere."""
+    from server import media
+
+    me = client.get("/api/admin/me").json()
+    lo, hi = media.HERO_RANGES["size"]
+    assert lo < 1.0 < hi                       # 1.0 is the no-clip maximum
+
+    saved = client.post("/api/admin/hero", json={"values": {"size": 1.25}},
+                        headers={"X-CSRF": me["csrf"]})
+    assert saved.status_code == 200
+    assert media.get_hero_config()["size"] == 1.25
+    assert client.get("/api/site/hero").json()["size"] == 1.25   # reaches the page
+
+    # out of range is refused with a message, the same as the other camera
+    # fields — a saved-but-ignored value is worse than a visible error
+    for bad in (99, 0.01, "not a number"):
+        res = client.post("/api/admin/hero", json={"values": {"size": bad}},
+                          headers={"X-CSRF": me["csrf"]})
+        assert res.status_code == 400, bad
+        assert media.get_hero_config()["size"] == 1.25, bad   # unchanged
+    # the edges of the range are accepted
+    for edge in (lo, hi):
+        res = client.post("/api/admin/hero", json={"values": {"size": edge}},
+                          headers={"X-CSRF": me["csrf"]})
+        assert res.status_code == 200 and media.get_hero_config()["size"] == edge
+
+    brand = client.get("/api/admin/brand").json()
+    assert "size" in brand["heroRanges"]
+    client.post("/api/admin/hero", json={"values": {"size": 1}},
+                headers={"X-CSRF": me["csrf"]})
+
+
 def test_dashboard_reports_real_system_state():
     """Every dashboard figure comes from the live system — no placeholders."""
     res = client.get("/api/admin/dashboard")

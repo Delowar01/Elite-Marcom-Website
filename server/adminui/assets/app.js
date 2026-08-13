@@ -1373,6 +1373,15 @@
           '<input type="number" id="hc-camy" step="0.05" min="' + d.heroRanges.camy[0] + '" max="' + d.heroRanges.camy[1] + '" value="' + esc(hero.camy != null ? hero.camy : 0.9) + '"></div>' +
           '<div><label for="hc-fov">Field of view (' + d.heroRanges.fov[0] + "–" + d.heroRanges.fov[1] + ")</label>" +
           '<input type="number" id="hc-fov" step="1" min="' + d.heroRanges.fov[0] + '" max="' + d.heroRanges.fov[1] + '" value="' + esc(hero.fov != null ? hero.fov : 38) + '"></div>' +
+          '<div class="full"><label for="hc-size">Model size — ' +
+          '<output id="hc-size-out">' + Math.round((hero.size != null ? hero.size : 1) * 100) + "%</output></label>" +
+          '<input type="range" id="hc-size" step="0.05" min="' + d.heroRanges.size[0] + '" max="' +
+          d.heroRanges.size[1] + '" value="' + esc(hero.size != null ? hero.size : 1) + '">' +
+          '<span class="field-help">How much of the hero area the model fills. ' +
+          "<b>100% is the largest the model can be and still never touch an edge at any rotation</b>, " +
+          "whatever model is uploaded. Above that it keeps growing in proportion — 130% draws it about " +
+          "a third larger — but the safe headroom depends on the shape of the model, so raise it a step " +
+          'at a time and drag the hero right around to check.<span id="hc-size-warn"></span></span></div>' +
           '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save camera</button>' +
           '<span class="admin-inline-note">Reload the homepage after saving to see the new framing.</span></div></form></div>';
 
@@ -1464,9 +1473,27 @@
             });
           });
         });
+        (function () {
+          var range = document.getElementById("hc-size");
+          var out = document.getElementById("hc-size-out");
+          if (range && out) {
+            var warn = document.getElementById("hc-size-warn");
+            function show() {
+              var v = parseFloat(range.value);
+              out.textContent = Math.round(v * 100) + "%";
+              warn.innerHTML = v > 1
+                ? '<br><b style="color:var(--adm-warn)">Above the guaranteed size</b> — ' +
+                  "check the homepage at this setting, including on a phone, before leaving it."
+                : "";
+            }
+            range.addEventListener("input", show);
+            show();
+          }
+        }());
         document.getElementById("hero-form").addEventListener("submit", function (e) {
           e.preventDefault();
           api("/api/admin/hero", { values: {
+            size: parseFloat(document.getElementById("hc-size").value),
             camz: document.getElementById("hc-camz").value,
             camy: document.getElementById("hc-camy").value,
             fov: document.getElementById("hc-fov").value
