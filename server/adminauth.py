@@ -141,6 +141,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         pages INTEGER NOT NULL,
         snapshot TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS custom_pages (
+        slug TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        nav INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        created_by TEXT NOT NULL DEFAULT ''
+    );
     CREATE TABLE IF NOT EXISTS media (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         file TEXT NOT NULL UNIQUE,

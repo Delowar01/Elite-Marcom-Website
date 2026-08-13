@@ -474,6 +474,24 @@ html[data-theme="light"] .admin-body {
 }
 .sec-btns button:disabled { opacity: 0.3; cursor: default; }
 .sec-btns button.is-on { border-color: var(--orange-2); color: var(--orange-2); }
+/* block library — the "Add section" picker inside the editor panel */
+.block-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.block-item {
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  padding: 10px 12px; border: 1px solid var(--adm-line); border-radius: 10px;
+  background: var(--adm-inset); color: var(--text); cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+}
+.block-item:hover { border-color: var(--orange-2); background: var(--adm-card); }
+.block-item b { font-size: 0.87rem; font-weight: 600; }
+.block-item span { font-size: 0.78rem; color: var(--text-muted); }
+/* the slug field on the new-page form reads as one address */
+.np-slug-wrap {
+  display: inline-flex; align-items: center; gap: 2px;
+  color: var(--text-muted); font-size: 0.85rem;
+}
+.np-slug-wrap input { min-width: 140px; }
+
 .picker-overlay {
   position: fixed; inset: 0; z-index: 600; background: var(--scrim);
   display: flex; align-items: center; justify-content: center; padding: 30px;

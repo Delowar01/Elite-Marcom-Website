@@ -1,7 +1,8 @@
 """Elite Marcom admin — backups, restore and scheduled publishing (Phase 6).
 
 A backup is a single zip holding everything the panel owns: page content
-(all languages), design overrides, settings, rental inventory, media
+(all languages), pages created in the panel, design overrides, settings,
+rental inventory, media
 metadata and the uploaded media files themselves. Customer submissions are
 deliberately NOT included — they are encrypted personal data with their own
 retention rules and must not travel in an operational backup.
@@ -38,11 +39,15 @@ def create() -> tuple[bytes, dict]:
         "version": BACKUP_VERSION,
         "createdAt": int(time.time()),
         "createdAtHuman": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "contains": ["content", "designs", "settings", "rentals", "media"],
+        "contains": ["content", "designs", "pages", "settings", "rentals", "media"],
     }
     payload = {
         "content": _rows("content", "page, key, lang, value, updated_at, updated_by"),
         "designs": _rows("designs", "page, doc, updated_at, updated_by"),
+        # pages created in the panel: a restore that dropped these would take
+        # the pages themselves away, not just their text
+        "customPages": _rows("custom_pages",
+                             "slug, label, title, description, nav, created_at, created_by"),
         "settings": _rows("settings", "key, value, updated_at"),
         "media": _rows("media", "file, name, mime, bytes, width, height, alt, created_at, created_by"),
         "rentals": content.rentals_load()[0],
@@ -113,6 +118,12 @@ def restore(blob: bytes, by: str) -> dict:
         for r in data.get("designs", []):
             conn.execute("INSERT INTO designs (page, doc, updated_at, updated_by) VALUES (?,?,?,?)",
                          (r["page"], r["doc"], now, by[:200]))
+        conn.execute("DELETE FROM custom_pages")
+        for r in data.get("customPages", []):
+            conn.execute("INSERT INTO custom_pages (slug, label, title, description, nav,"
+                         " created_at, created_by) VALUES (?,?,?,?,?,?,?)",
+                         (r["slug"], r["label"], r["title"], r.get("description", ""),
+                          int(r.get("nav", 1)), r.get("created_at", now), r.get("created_by", "")))
         for r in data.get("settings", []):
             conn.execute("INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)"
                          " ON CONFLICT(key) DO UPDATE SET value=excluded.value,"

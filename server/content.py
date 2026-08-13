@@ -67,6 +67,14 @@ PAGES: dict[str, dict] = {
     "rental-item": {"label": "Rental item page", "file": "rental-item.html", "regions": []},
 }
 
+# A page created in the admin panel starts from the shell in blocks.py, which
+# gives it these three keyed regions plus whatever the editor adds by path.
+CUSTOM_REGIONS = [
+    {"key": "hero.eyebrow", "label": "Hero — eyebrow line", "kind": "text"},
+    {"key": "hero.title1", "label": "Hero — page title", "kind": "text"},
+    {"key": "hero.lead", "label": "Hero — lead paragraph", "kind": "multiline"},
+]
+
 SEO_FIELDS = [
     {"key": "seo.title", "label": "Browser & search title", "kind": "text", "max": 200},
     {"key": "seo.description", "label": "Meta description", "kind": "multiline", "max": 400},
@@ -83,10 +91,138 @@ _HREF_RULES = {
 }
 
 
+# ---------------- pages created in the admin panel ----------------
+
+_PAGE_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
+# names that belong to the app, an asset directory or a built-in page
+_SLUG_RESERVED = set(PAGES) | {
+    "admin", "api", "ar", "assets", "media", "js", "data", "vendor", "css",
+    "sitemap", "robots", "styles", "home", "pages", "theme-custom", "static",
+}
+
+
+def custom_pages() -> list[dict]:
+    from . import adminauth as aa
+
+    rows = aa._connect().execute(
+        "SELECT slug, label, title, description, nav, created_at, created_by "
+        "FROM custom_pages ORDER BY created_at").fetchall()
+    return [dict(r) for r in rows]
+
+
+def _custom_slugs() -> set[str]:
+    from . import adminauth as aa
+
+    return {r["slug"] for r in aa._connect().execute("SELECT slug FROM custom_pages")}
+
+
+def all_pages() -> dict[str, dict]:
+    """Built-in pages plus everything created in the admin panel."""
+    pages: dict[str, dict] = {key: {**cfg, "custom": False} for key, cfg in PAGES.items()}
+    for row in custom_pages():
+        pages[row["slug"]] = {"label": row["label"], "file": f"{row['slug']}.html",
+                              "regions": CUSTOM_REGIONS, "custom": True,
+                              "nav": bool(row["nav"]), "title": row["title"],
+                              "description": row["description"]}
+    return pages
+
+
+def page_config(page: str) -> dict | None:
+    if page in PAGES:
+        return {**PAGES[page], "custom": False}
+    return all_pages().get(page)
+
+
+def page_source(page: str) -> str:
+    """The design source for a page: the git-tracked file for a built-in one,
+    and a shell built from a live page for one created in the admin."""
+    from . import blocks
+
+    cfg = page_config(page)
+    if cfg is None:
+        raise ValueError("unknown page")
+    if not cfg.get("custom"):
+        return (config.PUBLIC_DIR / cfg["file"]).read_text(encoding="utf-8")
+    return blocks.page_shell(page, cfg.get("title") or cfg["label"],
+                             cfg.get("description") or "", cfg["label"],
+                             cfg.get("description") or "")
+
+
+def page_create(slug: str, label: str, title: str, description: str,
+                nav: bool, by: str) -> dict:
+    from . import adminauth as aa
+
+    slug = str(slug or "").strip().lower()
+    if not _PAGE_SLUG_RE.match(slug):
+        raise ValueError("The address must be lowercase letters, digits and dashes "
+                         "(for example team or our-process).")
+    if slug in _SLUG_RESERVED or (config.PUBLIC_DIR / f"{slug}.html").exists():
+        raise ValueError("That address is already used by the site.")
+    if slug in _custom_slugs():
+        raise ValueError("A page with that address already exists.")
+    label = re.sub(r"\s+", " ", str(label or "")).strip()[:60]
+    if not label:
+        raise ValueError("Give the page a name.")
+    title = re.sub(r"\s+", " ", str(title or "")).strip()[:200] or f"{label} — Elite Marcom"
+    description = re.sub(r"\s+", " ", str(description or "")).strip()[:300]
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("INSERT INTO custom_pages (slug, label, title, description, nav, "
+                     "created_at, created_by) VALUES (?,?,?,?,?,?,?)",
+                     (slug, label, title, description, 1 if nav else 0,
+                      int(time.time()), by[:200]))
+        conn.commit()
+    return {"slug": slug, "label": label, "title": title,
+            "description": description, "nav": bool(nav)}
+
+
+def page_update(slug: str, label: str | None, title: str | None,
+                description: str | None, nav: bool | None) -> dict:
+    from . import adminauth as aa
+
+    current = next((p for p in custom_pages() if p["slug"] == slug), None)
+    if current is None:
+        raise ValueError("unknown page")
+    label = re.sub(r"\s+", " ", str(label)).strip()[:60] if label is not None else current["label"]
+    if not label:
+        raise ValueError("Give the page a name.")
+    title = (re.sub(r"\s+", " ", str(title)).strip()[:200] if title is not None
+             else current["title"]) or f"{label} — Elite Marcom"
+    description = (re.sub(r"\s+", " ", str(description)).strip()[:300]
+                   if description is not None else current["description"])
+    nav_value = current["nav"] if nav is None else (1 if nav else 0)
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("UPDATE custom_pages SET label=?, title=?, description=?, nav=? WHERE slug=?",
+                     (label, title, description, nav_value, slug))
+        conn.commit()
+    return {"slug": slug, "label": label, "title": title,
+            "description": description, "nav": bool(nav_value)}
+
+
+def page_delete(slug: str) -> bool:
+    """Remove the page, its drafts and its design — and the published copy,
+    so a deleted page stops answering before the next publish."""
+    from . import adminauth as aa
+
+    with aa._lock:
+        conn = aa._connect()
+        cur = conn.execute("DELETE FROM custom_pages WHERE slug=?", (slug,))
+        if cur.rowcount:
+            conn.execute("DELETE FROM content WHERE page=?", (slug,))
+            conn.execute("DELETE FROM designs WHERE page=?", (slug,))
+        conn.commit()
+    if not cur.rowcount:
+        return False
+    for path in (PUBLISHED_DIR / f"{slug}.html", PUBLISHED_DIR / "ar" / f"{slug}.html"):
+        path.unlink(missing_ok=True)
+    return True
+
+
 def _valid_keys(page: str) -> set[str]:
     if page == "_global":
         return {r["key"] for r in GLOBAL_REGIONS}
-    cfg = PAGES.get(page)
+    cfg = page_config(page)
     if cfg is None:
         raise ValueError("unknown page")
     return {r["key"] for r in cfg["regions"]} | {f["key"] for f in SEO_FIELDS}
@@ -263,7 +399,7 @@ def _strip_tags(fragment: str) -> str:
 
 def original_values(page: str) -> dict[str, str]:
     """Current design text for placeholders in the editor."""
-    raw = (config.PUBLIC_DIR / PAGES[page]["file"]).read_text(encoding="utf-8")
+    raw = page_source(page)
     out = {r["key"]: _strip_tags(raw[r["contentStart"]:r["contentEnd"]]) for r in _locate(raw)}
     m = re.search(r"<title>(.*?)</title>", raw, flags=re.S)
     if m:
@@ -289,9 +425,10 @@ def _escaped(value: str) -> str:
 def bake_page(page: str, lang: str = "en") -> str:
     from . import design
 
-    cfg = PAGES[page]
-    raw = (config.PUBLIC_DIR / cfg["file"]).read_text(encoding="utf-8")
+    raw = page_source(page)
     raw = design.apply_to_page(raw, page)
+    raw = _inject_nav(raw, page)
+    raw = _inject_social(raw)
     values = get_values("_global", lang) | get_values(page, lang)
     if values:
         regions = [r for r in _locate(raw) if values.get(r["key"])]
@@ -328,14 +465,72 @@ def bake_page(page: str, lang: str = "en") -> str:
     return raw
 
 
+# ---------------- navigation & social (baked into every page) ----------------
+
+def _insert_before_close(raw: str, open_marker: str, close_tag: str, markup: str) -> str:
+    """Append list items just before the closing tag of one specific list."""
+    start = raw.find(open_marker)
+    if start == -1:
+        return raw
+    end = raw.find(close_tag, start)
+    if end == -1:
+        return raw
+    return raw[:end] + markup + raw[end:]
+
+
+def _inject_nav(raw: str, page: str) -> str:
+    """Put admin-created pages into the three menus every page carries: the
+    header bar, the slide-in panel and the footer's second column."""
+    extras = [row for row in custom_pages() if row["nav"]]
+    if not extras:
+        return raw
+    links = []
+    for row in extras:
+        href = f"/{row['slug']}.html"
+        current = ' aria-current="page"' if row["slug"] == page else ""
+        links.append((href, html_mod.escape(row["label"]), current))
+    header = "".join(f'\n        <li><a href="{h}"{c}>{lbl}</a></li>' for h, lbl, c in links)
+    raw = _insert_before_close(raw, '<nav class="site-nav"', "</ul>", header)
+    footer = "".join(f'\n          <li><a href="{h}">{lbl}</a></li>' for h, lbl, _ in links)
+    raw = _insert_before_close(raw, '<nav aria-label="Footer — more"', "</ul>", footer)
+    panel_start = raw.find('<aside class="menu-panel"')
+    if panel_start != -1:
+        already = raw.count("<li>", panel_start, raw.find("</ol>", panel_start))
+        panel = "".join(
+            f'\n      <li><a href="{h}"{c}><span class="num">{already + i + 1:02d}</span>{lbl}</a></li>'
+            for i, (h, lbl, c) in enumerate(links))
+        raw = _insert_before_close(raw, '<aside class="menu-panel"', "</ol>", panel)
+    return raw
+
+
+def social_values() -> dict[str, str]:
+    from . import adminauth as aa
+    from . import blocks
+
+    return {key: str(aa.setting_get(f"social.{key}", "") or "") for key in blocks.SOCIAL_KEYS}
+
+
+def _inject_social(raw: str) -> str:
+    from . import blocks
+
+    markup = blocks.render_social(social_values())
+    if not markup:
+        return raw
+    anchor = '<div class="site-footer__meta">'
+    if anchor not in raw:
+        return raw
+    return raw.replace(anchor, markup + "\n    " + anchor, 1)
+
+
 # ---------------- publish, history, rollback ----------------
 
 def _sitemap_xml() -> str:
     today = time.strftime("%Y-%m-%d")
     urls = []
     prefixes = [""] + (["ar/"] if "ar" in languages() else [])
+    pages = all_pages()
     for prefix in prefixes:
-        for page, cfg in PAGES.items():
+        for page, cfg in pages.items():
             tail = prefix if page == "index" else f"{prefix}{cfg['file']}"
             urls.append(f"  <url><loc>{SITE_ORIGIN}/{tail}</loc>"
                         f"<lastmod>{today}</lastmod></url>")
@@ -381,16 +576,26 @@ def publish_all(by: str, note: str = "") -> dict:
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
     count = 0
     langs = languages()
-    for page, cfg in PAGES.items():
+    pages = all_pages()
+    live = {cfg["file"] for cfg in pages.values()}
+    for page, cfg in pages.items():
         baked = localize(bake_page(page, "en"), "en")
         tmp = PUBLISHED_DIR / (cfg["file"] + ".tmp")
         tmp.write_text(baked, encoding="utf-8")
         tmp.replace(PUBLISHED_DIR / cfg["file"])
         count += 1
+    # a page deleted in the admin panel must stop answering, not linger as a
+    # published file nothing links to any more
+    for stale in PUBLISHED_DIR.glob("*.html"):
+        if stale.name not in live:
+            stale.unlink(missing_ok=True)
     if "ar" in langs:
         ar_dir = PUBLISHED_DIR / "ar"
         ar_dir.mkdir(parents=True, exist_ok=True)
-        for page, cfg in PAGES.items():
+        for stale in ar_dir.glob("*.html"):
+            if stale.name not in live:
+                stale.unlink(missing_ok=True)
+        for page, cfg in pages.items():
             baked = localize(bake_page(page, "ar"), "ar")
             tmp = ar_dir / (cfg["file"] + ".tmp")
             tmp.write_text(baked, encoding="utf-8")
@@ -424,7 +629,7 @@ def publish_history(limit: int = 15) -> list[dict]:
 def source_mtime() -> int:
     """Newest change to the git-tracked page sources (a code deploy bumps it)."""
     newest = 0
-    for cfg in PAGES.values():
+    for cfg in PAGES.values():   # only built-ins have a file a deploy can change
         try:
             newest = max(newest, int((config.PUBLIC_DIR / cfg["file"]).stat().st_mtime))
         except OSError:
@@ -506,7 +711,11 @@ def published_file(path: str) -> Path | None:
         # and /ar/… keeps working for anyone who has the link.
         prefix = "ar/"
     if name not in _PUBLISHABLE:
-        return None
+        # only an .html miss is worth a database lookup — every asset request
+        # comes through here too and must stay allocation-cheap
+        if not (name.endswith(".html") and _PAGE_SLUG_RE.match(name[:-5])
+                and name[:-5] in _custom_slugs()):
+            return None
     p = PUBLISHED_DIR / prefix / name
     if p.is_file():
         return p

@@ -64,8 +64,16 @@ STYLE_PROPS: dict[str, re.Pattern | tuple] = {
 _BG_KEY = "background-image"
 
 _PATH_RE = re.compile(
-    r"^(\[data-em-sec=s\d{1,3}\]|header\.site-header|footer\.site-footer|main|body)"
+    r"^(\[data-em-sec=[sa]\d{1,3}\]|header\.site-header|footer\.site-footer|main|body)"
     r"(>[a-z][a-z0-9]{0,15}(:nth-of-type\(\d{1,3}\))?){0,12}$")
+
+# s… = a section that was already in the page, a… = one the editor added
+_SEC_ID_RE = re.compile(r"^[sa]\d{1,3}$")
+_ADDED_ID_RE = re.compile(r"^a\d{1,3}$")
+
+# An element's replacement text is limited rich text (bold/italic/link/list),
+# sanitized on the way in by content.sanitize_rich.
+MAX_TEXT = 4000
 
 ATTRS = {
     "src": lambda v: bool(_URL_RE.match(v)) and len(v) <= 300,
@@ -133,6 +141,18 @@ def validate_doc(doc: dict, global_scope: bool = False) -> dict:
                 clean_attrs[name] = value
         if clean_attrs:
             out["attrs"] = clean_attrs
+        text = spec.get("text")
+        if text is not None:
+            from . import content
+
+            text = str(text)
+            if len(text) > MAX_TEXT * 2:
+                raise DesignError("That text is too long to save.")
+            # the same whitelist the keyed regions use: bold, italic, links,
+            # lists, line breaks — everything else becomes plain text
+            text = content.sanitize_rich(text)[:MAX_TEXT]
+            if text.strip():
+                out["text"] = text
         hidden = spec.get("hidden") or {}
         clean_hidden = {bp: True for bp in BREAKPOINTS if hidden.get(bp) is True}
         if clean_hidden:
@@ -151,12 +171,30 @@ def validate_doc(doc: dict, global_scope: bool = False) -> dict:
             clean["elements"][path] = out
     sections = doc.get("sections") or {}
     if not global_scope and isinstance(sections, dict):
-        sec_id = re.compile(r"^s\d{1,3}$")
+        from . import blocks
+
         clean_sec: dict = {}
+        added = sections.get("added") or []
+        if not isinstance(added, list) or len(added) > 30:
+            raise DesignError("Too many added sections on one page.")
+        clean_added, seen_ids = [], set()
+        for item in added:
+            if not isinstance(item, dict):
+                raise DesignError("Invalid added section.")
+            sid = str(item.get("id") or "")
+            template = str(item.get("template") or "")
+            if not _ADDED_ID_RE.match(sid) or sid in seen_ids:
+                raise DesignError("Invalid added-section id.")
+            if template not in blocks.TEMPLATES:
+                raise DesignError(f"Unknown section block: {template[:40]}")
+            seen_ids.add(sid)
+            clean_added.append({"id": sid, "template": template})
+        if clean_added:
+            clean_sec["added"] = clean_added
         for field in ("order", "removed", "duplicated"):
             values = sections.get(field) or []
-            if not isinstance(values, list) or len(values) > 50 or \
-                    not all(isinstance(v, str) and sec_id.match(v) for v in values):
+            if not isinstance(values, list) or len(values) > 80 or \
+                    not all(isinstance(v, str) and _SEC_ID_RE.match(v) for v in values):
                 if values:
                     raise DesignError("Invalid section list.")
                 values = []
@@ -177,6 +215,8 @@ def merge_docs(global_doc: dict, page_doc: dict) -> dict:
                 target.setdefault("styles", {}).setdefault(bp, {}).update(props)
             if spec.get("attrs"):
                 target.setdefault("attrs", {}).update(spec["attrs"])
+            if spec.get("text"):
+                target["text"] = spec["text"]
             if spec.get("hidden"):
                 target.setdefault("hidden", {}).update(spec["hidden"])
             if spec.get("anim"):
@@ -456,8 +496,15 @@ def _apply_sections(raw: str, sections_spec: dict) -> str:
             new_tag = _set_attrs_in_tag(tag_text, {"data-em-sec": f"s{i}"})
             span = new_tag + span[len(tag_text):]
         stamped.append((f"s{i}", span))
+    from . import blocks
+
     ids = [sid for sid, _ in stamped]
     by_id = dict(stamped)
+    for item in sections_spec.get("added") or []:
+        markup = blocks.render_section(item["template"], item["id"])
+        if markup:
+            by_id[item["id"]] = markup
+            ids.append(item["id"])
     order = [sid for sid in (sections_spec.get("order") or ids) if sid in by_id]
     for sid in ids:  # anything missing from a stale order list keeps its place
         if sid not in order:
@@ -477,6 +524,39 @@ def _apply_sections(raw: str, sections_spec: dict) -> str:
     suffix = raw[sections[-1].end:main.content_end]
     rebuilt = prefix + "\n\n".join(parts) + suffix
     return raw[:main.content_start] + rebuilt + raw[main.content_end:]
+
+
+def _apply_text_ops(raw: str, elements: dict) -> str:
+    """Replace the inner HTML of every element carrying a text override.
+
+    This is what makes the parts of a page that were never given a data-em
+    key — button labels, card titles, list items, captions — editable: the
+    editor addresses them by the same stable path it uses for styling."""
+    targets = [(path, spec["text"]) for path, spec in elements.items() if spec.get("text")]
+    if not targets:
+        return raw
+    tree = _Tree(raw)
+    spans: list[tuple[int, int, str]] = []
+    for path, text in targets:
+        node = _resolve_path(tree, path)
+        if node is None or node.tag in _VOID:
+            continue
+        spans.append((node.content_start, node.content_end,
+                      text.replace("\r", "").replace("\n", "<br>")))
+    # If someone edited both a container and something inside it, only the
+    # container's text survives — applying both would splice the inner edit
+    # into offsets the outer replacement has already moved.
+    spans.sort(key=lambda e: (e[0], -e[1]))
+    kept: list[tuple[int, int, str]] = []
+    covered = -1
+    for start, end, text in spans:
+        if start < covered:
+            continue
+        kept.append((start, end, text))
+        covered = end
+    for start, end, text in sorted(kept, key=lambda e: e[0], reverse=True):
+        raw = raw[:start] + text + raw[end:]
+    return raw
 
 
 def _apply_attr_ops(raw: str, elements: dict) -> str:
@@ -544,6 +624,7 @@ def apply_to_page(raw: str, page: str) -> str:
     merged = merge_docs(get_doc("_global"), get_doc(page))
     raw = _apply_sections(raw, merged.get("sections") or {})
     if merged["elements"]:
+        raw = _apply_text_ops(raw, merged["elements"])
         raw = _apply_attr_ops(raw, merged["elements"])
         css = build_css(merged["elements"])
         if css:

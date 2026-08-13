@@ -59,10 +59,42 @@
     return chain.join(">");
   }
 
+  /* An element's text can be replaced wholesale only when nothing structural
+     lives inside it — otherwise editing a wrapper would silently delete the
+     cards, images or columns it contains. */
+  var INLINE_OK = { STRONG: 1, EM: 1, B: 1, I: 1, U: 1, BR: 1, A: 1, SPAN: 1,
+                    SMALL: 1, SUP: 1, SUB: 1 };
+  function textEditable(el) {
+    if (!(el.textContent || "").trim()) return false;
+    if (el.hasAttribute("data-em")) return false;      // keyed regions use the content model
+    var tag = el.tagName;
+    if (tag === "IMG" || tag === "SVG" || tag === "SCRIPT" || tag === "STYLE" ||
+        tag === "CANVAS" || tag === "IFRAME" || tag === "VIDEO" || tag === "SELECT" ||
+        tag === "INPUT" || tag === "TEXTAREA") return false;
+    if (el.hasAttribute("data-em-sec") || el.closest("form")) return false;
+    for (var i = 0; i < el.children.length; i++) {
+      var child = el.children[i];
+      if (!INLINE_OK[child.tagName]) return false;
+      if (child.querySelector("*:not(strong):not(em):not(b):not(i):not(u):not(br):not(a):not(span)")) {
+        return false;
+      }
+    }
+    return el.children.length <= 4;
+  }
+
+  function innerFor(el) {
+    var html = el.innerHTML
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/\s*(class|style|data-[\w-]+|aria-[\w-]+|id|width|height|loading|target|rel)="[^"]*"/g, "");
+    return html.replace(/\s+/g, " ").trim();
+  }
+
   function metaFor(el) {
     var cs = getComputedStyle(el);
     var secEl = el.closest("[data-em-sec]");
     return {
+      textEditable: textEditable(el),
+      textHtml: textEditable(el) ? innerFor(el) : "",
       type: "em-select",
       path: pathFor(el),
       tag: el.tagName.toLowerCase(),
@@ -163,6 +195,42 @@
     el.classList.add("is-visible"); // keep visible while editing
   }
 
+  /* ---------- text replaced by path (elements with no data-em key) ---------- */
+  var origHtml = {};    // path -> innerHTML as the page was baked
+  function applyPathText(path, html) {
+    var el = document.querySelector(path);
+    if (!el) return;
+    if (!(path in origHtml)) origHtml[path] = el.innerHTML;
+    el.innerHTML = (html === null || html === undefined || html === "") ? origHtml[path] : html;
+  }
+
+  /* ---------- sections added from the block library ---------- */
+  var addedEls = {};    // id -> the element inserted into the preview
+  function syncAdded(added) {
+    var wanted = {};
+    (added || []).forEach(function (item) {
+      wanted[item.id] = true;
+      // after a save the frame reloads with the block already baked in — it is
+      // a real section now, and inserting the preview copy would double it
+      if (addedEls[item.id] || document.querySelector('[data-em-sec="' + item.id + '"]')) return;
+      var host = document.createElement("div");
+      host.innerHTML = item.html;
+      var el = host.firstElementChild;
+      if (!el) return;
+      el.setAttribute("data-em-sec", item.id);
+      // reveal animations only fire on scroll; a block dropped in mid-edit
+      // has to be visible straight away or it reads as a failed insert
+      el.querySelectorAll(".reveal").forEach(function (n) { n.classList.add("is-visible"); });
+      addedEls[item.id] = el;
+    });
+    Object.keys(addedEls).forEach(function (id) {
+      if (!wanted[id]) {
+        addedEls[id].remove();
+        delete addedEls[id];
+      }
+    });
+  }
+
   var pristineSections = null;
   function capturedSections() {
     if (!pristineSections) {
@@ -187,8 +255,10 @@
     var main = sections[0].parentElement;
     clones.forEach(function (c) { c.remove(); });
     clones = [];
+    syncAdded(spec.added);
     var byId = {};
     sections.forEach(function (s) { byId[s.getAttribute("data-em-sec")] = s; });
+    Object.keys(addedEls).forEach(function (id) { byId[id] = addedEls[id]; });
     var order = (spec.order || Object.keys(byId)).filter(function (id) { return byId[id]; });
     Object.keys(byId).forEach(function (id) {
       if (order.indexOf(id) === -1) order.push(id);
@@ -240,6 +310,7 @@
           el.innerHTML = t.html;
         });
       });
+      (d.pathTexts || []).forEach(function (t) { applyPathText(t.path, t.html); });
     } else if (d.type === "em-outlines") {
       document.body.classList.toggle("em-outlines-off", !d.on);
     } else if (d.type === "em-select-parent") {

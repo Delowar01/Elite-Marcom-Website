@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import adminauth as aa
-from . import config, security
+from . import blocks, config, security
 
 router = APIRouter()
 
@@ -354,6 +354,8 @@ SETTINGS_KEYS = {
     "announce.startsAt": int,
     "announce.endsAt": int,
 }
+# one https:// profile URL per network, rendered as an icon in the footer
+SETTINGS_KEYS.update({f"social.{key}": str for key in blocks.SOCIAL_KEYS})
 
 
 @router.get("/api/admin/settings")
@@ -365,6 +367,9 @@ async def admin_settings(request: Request):
     # whether the legacy SMTP alert route can actually deliver, so the screen
     # can say so rather than letting an admin fill in a field that does nothing
     data["notify.smtpConfigured"] = bool(getattr(notify, "SMTP_HOST", ""))
+    # the networks the footer can render, so the screen and the bake agree on
+    # the list rather than each keeping its own copy
+    data["socialNetworks"] = blocks.SOCIAL_NETWORKS
     return data
 
 
@@ -393,6 +398,11 @@ async def admin_settings_save(request: Request, body: SettingsBody,
         if key == "announce.link" and value and not re.match(r"^(https://|/|#|mailto:|tel:)", str(value)):
             raise HTTPException(status_code=400,
                                 detail="The announcement link must be a site path or an https:// address.")
+        if key.startswith("social.") and value and not blocks.SOCIAL_URL_RE.match(str(value)):
+            raise HTTPException(
+                status_code=400,
+                detail="A social link must be a full https:// address, e.g. "
+                       "https://www.instagram.com/yourbrand.")
         if key == "announce.style" and value not in ("brand", "quiet"):
             raise HTTPException(status_code=400, detail="Unknown announcement style.")
         if key in ("announce.startsAt", "announce.endsAt"):
@@ -981,10 +991,12 @@ async def admin_pages(request: Request):
 
     last = content.last_publish()
     pages = []
-    for page, cfg in content.PAGES.items():
+    for page, cfg in content.all_pages().items():
         edited = max(content.last_edit_ts(page), design.last_design_edit(page))
         pages.append({"page": page, "label": cfg["label"], "file": cfg["file"],
                       "regions": len(cfg["regions"]),
+                      "custom": bool(cfg.get("custom")), "nav": bool(cfg.get("nav")),
+                      "title": cfg.get("title", ""), "description": cfg.get("description", ""),
                       "dirty": bool(edited and (last is None or edited > last["ts"]))})
     published = content.PUBLISHED_DIR.joinpath("index.html").is_file()
     return {"pages": pages,
@@ -1005,12 +1017,12 @@ async def admin_page_get(request: Request, page: str, lang: str = "en"):
     if page == "_global":
         regions, seo, label = content.GLOBAL_REGIONS, [], "Header & Footer"
         originals = content.original_values("index")
-    elif page in content.PAGES:
-        cfg = content.PAGES[page]
+    else:
+        cfg = content.page_config(page)
+        if cfg is None:
+            raise HTTPException(status_code=404, detail="Unknown page.")
         regions, seo, label = cfg["regions"], content.SEO_FIELDS, cfg["label"]
         originals = content.original_values(page)
-    else:
-        raise HTTPException(status_code=404, detail="Unknown page.")
     values = content.get_values(page, lang)
     return {"page": page, "label": label, "lang": lang,
             "regions": [{**r, "original": originals.get(r["key"], ""),
@@ -1046,7 +1058,7 @@ async def admin_page_preview(request: Request, page: str, lang: str = "en"):
     require_perm(request, "content.edit")
     from . import content
 
-    if page not in content.PAGES or lang not in content.LANGS:
+    if content.page_config(page) is None or lang not in content.LANGS:
         raise HTTPException(status_code=404, detail="Unknown page.")
     return Response(content=content.bake_page(page, lang),
                     media_type="text/html; charset=utf-8",
@@ -1058,7 +1070,7 @@ async def admin_design_get(request: Request, page: str):
     require_perm(request, "content.edit")
     from . import content, design
 
-    if page != "_global" and page not in content.PAGES:
+    if page != "_global" and content.page_config(page) is None:
         raise HTTPException(status_code=404, detail="Unknown page.")
     return {"page": page, "doc": design.get_doc(page),
             "globalDoc": design.get_doc("_global") if page != "_global" else None,
@@ -1110,7 +1122,7 @@ async def admin_design_save(request: Request, page: str, body: DesignBody,
     require_csrf(request, session, x_csrf)
     from . import content, design
 
-    if page != "_global" and page not in content.PAGES:
+    if page != "_global" and content.page_config(page) is None:
         raise HTTPException(status_code=404, detail="Unknown page.")
     try:
         clean = design.set_doc(page, body.doc, session["email"])
@@ -1129,13 +1141,88 @@ async def admin_page_visual(request: Request, page: str, lang: str = "en"):
     require_perm(request, "content.edit")
     from . import content
 
-    if page not in content.PAGES or lang not in content.LANGS:
+    if content.page_config(page) is None or lang not in content.LANGS:
         raise HTTPException(status_code=404, detail="Unknown page.")
     baked = content.bake_page(page, lang)
-    bridge = '<script src="/admin/assets/editor-bridge.js?v=2" defer></script></body>'
+    bridge = '<script src="/admin/assets/editor-bridge.js?v=3" defer></script></body>'
     baked = baked.replace("</body>", bridge, 1)
     return Response(content=baked, media_type="text/html; charset=utf-8",
                     headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
+@router.get("/api/admin/blocks")
+async def admin_blocks(request: Request):
+    """The section templates the editor can drop into a page."""
+    require_perm(request, "content.edit")
+
+    # the editor needs the markup itself so an added block appears in the live
+    # preview before the draft is saved; __ID__ is swapped for the section id
+    return {"blocks": [{**b, "html": blocks.render_section(b["id"], "__ID__")}
+                       for b in blocks.template_list()], "max": 30}
+
+
+class NewPageBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    slug: str = Field(max_length=60)
+    label: str = Field(max_length=80)
+    title: str = Field(default="", max_length=220)
+    description: str = Field(default="", max_length=400)
+    nav: bool = True
+
+
+@router.post("/api/admin/pages-new")
+async def admin_page_new(request: Request, body: NewPageBody,
+                         x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    try:
+        created = content.page_create(body.slug, body.label, body.title,
+                                      body.description, body.nav, session["email"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    aa.audit(session, "page.created", "pages", created, _ip_hash(request))
+    return {"page": created}
+
+
+class PageMetaBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str | None = Field(default=None, max_length=80)
+    title: str | None = Field(default=None, max_length=220)
+    description: str | None = Field(default=None, max_length=400)
+    nav: bool | None = None
+
+
+@router.post("/api/admin/pages-meta/{page}")
+async def admin_page_meta(request: Request, page: str, body: PageMetaBody,
+                          x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    try:
+        updated = content.page_update(page, body.label, body.title, body.description, body.nav)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    aa.audit(session, "page.updated", "pages", updated, _ip_hash(request))
+    return {"page": updated}
+
+
+@router.post("/api/admin/pages-delete/{page}")
+async def admin_page_delete(request: Request, page: str,
+                            x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import content
+
+    if page in content.PAGES:
+        raise HTTPException(status_code=400,
+                            detail="Built-in pages cannot be deleted — hide their sections instead.")
+    if not content.page_delete(page):
+        raise HTTPException(status_code=404, detail="Unknown page.")
+    aa.audit(session, "page.deleted", "pages", {"page": page}, _ip_hash(request))
+    return {"deleted": page}
 
 
 @router.post("/api/admin/pages-publish")

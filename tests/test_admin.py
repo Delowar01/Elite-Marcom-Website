@@ -996,6 +996,194 @@ def test_design_publish_rollback_and_rich_text():
     client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
 
 
+# ---------------- Phase 7: free-form editing, blocks, pages, social ----------------
+
+# the third card's <dt> on About — a plain heading with no data-em key, which
+# is exactly the kind of text the editor could not reach before
+_CARD_TITLE = ("[data-em-sec=s3]>div:nth-of-type(1)>dl:nth-of-type(1)"
+               ">div:nth-of-type(3)>dt:nth-of-type(1)")
+
+
+def test_untagged_element_text_is_editable_by_path():
+    me = client.get("/api/admin/me").json()
+    before = client.get("/admin/preview/about").text
+    assert "<dt>Personal service</dt>" in before
+    res = client.post("/api/admin/design/about",
+                      json={"doc": {"elements": {_CARD_TITLE: {
+                          "text": "Personal <strong>service</strong>, always"}}}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/preview/about").text
+    assert "<dt>Personal <strong>service</strong>, always</dt>" in baked
+    assert "<dt>Personal service</dt>" not in baked
+    # the surrounding cards are untouched
+    assert "<dt>Excellence</dt>" in baked and "<dt>Creativity</dt>" in baked
+    # markup outside the small rich-text whitelist never survives
+    evil = client.post("/api/admin/design/about",
+                       json={"doc": {"elements": {_CARD_TITLE: {
+                           "text": "Ok<script>alert(1)</script><img src=x onerror=y>"}}}},
+                       headers={"X-CSRF": me["csrf"]})
+    assert evil.status_code == 200
+    baked = client.get("/admin/preview/about").text
+    assert "<script>" not in baked.split("<dl class=\"values-grid\">")[1][:400]
+    assert "onerror" not in baked
+    client.post("/api/admin/design/about", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
+
+
+def test_text_override_on_a_container_wins_over_one_inside_it():
+    """Both edits are legal on their own; applying both would splice the inner
+    replacement into offsets the outer one has already moved."""
+    from server import design
+
+    raw = "<main><section><div><p>inner</p></div></section></main>"
+    out = design._apply_text_ops(raw, {
+        "main>section:nth-of-type(1)>div:nth-of-type(1)": {"text": "OUTER"},
+        "main>section:nth-of-type(1)>div:nth-of-type(1)>p:nth-of-type(1)": {"text": "INNER"},
+    })
+    assert out == "<main><section><div>OUTER</div></section></main>"
+
+
+def test_section_blocks_add_reorder_hide_and_delete():
+    me = client.get("/api/admin/me").json()
+    lib = client.get("/api/admin/blocks")
+    assert lib.status_code == 200
+    ids = {b["id"] for b in lib.json()["blocks"]}
+    assert {"cta", "cards-3", "quote"} <= ids
+    assert all("__ID__" in b["html"] for b in lib.json()["blocks"])
+
+    doc = {"sections": {"added": [{"id": "a1", "template": "cta"},
+                                  {"id": "a2", "template": "quote"}],
+                        "order": ["a1", "s0", "s1", "s2", "a2"]}}
+    res = client.post("/api/admin/design/careers", json={"doc": doc},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/preview/careers").text
+    assert 'data-em-sec="a1"' in baked and 'data-em-block="cta"' in baked
+    assert "Ready to talk about your project?" in baked
+    assert baked.index('data-em-sec="a1"') < baked.index('data-em-sec="s0"')
+    assert baked.index('data-em-sec="s2"') < baked.index('data-em-sec="a2"')
+
+    # text inside an added block is editable like any other element
+    heading = "[data-em-sec=a1]>div:nth-of-type(1)>h2:nth-of-type(1)"
+    doc["elements"] = {heading: {"text": "Let us build yours"}}
+    client.post("/api/admin/design/careers", json={"doc": doc}, headers={"X-CSRF": me["csrf"]})
+    baked = client.get("/admin/preview/careers").text
+    assert "Let us build yours" in baked and "Ready to talk about your project?" not in baked
+
+    # hiding an added block keeps it out of the page and lists it as hidden
+    doc["sections"]["removed"] = ["a2"]
+    client.post("/api/admin/design/careers", json={"doc": doc}, headers={"X-CSRF": me["csrf"]})
+    baked = client.get("/admin/preview/careers").text
+    assert 'data-em-sec="a2"' not in baked and 'data-em-sec="a1"' in baked
+    hidden = client.get("/api/admin/design-hidden").json()["hidden"]
+    assert any(h["page"] == "careers" and h["path"] == "a2" for h in hidden)
+
+    # unknown block ids and malformed section ids are refused
+    for bad_doc in ({"sections": {"added": [{"id": "a1", "template": "../../etc/passwd"}]}},
+                    {"sections": {"added": [{"id": "s1", "template": "cta"}]}},
+                    {"sections": {"added": [{"id": "a1", "template": "cta"},
+                                            {"id": "a1", "template": "quote"}]}}):
+        bad = client.post("/api/admin/design/careers", json={"doc": bad_doc},
+                          headers={"X-CSRF": me["csrf"]})
+        assert bad.status_code == 400, bad_doc
+
+    client.post("/api/admin/design/careers", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
+    assert 'data-em-sec="a1"' not in client.get("/admin/preview/careers").text
+
+
+def test_custom_page_create_edit_publish_and_delete():
+    me = client.get("/api/admin/me").json()
+    res = client.post("/api/admin/pages-new",
+                      json={"slug": "our-team", "label": "Our team",
+                            "title": "Our team — Elite Marcom",
+                            "description": "The people behind the work.", "nav": True},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    assert res.json()["page"]["slug"] == "our-team"
+
+    listing = {p["page"]: p for p in client.get("/api/admin/pages").json()["pages"]}
+    assert listing["our-team"]["custom"] is True and listing["our-team"]["nav"] is True
+    assert listing["index"]["custom"] is False
+
+    # it edits like any other page: keyed hero regions, SEO and the design layer
+    editor = client.get("/api/admin/pages/our-team").json()
+    assert {f["key"] for f in editor["regions"]} == {"hero.eyebrow", "hero.title1", "hero.lead"}
+    assert client.get("/admin/visual/our-team").status_code == 200
+    client.post("/api/admin/pages/our-team",
+                json={"lang": "en", "values": {"hero.title1": "The people behind it"}},
+                headers={"X-CSRF": me["csrf"]})
+    preview = client.get("/admin/preview/our-team")
+    assert preview.status_code == 200
+    assert "The people behind it" in preview.text
+    assert '<link rel="canonical" href="https://www.elitemarcom.com/our-team.html">' in preview.text
+    assert '<footer class="site-footer">' in preview.text  # same shell as the rest of the site
+
+    # not on the public site until it is published
+    assert client.get("/our-team.html").status_code == 404
+    pub = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert pub.status_code == 200
+    live = client.get("/our-team.html")
+    assert live.status_code == 200 and "The people behind it" in live.text
+    # and it is linked from the menus of every other page, plus the sitemap
+    assert '<li><a href="/our-team.html">Our team</a></li>' in client.get("/about.html").text
+    assert "/our-team.html" in client.get("/sitemap.xml").text
+
+    # taking it out of the menus leaves the page reachable by address
+    client.post("/api/admin/pages-meta/our-team", json={"nav": False},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert "/our-team.html" not in client.get("/about.html").text
+    assert client.get("/our-team.html").status_code == 200
+
+    # reserved and malformed addresses are refused, as are duplicates
+    for slug in ("our-team", "admin", "about", "Our Team", "a", "x" * 60):
+        bad = client.post("/api/admin/pages-new", json={"slug": slug, "label": "X"},
+                          headers={"X-CSRF": me["csrf"]})
+        assert bad.status_code in (400, 422), slug
+    # built-in pages cannot be deleted
+    assert client.post("/api/admin/pages-delete/about",
+                       headers={"X-CSRF": me["csrf"]}).status_code == 400
+
+    gone = client.post("/api/admin/pages-delete/our-team", headers={"X-CSRF": me["csrf"]})
+    assert gone.status_code == 200
+    assert client.get("/our-team.html").status_code == 404
+    assert "our-team" not in {p["page"] for p in client.get("/api/admin/pages").json()["pages"]}
+    client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+
+
+def test_social_links_render_in_the_footer_of_every_page():
+    me = client.get("/api/admin/me").json()
+    assert "site-social" not in client.get("/admin/preview/about").text
+    ok = client.post("/api/admin/settings",
+                     json={"values": {"social.instagram": "https://www.instagram.com/elitemarcom",
+                                      "social.linkedin": "https://www.linkedin.com/company/elitemarcom",
+                                      "social.facebook": ""}},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200, ok.text
+    baked = client.get("/admin/preview/about").text
+    assert '<nav class="site-social"' in baked
+    assert baked.count("<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"") == 2
+    assert 'href="https://www.instagram.com/elitemarcom"' in baked
+    assert 'aria-label="LinkedIn"' in baked
+    assert 'rel="me noopener"' in baked
+    # an empty field means no icon at all, not a dead link
+    assert 'aria-label="Facebook"' not in baked
+    # the icons sit in the footer, above the copyright line
+    assert baked.index('class="site-social"') < baked.index('class="site-footer__meta"')
+
+    for value in ("javascript:alert(1)", "http://insecure.example/x", "not a url",
+                  "https://x.com/\" onmouseover=alert(1)"):
+        bad = client.post("/api/admin/settings", json={"values": {"social.x": value}},
+                          headers={"X-CSRF": me["csrf"]})
+        assert bad.status_code == 400, value
+    for key in ("social.instagram", "social.linkedin"):
+        client.post("/api/admin/settings", json={"values": {key: ""}},
+                    headers={"X-CSRF": me["csrf"]})
+    assert "site-social" not in client.get("/admin/preview/about").text
+
+
 # ---------------- Phase 5: site insights ----------------
 
 def test_insights_config_public_and_beacon_collects():
@@ -1199,6 +1387,9 @@ def test_backup_download_inspect_and_restore():
     client.post("/api/admin/pages/index",
                 json={"lang": "en", "values": {"hero.title1": "Backup marker"}},
                 headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-new",
+                json={"slug": "backup-page", "label": "Backup page", "nav": False},
+                headers={"X-CSRF": me["csrf"]})
     res = client.get("/api/admin/backup")
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/zip"
@@ -1209,6 +1400,8 @@ def test_backup_download_inspect_and_restore():
         data = json.loads(z.read("data.json"))
     assert any(r["key"] == "hero.title1" and r["value"] == "Backup marker"
                for r in data["content"])
+    # a page created in the panel is part of the panel's data, not the code
+    assert any(r["slug"] == "backup-page" for r in data["customPages"])
     # customer submissions must never travel in an operational backup
     dump = blob.decode("latin-1")
     assert "Amira Hassan" not in dump and "falconevents" not in dump
@@ -1217,8 +1410,10 @@ def test_backup_download_inspect_and_restore():
     client.post("/api/admin/pages/index",
                 json={"lang": "en", "values": {"hero.title1": "Changed after backup"}},
                 headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-delete/backup-page", headers={"X-CSRF": me["csrf"]})
     fields = {f["key"]: f for f in client.get("/api/admin/pages/index").json()["regions"]}
     assert fields["hero.title1"]["value"] == "Changed after backup"
+    assert "backup-page" not in {p["page"] for p in client.get("/api/admin/pages").json()["pages"]}
 
     inspect = client.post("/api/admin/backup/inspect",
                           files={"file": ("b.zip", blob, "application/zip")},
@@ -1236,6 +1431,8 @@ def test_backup_download_inspect_and_restore():
     assert ok.status_code == 200, ok.text
     fields = {f["key"]: f for f in client.get("/api/admin/pages/index").json()["regions"]}
     assert fields["hero.title1"]["value"] == "Backup marker"
+    assert "backup-page" in {p["page"] for p in client.get("/api/admin/pages").json()["pages"]}
+    client.post("/api/admin/pages-delete/backup-page", headers={"X-CSRF": me["csrf"]})
 
     junk = client.post("/api/admin/backup/restore",
                        files={"file": ("x.zip", b"not a zip at all", "application/zip")},

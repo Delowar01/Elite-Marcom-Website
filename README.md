@@ -8,8 +8,9 @@ worldwide delivery.
 Eight public pages + Privacy Notice, dark/light themes, an interactive 3D
 exhibition-stand hero (Three.js + supplied GLB), a live Giveaways catalog with a
 secure supplier integration, a Rental request workflow, Careers with encrypted
-CV applications, and a hardened FastAPI backend. **No admin panel, no CMS, no
-accounts** — by design.
+CV applications, and a hardened FastAPI backend. A private admin panel at
+`/admin` (password + mandatory 2FA) edits the site, but the git-tracked design
+in `public/` always stays the source of truth.
 
 ## Quick start (local)
 
@@ -99,6 +100,32 @@ upstream response. The UAE products feed is about 4.17 MB today, so the cap
 needs headroom for the catalogue to grow: a response over the limit is rejected
 outright, which looks like a supplier failure rather than a size problem. Keep
 it strict — it is what stops a hostile or broken upstream streaming without end.
+
+### Editing the site from the admin panel
+
+The **Visual editor** edits any text on a page, not only the fields the design
+was tagged with: click a button label, a card title, a list item or a caption
+and its wording is editable in the panel on the right. Text on a tagged element
+is stored in the content model (and can be translated per language); text on
+anything else is stored as an override against that element's stable path.
+Either way the git-tracked HTML is never modified — publishing bakes drafts
+into `runtime/published/site/`, and **Unpublish** puts the original design back.
+
+**Sections** in the editor adds ready-made blocks (heading and paragraph, text
+beside an image, three cards, numbered steps, a numbers row, a checklist, a
+quote, a call to action, a wide image banner and a blank block), and reorders,
+hides, duplicates or deletes them. The block markup ships with the site, so an
+added block inherits the site's own typography, spacing and animations.
+
+**Pages & SEO → New page** creates a page. It is generated from the live site
+shell, so it carries the same header, footer, theme and scripts by
+construction; give it a name and an address, and it is editable, previewable,
+translatable and publishable like any built-in page, optionally listed in the
+site menus. Built-in pages cannot be deleted — hide their sections instead.
+
+Footer **social links** are set in Settings, one https:// address per network.
+Empty fields render no icon at all, and the row reaches the live site at the
+next publish.
 
 ## Tests
 

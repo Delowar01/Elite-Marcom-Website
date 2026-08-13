@@ -877,7 +877,7 @@
         var lp = d.lastPublish;
         main.innerHTML =
           '<h1 class="admin-h1">Pages &amp; SEO</h1>' +
-          '<p class="admin-sub">Edit text and SEO per page, preview privately, then publish the whole site in one click. The original design always stays safe in the code.</p>' +
+          '<p class="admin-sub">Add pages, edit text and SEO per page, preview privately, then publish the whole site in one click. The original design always stays safe in the code.</p>' +
           '<div class="admin-panel" id="hidden-panel"><div class="panel-head"><h2>Hidden on the site</h2>' +
           '<span class="admin-inline-note">Anything switched off in the visual editor, in one place</span></div>' +
           '<div id="hidden-list"><p class="admin-inline-note">Loading…</p></div></div>' +
@@ -903,14 +903,35 @@
           '<div class="admin-panel"><h2>Header &amp; Footer</h2>' +
           '<p class="admin-inline-note" style="margin-bottom:10px;">Menu labels, header button, footer text and contact details — applied to every page.</p>' +
           '<a class="btn btn--ghost btn--small" href="#pages/_global">Edit (' + esc(d.globalRegions) + " fields)</a></div>" +
-          '<div class="admin-panel"><h2>Pages</h2><div class="table-scroll"><table class="admin-table"><thead>' +
+          '<div class="admin-panel"><h2>Pages</h2>' +
+          '<div class="admin-actions" style="margin-bottom:14px;">' +
+          '<button class="btn btn--primary btn--small" id="page-new">+ New page</button></div>' +
+          '<form id="page-new-form" class="admin-form" hidden style="margin-bottom:18px;">' +
+          '<div class="form-row"><label>Page name (shown in the menu)<input id="np-label" maxlength="60" required placeholder="Our team"></label>' +
+          '<label>Web address<span class="np-slug-wrap">/<input id="np-slug" maxlength="40" required placeholder="our-team">.html</span></label></div>' +
+          '<label>Browser &amp; search title<input id="np-title" maxlength="200" placeholder="Our team — Elite Marcom"></label>' +
+          '<label>Meta description<textarea id="np-desc" rows="2" maxlength="300" placeholder="One or two sentences describing the page for search results."></textarea></label>' +
+          '<label class="ed-check"><input type="checkbox" id="np-nav" checked> Show this page in the site menus</label>' +
+          '<div class="admin-actions"><button class="btn btn--primary btn--small" type="submit">Create page</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" id="np-cancel">Cancel</button></div>' +
+          '<p class="admin-inline-note">The new page starts with the same header, footer and styling as the rest of the site. ' +
+          "Open it in the <b>Visual editor</b> to write it, then press <b>Publish site</b>.</p></form>" +
+          '<div class="table-scroll"><table class="admin-table"><thead>' +
           "<tr><th>Page</th><th>Text fields</th><th>State</th><th></th></tr></thead><tbody>" +
           (d.pages || []).map(function (p) {
-            return "<tr><td>" + esc(p.label) + ' <span class="muted">(' + esc(p.file) + ")</span></td>" +
+            return "<tr><td>" + esc(p.label) +
+              (p.custom ? ' <span class="status-pill">added</span>' : "") +
+              ' <span class="muted">(' + esc(p.file) + ")</span>" +
+              (p.custom && !p.nav ? '<br><span class="admin-inline-note">not in the menus</span>' : "") + "</td>" +
               '<td class="muted">' + (p.regions ? p.regions + " + SEO" : "SEO only") + "</td>" +
               "<td>" + (p.dirty ? '<span class="badge-bad">unpublished edits</span>' : '<span class="muted">up to date</span>') + "</td>" +
-              '<td class="cell-actions"><a class="btn btn--ghost btn--small" href="#pages/' + esc(p.page) + '">Edit</a> ' +
-              '<a class="btn btn--ghost btn--small" href="/admin/preview/' + esc(p.page) + '" target="_blank" rel="noopener">Preview</a></td></tr>';
+              '<td class="cell-actions"><a class="btn btn--ghost btn--small" href="#editor/' + esc(p.page) + '">Visual editor</a> ' +
+              '<a class="btn btn--ghost btn--small" href="#pages/' + esc(p.page) + '">Text &amp; SEO</a> ' +
+              '<a class="btn btn--ghost btn--small" href="/admin/preview/' + esc(p.page) + '" target="_blank" rel="noopener">Preview</a>' +
+              (p.custom ? ' <button class="btn btn--ghost btn--small" data-page-nav="' + esc(p.page) + '" data-on="' +
+                (p.nav ? "1" : "0") + '">' + (p.nav ? "Remove from menus" : "Add to menus") + "</button>" +
+                ' <button class="btn btn--ghost btn--small" data-page-del="' + esc(p.page) + '">Delete</button>' : "") +
+              "</td></tr>";
           }).join("") + "</tbody></table></div></div>";
         /* what is currently hidden anywhere on the site, and how to put it back */
         function loadHidden() {
@@ -964,6 +985,56 @@
           if (!confirm("Serve the original design again? Your drafts are kept and can be re-published any time.")) return;
           api("/api/admin/pages-unpublish", {}).then(function (r2) {
             r2.ok ? (toast("Original design restored."), views.pages()) : apiErr(r2);
+          });
+        });
+        (function () {
+          var form = document.getElementById("page-new-form");
+          var label = document.getElementById("np-label");
+          var slug = document.getElementById("np-slug");
+          var slugTouched = false;
+          document.getElementById("page-new").addEventListener("click", function () {
+            form.hidden = !form.hidden;
+            if (!form.hidden) label.focus();
+          });
+          document.getElementById("np-cancel").addEventListener("click", function () {
+            form.hidden = true;
+          });
+          slug.addEventListener("input", function () { slugTouched = true; });
+          label.addEventListener("input", function () {
+            if (slugTouched) return;
+            slug.value = label.value.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "").slice(0, 40);
+          });
+          form.addEventListener("submit", function (e) {
+            e.preventDefault();
+            api("/api/admin/pages-new", {
+              slug: slug.value.trim(), label: label.value.trim(),
+              title: document.getElementById("np-title").value.trim(),
+              description: document.getElementById("np-desc").value.trim(),
+              nav: document.getElementById("np-nav").checked
+            }).then(function (r2) {
+              if (!r2.ok) return apiErr(r2);
+              toast("Page created — opening the visual editor.");
+              location.hash = "#editor/" + r2.data.page.slug;
+            });
+          });
+        }());
+        main.querySelectorAll("[data-page-del]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var page = btn.getAttribute("data-page-del");
+            if (!confirm("Delete the page “" + page + "” with everything written on it? This cannot be undone.")) return;
+            api("/api/admin/pages-delete/" + encodeURIComponent(page), {}).then(function (r2) {
+              r2.ok ? (toast("Page deleted."), views.pages()) : apiErr(r2);
+            });
+          });
+        });
+        main.querySelectorAll("[data-page-nav]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var page = btn.getAttribute("data-page-nav");
+            api("/api/admin/pages-meta/" + encodeURIComponent(page),
+                { nav: btn.getAttribute("data-on") !== "1" }).then(function (r2) {
+              r2.ok ? (toast("Menus updated — publish to put it live."), views.pages()) : apiErr(r2);
+            });
           });
         });
         main.querySelectorAll("[data-rollback]").forEach(function (btn) {
@@ -1504,7 +1575,8 @@
       });
     },
 
-    editor: function () {
+    editor: function (param) {
+      if (param) edState.page = param;
       var VIEWPORTS = { desktop: 1440, tablet: 834, mobile: 390 };
       var SHADOWS = { soft: "0 8px 30px rgba(8,10,18,0.35)", strong: "0 20px 60px rgba(8,10,18,0.5)",
                       glow: "0 0 34px rgba(237,108,38,0.45)", none: "none" };
@@ -1537,6 +1609,7 @@
               t.styles[b] = Object.assign({}, t.styles[b] || {}, spec.styles[b]);
             });
             if (spec.attrs) t.attrs = Object.assign({}, t.attrs || {}, spec.attrs);
+            if (spec.text) t.text = spec.text;
             if (spec.hidden) t.hidden = Object.assign({}, t.hidden || {}, spec.hidden);
             if (spec.anim) t.anim = spec.anim;
           });
@@ -1598,18 +1671,28 @@
           var f = st.fields[key] || {};
           return { key: key, html: richHtml(st.changedText[key] || f.original || "") };
         });
+        var pathTexts = Object.keys(st.touchedTextPaths).map(function (path) {
+          return { path: path, html: (elements[path] || {}).text || "" };
+        });
+        var sections = Object.assign({}, st.pageDoc.sections || {});
+        sections.added = (sections.added || []).map(function (item) {
+          return { id: item.id, template: item.template,
+                   html: (st.blockHtml[item.template] || "").replace(/__ID__/g, item.id) };
+        });
         st.postFrame({ type: "em-apply", css: buildCss(elements), attrs: attrs,
-                       anims: anims, sections: st.pageDoc.sections || {}, texts: texts });
+                       anims: anims, sections: sections, texts: texts, pathTexts: pathTexts });
         refreshDirty();
       }
       function snapshot() {
         return JSON.stringify({ t: st.changedText, p: st.pageDoc, g: st.globalDoc,
-                                d: st.docTouched, a: st.touchedAttrPaths, n: st.touchedAnimPaths });
+                                d: st.docTouched, a: st.touchedAttrPaths, n: st.touchedAnimPaths,
+                                x: st.touchedTextPaths });
       }
       function restore(snap) {
         var s = JSON.parse(snap);
         st.changedText = s.t; st.pageDoc = s.p; st.globalDoc = s.g;
         st.docTouched = s.d; st.touchedAttrPaths = s.a; st.touchedAnimPaths = s.n;
+        st.touchedTextPaths = s.x || {};
         reloadFrame();
       }
       function pushUndo() {
@@ -1641,7 +1724,8 @@
         api("/api/admin/pages/" + st.page + "?lang=" + st.lang),
         api("/api/admin/pages/_global?lang=" + st.lang),
         api("/api/admin/pages"),
-        api("/api/admin/design/" + st.page)
+        api("/api/admin/design/" + st.page),
+        api("/api/admin/blocks")
       ]).then(function (rs) {
         var bad = rs.find(function (r) { return !r.ok; });
         if (bad) return apiErr(bad);
@@ -1660,10 +1744,18 @@
         st.globalDoc = rs[3].data.globalDoc && rs[3].data.globalDoc.elements
           ? rs[3].data.globalDoc : { elements: {}, sections: {} };
         st.docTouched = { page: false, global: false };
-        st.touchedAttrPaths = {}; st.touchedAnimPaths = {};
+        st.touchedAttrPaths = {}; st.touchedAnimPaths = {}; st.touchedTextPaths = {};
         st.changedText = {}; st.undo = []; st.redo = []; st.sel = null;
+        st.blocks = (rs[4].data && rs[4].data.blocks) || [];
+        st.maxBlocks = (rs[4].data && rs[4].data.max) || 30;
+        st.blockHtml = {}; st.blockLabel = {};
+        st.blocks.forEach(function (b) {
+          st.blockHtml[b.id] = b.html;
+          st.blockLabel[b.id] = b.label;
+        });
 
-        var pageOpts = rs[2].data.pages.filter(function (p) { return p.regions > 0; })
+        st.pageList = rs[2].data.pages;
+        var pageOpts = rs[2].data.pages
           .map(function (p) {
             return '<option value="' + esc(p.page) + '"' + (p.page === st.page ? " selected" : "") + ">" +
                    esc(p.label) + "</option>";
@@ -1691,7 +1783,7 @@
           '<div class="ed-body"><div class="ed-canvas" id="ed-canvas"><div class="ed-frame-wrap" id="ed-wrap">' +
           '<iframe id="ed-frame" src="/admin/visual/' + esc(st.page) + "?lang=" + st.lang + '" title="Page preview"></iframe>' +
           "</div></div>" +
-          '<aside class="ed-panel" id="ed-panel"><p class="admin-inline-note">Click anything in the page to edit it — text, images, styles, spacing, animation. Use the Sections button for reordering.</p></aside></div>' +
+          '<aside class="ed-panel" id="ed-panel"><p class="admin-inline-note">Click anything in the page to edit it — any heading, paragraph, button label, card title or caption, plus images, colours, spacing and animation. <b>Sections</b> adds new blocks and reorders, hides or deletes the ones already there.</p></aside></div>' +
           '<div class="picker-overlay" id="ed-picker" hidden><div class="picker-box">' +
           '<div class="picker-head"><h2>Choose an image</h2><button class="btn btn--ghost btn--small" id="picker-close">Close</button></div>' +
           '<div class="picker-grid" id="picker-grid"></div></div></div>';
@@ -1794,6 +1886,15 @@
           markTouched(doc);
           applyLive();
         }
+        function setText(path, html) {
+          pushUndo();
+          var doc = docFor(path);
+          var spec = specOf(doc, path, true);
+          if (html) spec.text = html; else delete spec.text;
+          st.touchedTextPaths[path] = true;
+          markTouched(doc);
+          applyLive();
+        }
         function setHidden(path, b, on) {
           pushUndo();
           var doc = docFor(path);
@@ -1839,6 +1940,21 @@
           var f = meta.emKey ? st.fields[meta.emKey] : null;
 
           var content = "";
+          if (!f && meta.textEditable) {
+            var pathText = spec.text || "";
+            content = group("Content — " + meta.tag,
+              '<div class="rich-bar" data-rich="path">' +
+              '<button type="button" data-rt="strong" title="Bold"><b>B</b></button>' +
+              '<button type="button" data-rt="em" title="Italic"><i>I</i></button>' +
+              '<button type="button" data-rt="a" title="Link">🔗</button>' +
+              '<button type="button" data-rt="br" title="Line break">↵</button></div>' +
+              '<textarea id="ed-ptext" rows="4" maxlength="2000">' +
+              esc(pathText || meta.textHtml) + "</textarea>" +
+              '<span class="admin-inline-note">Type over the words to change them. ' +
+              "Empty puts the original text back.</span>" +
+              '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-ptext-revert">Use original</button></div>',
+              true);
+          }
           if (f) {
             var currentText = meta.emKey in st.changedText ? st.changedText[meta.emKey] : (f.value || f.original);
             content = group("Content — " + f.label,
@@ -1972,6 +2088,36 @@
               refreshDirty();
             });
           }
+          var pta = document.getElementById("ed-ptext");
+          if (pta) {
+            var ptTimer = null;
+            function pushPathText() {
+              clearTimeout(ptTimer);
+              ptTimer = setTimeout(function () { setText(path, pta.value.trim()); }, 300);
+              st.postFrame({ type: "em-apply", pathTexts: [{ path: path, html: pta.value.trim() }] });
+            }
+            pta.addEventListener("input", pushPathText);
+            panel.querySelectorAll('[data-rich="path"] [data-rt]').forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                var tag = btn.getAttribute("data-rt");
+                var a = pta.selectionStart, b = pta.selectionEnd, sel = pta.value.slice(a, b);
+                var ins;
+                if (tag === "br") ins = "<br>";
+                else if (tag === "a") {
+                  var url = prompt("Link to (URL or /page.html):", "https://");
+                  if (!url) return;
+                  ins = '<a href="' + url.trim() + '">' + (sel || "link text") + "</a>";
+                } else ins = "<" + tag + ">" + (sel || "text") + "</" + tag + ">";
+                pta.setRangeText(ins, a, b, "end");
+                pta.focus();
+                pushPathText();
+              });
+            });
+            document.getElementById("ed-ptext-revert").addEventListener("click", function () {
+              pta.value = "";
+              setText(path, "");
+            });
+          }
           if (meta.isImg) {
             document.getElementById("ed-img-replace").addEventListener("click", function () {
               openPicker(function (url) { setAttr(path, "src", url); st.onSelect(meta); });
@@ -2060,29 +2206,44 @@
         function renderSections() {
           var panel = document.getElementById("ed-panel");
           var spec = st.pageDoc.sections || {};
-          var order = (spec.order && spec.order.length ? spec.order : st.sections.map(function (s) { return s.id; }))
-            .filter(function (id) { return st.sections.some(function (s) { return s.id === id; }); });
-          st.sections.forEach(function (s) {
-            if (order.indexOf(s.id) === -1) order.push(s.id);
+          var added = spec.added || [];
+          var known = st.sections.map(function (s) { return s.id; })
+            .concat(added.map(function (a) { return a.id; }));
+          var order = (spec.order && spec.order.length ? spec.order : known)
+            .filter(function (id) { return known.indexOf(id) !== -1; });
+          known.forEach(function (id) {
+            if (order.indexOf(id) === -1) order.push(id);
           });
           var removed = spec.removed || [];
           var duplicated = spec.duplicated || [];
           var labels = {};
           st.sections.forEach(function (s) { labels[s.id] = s.label; });
+          added.forEach(function (a) {
+            labels[a.id] = (st.blockLabel[a.template] || "Block") + " (added)";
+          });
           panel.innerHTML =
             "<h2>Page sections</h2>" +
-            '<p class="admin-inline-note">Reorder, hide, or duplicate the big blocks of this page.</p>' +
+            '<p class="admin-inline-note">Reorder, hide, duplicate or delete the big blocks of this page — and add new ones.</p>' +
             '<div class="sec-list">' + order.map(function (id, i) {
               var off = removed.indexOf(id) !== -1;
+              var isAdded = added.some(function (a) { return a.id === id; });
               return '<div class="sec-item' + (off ? " sec-item--off" : "") + '" data-sec="' + esc(id) + '">' +
                 "<span>" + esc(labels[id] || id) + "</span><span class=\"sec-btns\">" +
                 '<button title="Move up" data-sec-up' + (i === 0 ? " disabled" : "") + ">↑</button>" +
                 '<button title="Move down" data-sec-down' + (i === order.length - 1 ? " disabled" : "") + ">↓</button>" +
                 '<button title="' + (off ? "Show" : "Hide") + '" data-sec-hide>' + (off ? "🚫" : "👁") + "</button>" +
                 '<button title="Duplicate" data-sec-dup' + (duplicated.indexOf(id) !== -1 ? ' class="is-on"' : "") + ">⧉</button>" +
+                (isAdded ? '<button title="Delete this added block" data-sec-del>🗑</button>' : "") +
                 "</span></div>";
             }).join("") + "</div>" +
-            '<div class="admin-actions" style="margin-top:12px;"><button class="btn btn--ghost btn--small" id="sec-reset">Reset section layout</button></div>';
+            '<div class="admin-actions" style="margin-top:12px;">' +
+            '<button class="btn btn--primary btn--small" id="sec-add">+ Add section</button>' +
+            '<button class="btn btn--ghost btn--small" id="sec-reset">Reset section layout</button></div>' +
+            '<div id="sec-picker" hidden><h3 style="margin-top:18px;">Choose a block</h3>' +
+            '<div class="block-list">' + st.blocks.map(function (b) {
+              return '<button class="block-item" data-block="' + esc(b.id) + '">' +
+                "<b>" + esc(b.label) + "</b><span>" + esc(b.hint) + "</span></button>";
+            }).join("") + "</div></div>";
           function mutate(fn) {
             pushUndo();
             var s = st.pageDoc.sections = st.pageDoc.sections || {};
@@ -2119,6 +2280,41 @@
                 var i = s.duplicated.indexOf(id);
                 if (i === -1) s.duplicated.push(id); else s.duplicated.splice(i, 1);
               });
+            });
+            var del = row.querySelector("[data-sec-del]");
+            if (del) del.addEventListener("click", function () {
+              if (!confirm("Delete this added block and everything written in it?")) return;
+              mutate(function (s) {
+                s.added = (s.added || []).filter(function (a) { return a.id !== id; });
+                s.order = s.order.filter(function (x) { return x !== id; });
+                s.removed = (s.removed || []).filter(function (x) { return x !== id; });
+                s.duplicated = (s.duplicated || []).filter(function (x) { return x !== id; });
+                // drop styles and text written into the block that is going away
+                Object.keys(st.pageDoc.elements).forEach(function (path) {
+                  if (path.indexOf("[data-em-sec=" + id + "]") === 0) delete st.pageDoc.elements[path];
+                });
+              });
+            });
+          });
+          document.getElementById("sec-add").addEventListener("click", function () {
+            var picker = document.getElementById("sec-picker");
+            picker.hidden = !picker.hidden;
+          });
+          panel.querySelectorAll("[data-block]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var current = (st.pageDoc.sections || {}).added || [];
+              if (current.length >= st.maxBlocks) {
+                toast("That is the most blocks one page can hold.", true);
+                return;
+              }
+              var used = current.map(function (a) { return parseInt(a.id.slice(1), 10); });
+              var next = 1;
+              while (used.indexOf(next) !== -1) next++;
+              mutate(function (s) {
+                s.added = current.concat([{ id: "a" + next, template: btn.getAttribute("data-block") }]);
+                s.order = s.order.concat(["a" + next]);
+              });
+              toast("Block added at the bottom — use ↑ to move it.");
             });
           });
           document.getElementById("sec-reset").addEventListener("click", function () {
@@ -2874,6 +3070,9 @@
         var s = r.data;
         var langs = s["site.languages"] || ["en"];
         var smtp = !!s["notify.smtpConfigured"];
+        var SOCIAL = (s.socialNetworks || []).map(function (n) {
+          return [n.key, n.label, n.placeholder];
+        });
 
         function help(text) { return '<span class="field-help">' + text + "</span>"; }
         function elsewhere(title, view, what) {
@@ -2926,6 +3125,20 @@
           '<span class="admin-inline-note">Saved immediately; language changes reach the public site at the next publish.</span></div>' +
           "</form></div>" +
 
+          '<div class="admin-panel"><h2>Social media links</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:14px;">Paste the full address of each profile you ' +
+          "want in the footer. Leave a field empty and that icon is not shown at all — the row only ever " +
+          "contains accounts you have filled in. Icons appear on every page after the next " +
+          "<b>Publish site</b>.</p>" +
+          '<form class="admin-form" id="social-form">' +
+          SOCIAL.map(function (n) {
+            return '<div><label for="soc-' + n[0] + '">' + esc(n[1]) + "</label>" +
+              '<input id="soc-' + n[0] + '" type="url" maxlength="300" placeholder="' + esc(n[2]) +
+              '" value="' + esc(s["social." + n[0]] || "") + '"></div>';
+          }).join("") +
+          '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save social links</button>' +
+          '<span class="admin-inline-note">Must start with https://</span></div></form></div>' +
+
           '<div class="admin-panel"><h2>Configured on other screens</h2>' +
           '<p class="admin-inline-note" style="margin-bottom:14px;">These are real settings, kept where the ' +
           "work happens rather than duplicated here.</p><div class=\"svc-list\">" +
@@ -2963,6 +3176,16 @@
             "site.languages": document.getElementById("s-lang").value.split(","),
             "site.defaultLanguage": document.getElementById("s-default-lang").value
           } }).then(function (r2) { r2.ok ? toast("Settings saved.") : apiErr(r2); });
+        });
+        document.getElementById("social-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var values = {};
+          SOCIAL.forEach(function (n) {
+            values["social." + n[0]] = document.getElementById("soc-" + n[0]).value.trim();
+          });
+          api("/api/admin/settings", { values: values }).then(function (r2) {
+            r2.ok ? toast("Social links saved — publish the site to show them.") : apiErr(r2);
+          });
         });
       });
     },
