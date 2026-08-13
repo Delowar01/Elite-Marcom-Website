@@ -406,23 +406,51 @@ def _list(rec: dict, *keys: str) -> list[str]:
     return []
 
 
-_YT_RE = re.compile(r"(?:youtube\.com/(?:shorts/|watch\?v=|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{6,20})")
+# Every YouTube link shape the supplier feed has been seen to carry. The
+# watch form is matched on the query rather than immediately after "watch?",
+# because real links routinely put other parameters first
+# (…/watch?app=desktop&v=ID, …/watch?feature=share&v=ID).
+_YT_PATH_RE = re.compile(
+    r"(?:youtube\.com|youtube-nocookie\.com|youtu\.be)"
+    r"(?:/(?:shorts|embed|live|v|e))?/([A-Za-z0-9_-]{6,20})")
+_YT_QUERY_RE = re.compile(r"[?&]v=([A-Za-z0-9_-]{6,20})")
 
 
 def _youtube_id(url: Any) -> str:
     if not isinstance(url, str):
         return ""
-    m = _YT_RE.search(url.strip())
-    return m.group(1) if m else ""
+    text = url.strip()
+    if "youtu" not in text.lower():
+        return ""
+    m = _YT_QUERY_RE.search(text)
+    if m:
+        return m.group(1)
+    m = _YT_PATH_RE.search(text)
+    if not m:
+        return ""
+    # ".../watch" with no v= is not a video reference
+    return "" if m.group(1).lower() in ("watch", "playlist", "channel", "user") else m.group(1)
+
+
+_VIDEO_KEYS = ("video_url", "videourl", "video", "youtube_url", "youtubeurl",
+               "youtube", "video_link", "videolink", "movie_url", "media_url")
 
 
 def _entry_video_url(v: dict) -> str:
     """Truthy video link on an image record (Odoo attaches video_url to the
-    entry and keeps the thumbnail in image_url)."""
-    for k in ("video_url", "videourl", "video"):
+    entry and keeps the thumbnail in image_url).
+
+    The supplier is not consistent about the key, so after the known names we
+    fall back to any value in the record that reads as a YouTube link. Getting
+    this wrong is not a missing field — the entry silently becomes a gallery
+    image, which is why a product video shows up as a still picture."""
+    for k in _VIDEO_KEYS:
         u = v.get(k)
         if isinstance(u, str) and u.strip() and u.strip().lower() not in _EMPTY_MARKERS:
             return u.strip()
+    for value in v.values():
+        if isinstance(value, str) and _youtube_id(value):
+            return value.strip()
     return ""
 
 

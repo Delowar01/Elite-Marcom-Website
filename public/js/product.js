@@ -236,14 +236,32 @@
              "</button></div>";
     }).join("");
     EM.carousel(els.carousel);
-    els.track.querySelectorAll(".video-slide__play").forEach(function (btn) {
-      btn.addEventListener("click", function (e) {
+    function playVideo(slide) {
+      if (!slide || slide.querySelector("iframe")) return;
+      var vid = slide.getAttribute("data-youtube");
+      if (!vid) return;
+      var frame = document.createElement("iframe");
+      frame.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(vid) +
+        "?autoplay=1&rel=0&playsinline=1&modestbranding=1";
+      frame.title = "Product video";
+      /* fullscreen needs both the permission and the legacy attribute; without
+         playsinline + autoplay in the policy, iOS refuses to start the video */
+      frame.setAttribute("allow",
+        "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen");
+      frame.setAttribute("allowfullscreen", "");
+      frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+      slide.innerHTML = "";
+      slide.appendChild(frame);
+    }
+    els.track.querySelectorAll(".video-slide").forEach(function (slide) {
+      /* the whole poster is the target, not just the small button — a tap
+         anywhere on a video slide should start it */
+      slide.addEventListener("click", function (e) {
         e.stopPropagation();
-        var slide = btn.closest(".video-slide");
-        var vid = slide.getAttribute("data-youtube");
-        slide.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + encodeURIComponent(vid) +
-          '?autoplay=1&rel=0&playsinline=1" title="Product video" loading="lazy" ' +
-          'allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>';
+        playVideo(slide);
+      });
+      slide.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); playVideo(slide); }
       });
     });
     lbImages = imgs; /* the fullscreen viewer shows images only */

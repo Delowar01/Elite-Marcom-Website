@@ -768,6 +768,46 @@ def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):
     assert jasani._budget_ok(manual=True) is False     # a 403 stops everything
 
 
+def test_jasani_recognises_every_youtube_link_shape():
+    """A video link the parser does not recognise does not go missing — the
+    entry falls through to the gallery and the video renders as a still
+    picture, which is exactly the bug this guards."""
+    from server import jasani
+
+    ID = "dQw4w9WgXcQ"
+    for url in ("https://www.youtube.com/watch?v=" + ID,
+                "https://www.youtube.com/watch?app=desktop&v=" + ID,
+                "https://m.youtube.com/watch?feature=share&v=" + ID,
+                "https://youtu.be/" + ID,
+                "https://www.youtube.com/embed/" + ID,
+                "https://www.youtube-nocookie.com/embed/" + ID,
+                "https://www.youtube.com/shorts/" + ID,
+                "https://www.youtube.com/live/" + ID,
+                "https://www.youtube.com/v/" + ID):
+        assert jasani._youtube_id(url) == ID, url
+    for not_a_video in ("https://www.jasani.ae/web/image/product.product/1/image_1024",
+                        "https://www.youtube.com/watch", "false", "", None, True):
+        assert jasani._youtube_id(not_a_video) == ""
+
+
+def test_jasani_video_entry_is_never_mistaken_for_a_gallery_image():
+    from server import jasani
+
+    ID = "dQw4w9WgXcQ"
+    poster = "https://www.jasani.ae/web/image/product.image/9/image_1024"
+    # the supplier is not consistent about the key holding the link
+    for key in ("video_url", "youtube_url", "video_link", "some_unexpected_key"):
+        entry = {"id": 9, "image_url": poster, key: "https://youtu.be/" + ID}
+        assert jasani._image_urls([entry]) == [], key      # not a gallery image
+        vids = jasani._video_entries([entry])
+        assert vids and vids[0]["youtubeId"] == ID, key
+        assert vids[0]["thumbnail"] == poster, key         # poster kept for click-to-play
+    # a plain image record stays an image
+    plain = {"id": 10, "image_url": poster}
+    assert jasani._image_urls([plain]) == [poster]
+    assert jasani._video_entries([plain]) == []
+
+
 def test_jasani_reserves_the_last_call_for_a_manual_sync(tmp_path, monkeypatch):
     """Background refreshes stop one short of the limit so a person can always
     force a sync; only an explicitly manual call may use the reserve."""
