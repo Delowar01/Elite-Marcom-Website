@@ -650,3 +650,30 @@
 .request-item__row { flex-wrap: wrap; }
 .request-item__row .labeled-control { gap: 3px; }
 .request-item__row .labeled-control > span { font-size: 0.62rem; }
+
+
+/* ---------- mobile refinement (pages.css loads after styles.css, so the
+     component overrides that need to win the cascade live here) ---------- */
+@media (max-width: 640px) {
+  /* carousel arrows were 34px — under a thumb that is a coin toss */
+  .carousel__btn { width: 46px; height: 46px; }
+  .carousel__btn--prev { left: 8px; }
+  .carousel__btn--next { right: 8px; }
+
+  /* quantity steppers and the grid/list toggle — the two controls a visitor
+     taps most while browsing the catalogue, both under 36px before this */
+  .qty-control button, .view-toggle button,
+  .drawer button.icon, .card__action, .req-line button, .drawer__foot button {
+    min-width: 44px; min-height: 44px;
+  }
+  .qty-control { gap: 4px; }
+  /* the "view project" arrow on the portfolio cards */
+  .link-arrow { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; }
+
+  /* helper text in the request drawer */
+  .drawer__foot .text-muted, .drawer .text-muted { font-size: 0.86rem; }
+
+  /* the eyebrow and section marker are tracked uppercase labels, not running
+     text: keep the styling but stop them dropping below 12px */
+  .eyebrow, .section-marker { font-size: 0.76rem; }
+}
