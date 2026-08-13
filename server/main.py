@@ -606,9 +606,12 @@ async def giveaways_manual_status(request: Request, country: Literal["ksa", "uae
     catalog_read_guard(request, "giveaways_manual")
     try:
         await jasani.get_manual(country, product_id)
-        return {"available": True}
+        available = True
     except jasani.SupplierUnavailable:
-        return {"available": False}
+        available = False
+    # no-store for the same reason as the download itself: availability can flip
+    # the moment a manual is regenerated, and a cached "no" hides the button
+    return JSONResponse({"available": available}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/giveaways/manual")
@@ -622,7 +625,11 @@ async def giveaways_manual(request: Request, country: Literal["ksa", "uae"] = Qu
                             detail="The printing manual is not available for this product — contact us for branding assistance.")
     return Response(content=data, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{_manual_filename(code)}"',
-        "Cache-Control": "public, max-age=3600",
+        # The server already caches generated manuals for 24 hours, so browser
+        # and CDN caching buys no supplier protection — it only risks handing
+        # back a manual that has since been regenerated. A GEN1 PDF was served
+        # for an hour after GEN2 existed because of the previous max-age=3600.
+        "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
     })
 

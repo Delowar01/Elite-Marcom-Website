@@ -663,6 +663,43 @@ def test_manual_proxy_serves_validated_pdf(tmp_path, monkeypatch):
     assert res.status_code == 200 and res.content.startswith(b"%PDF-")
 
 
+def test_manual_endpoints_are_never_cached_downstream(tmp_path, monkeypatch):
+    """A regenerated manual must reach the customer immediately.
+
+    The server already caches generated manuals for 24 hours, so browser and
+    CDN caching adds no supplier protection — and it cost real correctness: a
+    public, max-age=3600 response kept handing back the old GEN1 PDF for an
+    hour after the corrected GEN2 existed. Availability is the same story: a
+    cached "no" hides a download button that now works."""
+    jasani = _manual_catalog(monkeypatch)
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+
+    async def fake_fetch(market, template_id):
+        return FAKE_MANUAL_PDF
+    monkeypatch.setattr(jasani, "_fetch_manual_bytes", fake_fetch)
+
+    status = client.get("/api/giveaways/manual/status?country=ksa&product_id=24246")
+    assert status.status_code == 200 and status.json() == {"available": True}
+    assert status.headers["cache-control"] == "no-store"
+
+    pdf = client.get("/api/giveaways/manual?country=ksa&product_id=24246")
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-")
+    assert pdf.headers["cache-control"] == "no-store"
+    # nothing else may reintroduce a shared cache lifetime
+    for header in ("expires", "etag", "last-modified"):
+        assert header not in {k.lower() for k in pdf.headers}, header
+
+    # the unavailable answer is equally uncacheable
+    async def broken_fetch(market, template_id):
+        raise jasani.SupplierUnavailable("down")
+    monkeypatch.setattr(jasani, "_fetch_manual_bytes", broken_fetch)
+    for name in ("ksa-29453.json", "ksa-29453.pdf"):
+        (tmp_path / "manuals" / name).unlink(missing_ok=True)
+    unavailable = client.get("/api/giveaways/manual/status?country=ksa&product_id=24246")
+    assert unavailable.json() == {"available": False}
+    assert unavailable.headers["cache-control"] == "no-store"
+
+
 def test_manual_proxy_rejects_non_pdf_candidate(tmp_path, monkeypatch):
     jasani = _manual_catalog(monkeypatch)
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
