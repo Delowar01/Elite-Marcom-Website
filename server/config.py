@@ -26,8 +26,19 @@ RETENTION_CAREERS_DAYS = int(os.environ.get("EM_RETENTION_CAREERS_DAYS", "90"))
 RETENTION_CATALOG_DAYS = int(os.environ.get("EM_RETENTION_CATALOG_DAYS", "30"))
 
 # --- supplier (Jasani) ---
-JASANI_API_TOKEN = os.environ.get("JASANI_API_TOKEN", "")
+JASANI_API_TOKEN = os.environ.get("JASANI_API_TOKEN", "")            # KSA account
+JASANI_API_TOKEN_UAE = os.environ.get("JASANI_API_TOKEN_UAE", "")    # UAE account
+# One token per market, each with its own daily allowance. Deliberately no
+# fallback between them: sending both markets through a single token would put
+# ten calls a day on one account, and the supplier answers an over-limit token
+# with a 403 that parks it for the rest of the day.
+JASANI_TOKENS = {"ksa": JASANI_API_TOKEN.strip(), "uae": JASANI_API_TOKEN_UAE.strip()}
 JASANI_HOSTS = {"ksa": "www.giftsksa.com", "uae": "www.jasani.ae"}
+# the supplier day rolls over in local time, and the two markets are an hour apart
+JASANI_UTC_OFFSET = {"ksa": 3, "uae": 4}
+# automatic sync times in each market's own local time: one products refresh at
+# midnight, then stock through the trading day. Four calls, leaving the fifth.
+JASANI_SCHEDULE = ((0, "products"), (8, "stock"), (13, "stock"), (18, "stock"))
 SUPPLIER_TIMEOUT_S = 20.0
 SUPPLIER_MAX_BYTES = 5 * 1024 * 1024
 SUPPLIER_MAX_RECORDS = 5000

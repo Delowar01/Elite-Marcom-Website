@@ -34,8 +34,21 @@ class SupplierUnavailable(Exception):
 # price, stock) per day, measured in UAE time (UTC+4). Branding endpoints are
 # documented outside the limit. The counter persists across restarts.
 
-def _uae_day() -> str:
-    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 4 * 3600))
+def _market_day(market: str) -> str:
+    """The supplier day for one market, in that market's own local time.
+
+    KSA runs an hour behind the UAE, so a single shared clock would roll one
+    market's allowance over at the wrong moment — an hour in which a sync
+    looks due but the supplier still counts it against yesterday."""
+    offset = config.JASANI_UTC_OFFSET.get(market, 4)
+    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + offset * 3600))
+
+
+def _market_local(market: str) -> tuple[str, int]:
+    """(local day, local hour) for a market."""
+    offset = config.JASANI_UTC_OFFSET.get(market, 4)
+    local = time.gmtime(time.time() + offset * 3600)
+    return time.strftime("%Y-%m-%d", local), local.tm_hour
 
 
 def _budget_file():
@@ -43,64 +56,104 @@ def _budget_file():
     return _CACHE_DIR / "supplier-budget.json"
 
 
-def _read_budget() -> dict:
+def _read_all_budgets() -> dict:
+    """Per-market counters. Accepts the single-counter file this replaced and
+    charges the old count to both markets, so an upgrade mid-day can only
+    under-spend, never over-spend."""
     try:
         data = json.loads(_budget_file().read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {"day": str(data.get("day", "")), "count": int(data.get("count", 0))}
     except (OSError, ValueError):
-        pass
-    return {"day": "", "count": 0}
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if "count" in data or "day" in data:          # legacy shared counter
+        legacy = {"day": str(data.get("day", "")), "count": int(data.get("count", 0))}
+        return {m: dict(legacy) for m in config.JASANI_HOSTS}
+    out = {}
+    for market, entry in data.items():
+        if isinstance(entry, dict):
+            out[market] = {"day": str(entry.get("day", "")), "count": int(entry.get("count", 0)),
+                           "slots": entry.get("slots") if isinstance(entry.get("slots"), dict) else {}}
+    return out
 
 
-def _write_budget(budget: dict) -> None:
+def _read_budget(market: str) -> dict:
+    entry = _read_all_budgets().get(market) or {}
+    return {"day": str(entry.get("day", "")), "count": int(entry.get("count", 0)),
+            "slots": entry.get("slots") or {}}
+
+
+def _write_budget(market: str, budget: dict) -> None:
     try:
-        _budget_file().write_text(json.dumps(budget), encoding="utf-8")
+        data = _read_all_budgets()
+        data[market] = budget
+        _budget_file().write_text(json.dumps(data), encoding="utf-8")
     except OSError:
         pass
 
 
-def _budget_ok(manual: bool = False) -> bool:
-    """Spend one primary call.
+def _budget_ok(market: str, manual: bool = False) -> bool:
+    """Spend one primary call from this market's own allowance.
 
+    Each market has its own supplier account and its own five calls a day.
     Background work stops at SUPPLIER_AUTO_BUDGET so the remaining call stays
-    available for a person: when the catalogue is visibly wrong, an owner or
+    available for a person: when a catalogue is visibly wrong, an owner or
     admin must still be able to force a sync. Only an explicitly manual
     refresh may reach into that reserve."""
-    day = _uae_day()
+    day = _market_day(market)
     ceiling = config.SUPPLIER_DAILY_BUDGET if manual else config.SUPPLIER_AUTO_BUDGET
     with _lock:
-        budget = _read_budget()
+        budget = _read_budget(market)
         if budget["day"] != day:
-            budget = {"day": day, "count": 0}
+            budget = {"day": day, "count": 0, "slots": {}}
         if budget["count"] >= ceiling:
             return False
         budget["count"] += 1
-        _write_budget(budget)
+        _write_budget(market, budget)
         return True
 
 
-def _budget_refund() -> None:
+def _budget_refund(market: str) -> None:
     """Give back a call that never reached Jasani.
 
     _budget_ok() spends the call before the request goes out, so a DNS, TLS,
     connect or timeout failure — where the supplier never served anything —
     would otherwise burn one of the five. A handful of failed attempts could
-    then exhaust the day for BOTH markets and look exactly like a dead API.
+    then exhaust the day for that market and look exactly like a dead API.
     Anything that came back with an HTTP status was served and still counts."""
-    day = _uae_day()
+    day = _market_day(market)
     with _lock:
-        budget = _read_budget()
+        budget = _read_budget(market)
         if budget["day"] == day and budget["count"] > 0:
             budget["count"] -= 1
-            _write_budget(budget)
+            _write_budget(market, budget)
 
 
-def _budget_exhaust() -> None:
+def _budget_exhaust(market: str) -> None:
     """After a 403 (documented for over-limit, bad token or bad URL) stop
-    calling the primary APIs until the UAE day resets — never retry a 403."""
+    calling this market's primary APIs until its day resets — never retry a
+    403. The other market has its own token and is unaffected."""
     with _lock:
-        _write_budget({"day": _uae_day(), "count": config.SUPPLIER_DAILY_BUDGET})
+        budget = _read_budget(market)
+        _write_budget(market, {"day": _market_day(market),
+                               "count": config.SUPPLIER_DAILY_BUDGET,
+                               "slots": budget.get("slots") or {}})
+
+
+def _slot_done(market: str, day: str, hour: int) -> bool:
+    return hour in (_read_budget(market).get("slots") or {}).get(day, [])
+
+
+def _mark_slot(market: str, day: str, hour: int) -> None:
+    with _lock:
+        budget = _read_budget(market)
+        slots = {day: sorted(set((budget.get("slots") or {}).get(day, []) + [hour]))}
+        budget["slots"] = slots          # only today's slots are worth keeping
+        _write_budget(market, budget)
+
+
+def _token(market: str) -> str:
+    return urllib.parse.quote(config.JASANI_TOKENS.get(market, ""), safe="")
 
 
 def _status_file():
@@ -109,9 +162,11 @@ def _status_file():
 
 
 def _scrub(text: str) -> str:
-    """A reason string is shown in the admin panel — never let it carry the token."""
-    token = config.JASANI_API_TOKEN
-    return (text.replace(token, "***") if token else text)[:160]
+    """A reason string is shown in the admin panel — never let it carry a token."""
+    for token in config.JASANI_TOKENS.values():
+        if token:
+            text = text.replace(token, "***")
+    return text[:160]
 
 
 def record_attempt(market: str, what: str, ok: bool, reason: str = "") -> None:
@@ -152,14 +207,15 @@ def _host(market: str) -> str:
     return host
 
 
-async def _fetch(url: str, expected_host: str, primary: bool = True,
+async def _fetch(url: str, expected_host: str, market: str, primary: bool = True,
                  manual: bool = False) -> tuple[bytes, str]:
     """primary=True marks the rate-limited product/price/stock endpoints;
     branding endpoints are documented outside the daily limit. manual=True is
-    an admin-triggered sync, the only thing allowed to use the reserved call."""
-    if not config.JASANI_API_TOKEN:
-        raise SupplierUnavailable("no supplier token configured")
-    if primary and not _budget_ok(manual):
+    an admin-triggered sync, the only thing allowed to use the reserved call.
+    The budget spent is always the one belonging to `market`."""
+    if not config.JASANI_TOKENS.get(market):
+        raise SupplierUnavailable(f"no supplier token configured for {market.upper()}")
+    if primary and not _budget_ok(market, manual):
         raise SupplierUnavailable(
             "daily supplier budget exhausted"
             if manual else
@@ -168,7 +224,7 @@ async def _fetch(url: str, expected_host: str, primary: bool = True,
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != expected_host or parsed.port not in (None, 443):
         if primary:
-            _budget_refund()
+            _budget_refund(market)
         raise SupplierUnavailable("blocked upstream url")
     try:
         async with httpx.AsyncClient(
@@ -179,7 +235,7 @@ async def _fetch(url: str, expected_host: str, primary: bool = True,
             async with client.stream("GET", url) as res:
                 if res.status_code == 403 and primary:
                     # documented for over-limit / bad token / bad URL — do not retry today
-                    _budget_exhaust()
+                    _budget_exhaust(market)
                     raise SupplierUnavailable("upstream 403 — primary calls paused until the UAE-day reset")
                 if res.status_code != 200:
                     raise SupplierUnavailable(f"upstream {res.status_code}")
@@ -197,13 +253,9 @@ async def _fetch(url: str, expected_host: str, primary: bool = True,
         raise
     except Exception as exc:  # network/TLS/protocol failures → controlled unavailability
         if primary:
-            _budget_refund()   # nothing was served, so nothing was spent
+            _budget_refund(market)   # nothing was served, so nothing was spent
         raise SupplierUnavailable(f"transport: {exc.__class__.__name__}") from exc
     return b"".join(chunks), ctype
-
-
-def _token() -> str:
-    return urllib.parse.quote(config.JASANI_API_TOKEN, safe="")
 
 
 # ---------------- parsing / normalization ----------------
@@ -721,7 +773,8 @@ def _resolve_color_options(products: list[dict]) -> None:
 async def _fetch_products(market: str, manual: bool = False) -> list[dict]:
     """One primary Product API call, normalized. Raises SupplierUnavailable."""
     host = _host(market)
-    raw, ctype = await _fetch(f"https://{host}/products/all/{_token()}", host, manual=manual)
+    raw, ctype = await _fetch(f"https://{host}/products/all/{_token(market)}", host,
+                              market, manual=manual)
     records = _parse_records(raw, ctype)[: config.SUPPLIER_MAX_RECORDS]
     products = [p for p in (normalize_product(r, market) for r in records) if p]
     if not products:
@@ -738,7 +791,8 @@ async def _fetch_products(market: str, manual: bool = False) -> list[dict]:
 async def _apply_stock(market: str, products: list[dict], manual: bool = False) -> None:
     """One primary Stock API call merged onto products. Raises SupplierUnavailable."""
     host = _host(market)
-    raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{_token()}", host, manual=manual)
+    raw_s, ctype_s = await _fetch(f"https://{host}/products/stock/{_token(market)}", host,
+                                  market, manual=manual)
     stock_records = _parse_records(raw_s, ctype_s)[: config.SUPPLIER_MAX_RECORDS]
     matched = _merge_stock(products, stock_records)
     in_stock = sum(1 for p in products if p["stock"]["available"] > 0)
@@ -813,8 +867,9 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
         now = time.time()
         products_fresh = now - cached.get("fetchedAt", 0) < config.PRODUCT_REFRESH_HOURS * 3600
         stock_fresh = now - cached.get("stockAt", cached.get("fetchedAt", 0)) < config.STOCK_REFRESH_HOURS * 3600
-        if not (products_fresh and stock_fresh):
-            _schedule_refresh(market)          # refresh for the next visitor
+        # No refresh is triggered from a page load: the four scheduled syncs
+        # own the automatic allowance, and a visitor-driven top-up on top of
+        # them would push the market past four calls a day.
         return cached["products"], "cache" if (products_fresh and stock_fresh) else "stale"
 
     # Nothing cached at all: this is the only path that can wait, and it only
@@ -845,6 +900,67 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
         return products, "live"
 
 
+async def _refresh_products_only(market: str) -> None:
+    """One products call, keeping the stock figures already cached.
+
+    A full refresh costs two calls; the schedule allows four a day in total,
+    so the midnight products sync spends exactly one and carries yesterday's
+    stock forward until the morning stock call replaces it."""
+    cached = _read_cache(market) or {}
+    previous = {p["id"]: p.get("stock") for p in cached.get("products", []) if p.get("id")}
+    products = await _fetch_products(market)
+    for product in products:
+        carried = previous.get(product["id"])
+        if carried and not (product.get("stock") or {}).get("available"):
+            product["stock"] = carried
+    _write_cache(market, products,
+                 fetched_at=time.time(),
+                 stock_at=cached.get("stockAt", 0) or 0)
+    record_attempt(market, "products", True, f"{len(products)} products (scheduled)")
+
+
+async def run_due_slots() -> list[str]:
+    """Run any automatic sync whose hour has arrived in that market's local
+    time and which has not run yet today. One call per slot, never more."""
+    ran = []
+    for market in config.JASANI_HOSTS:
+        if not config.JASANI_TOKENS.get(market):
+            continue
+        day, hour = _market_local(market)
+        for slot_hour, what in config.JASANI_SCHEDULE:
+            if slot_hour > hour or _slot_done(market, day, slot_hour):
+                continue
+            lock = _refresh_lock(market)
+            if lock.locked():
+                break
+            async with lock:
+                try:
+                    if what == "products":
+                        await _refresh_products_only(market)
+                    else:
+                        cached = _read_cache(market)
+                        if not cached or not cached.get("products"):
+                            await _refresh_products_only(market)
+                        else:
+                            products = cached["products"]
+                            await _apply_stock(market, products)
+                            _write_cache(market, products,
+                                         fetched_at=cached.get("fetchedAt", time.time()),
+                                         stock_at=time.time())
+                            record_attempt(market, "stock", True,
+                                           f"{len(products)} products (scheduled)")
+                except SupplierUnavailable as exc:
+                    record_attempt(market, what, False, str(exc))
+                except Exception as exc:
+                    print(f"[jasani] {market} scheduled {what}: {exc.__class__.__name__}", flush=True)
+            # marked either way: a failed slot must not be retried all day,
+            # which is how a single bad hour turns into a spent allowance
+            _mark_slot(market, day, slot_hour)
+            ran.append(f"{market}:{slot_hour:02d}:{what}")
+            break            # at most one scheduled call per market per tick
+    return ran
+
+
 async def warm_catalogues() -> None:
     """Startup warm-up so the first visitor of the day meets a filled cache
     rather than a supplier call. Uses the automatic allowance only."""
@@ -863,21 +979,45 @@ async def warm_catalogues() -> None:
 # panel. Everything here respects the same daily budget and never exposes
 # the supplier token.
 
-def budget_status() -> dict:
-    """Primary-call budget snapshot without consuming a call."""
-    day = _uae_day()
+def next_slot(market: str) -> dict | None:
+    """The next scheduled automatic sync for a market, in its local time."""
+    day, hour = _market_local(market)
+    done = (_read_budget(market).get("slots") or {}).get(day, [])
+    for slot_hour, what in config.JASANI_SCHEDULE:
+        if slot_hour not in done:
+            # A slot whose hour has already passed is still run — a server
+            # started at midday must not skip the morning sync — so report it
+            # as due now rather than pointing at the next hour on the clock.
+            return {"hour": slot_hour, "what": what, "today": True,
+                    "due": slot_hour <= hour}
+    first = config.JASANI_SCHEDULE[0]
+    return {"hour": first[0], "what": first[1], "today": False, "due": False}
+
+
+def budget_status(market: str) -> dict:
+    """One market's primary-call budget, without consuming a call."""
+    day = _market_day(market)
+    offset = config.JASANI_UTC_OFFSET.get(market, 4)
     with _lock:
-        budget = _read_budget()
+        budget = _read_budget(market)
     used = budget["count"] if budget["day"] == day else 0
-    # seconds until the UAE day rolls over
-    uae_now = time.time() + 4 * 3600
-    reset_in = int(86400 - (uae_now % 86400))
-    return {"day": day, "used": used, "limit": config.SUPPLIER_DAILY_BUDGET,
+    local_now = time.time() + offset * 3600
+    return {"market": market, "day": day, "used": used,
+            "limit": config.SUPPLIER_DAILY_BUDGET,
             "remaining": max(0, config.SUPPLIER_DAILY_BUDGET - used),
             "autoLimit": config.SUPPLIER_AUTO_BUDGET,
             "autoRemaining": max(0, config.SUPPLIER_AUTO_BUDGET - used),
             "reserved": max(0, config.SUPPLIER_DAILY_BUDGET - config.SUPPLIER_AUTO_BUDGET),
-            "resetInSeconds": reset_in}
+            "resetInSeconds": int(86400 - (local_now % 86400)),
+            "utcOffset": offset,
+            "tokenConfigured": bool(config.JASANI_TOKENS.get(market)),
+            "schedule": [{"hour": h, "what": w} for h, w in config.JASANI_SCHEDULE],
+            "slotsDone": (budget.get("slots") or {}).get(day, []),
+            "nextSlot": next_slot(market)}
+
+
+def budget_status_all() -> dict:
+    return {m: budget_status(m) for m in config.JASANI_HOSTS}
 
 
 def cache_status(market: str) -> dict:
@@ -1315,7 +1455,8 @@ async def get_branding_areas(market: str, product_id: str) -> list[dict]:
     host = _host(market)
     # the Branding API is documented outside the daily primary-call limit
     raw, ctype = await _fetch(
-        f"https://{host}/branding/{_token()}/{urllib.parse.quote(str(product_id), safe='')}", host,
+        f"https://{host}/branding/{_token(market)}/{urllib.parse.quote(str(product_id), safe='')}",
+        host, market,
         primary=False,
     )
     records = _parse_records(raw, ctype)[:20]

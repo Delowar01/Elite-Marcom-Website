@@ -737,3 +737,19 @@ html[data-theme="light"] .admin-body {
 .stat-card .stat-delta--up { color: var(--adm-ok); background: var(--adm-ok-bg); }
 .stat-card .stat-delta--down { color: var(--adm-bad); background: var(--adm-bad-bg); }
 .stat-card .stat-delta--flat { color: var(--text-soft); background: var(--adm-inset); }
+
+
+/* ---------- supplier schedule strip ---------- */
+.slot-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+.slot {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 5px 10px; border-radius: 9px; font-size: 0.72rem; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--adm-line); background: var(--adm-inset); color: var(--text-muted);
+}
+.slot em { font-style: normal; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; opacity: 0.75; }
+.slot--done { border-color: var(--adm-ok); color: var(--adm-ok); background: var(--adm-ok-bg); }
+.slot--next { border-color: var(--orange-2); color: var(--orange-2); }
+/* the hour has passed but the sync has not run — it catches up on the next tick */
+.slot--due { border-color: var(--adm-warn); color: var(--adm-warn); background: var(--adm-warn-bg); }

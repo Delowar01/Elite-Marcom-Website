@@ -11,15 +11,26 @@ Secrets live only in the git-ignored `.env` (see `.env.example`) — never commi
 review `docs/jasani-api-reference.md`** (the complete Jasani API technical
 documentation). Non-negotiable rules from it:
 
-- At most **5 primary GET calls per day** (products / price / stock), measured in
-  **UAE time**. Branding endpoints are outside the limit. The budget counter is
-  persisted in `runtime/cache/supplier-budget.json`; never retry a 403.
-  Background refreshes stop at `EM_SUPPLIER_AUTO_BUDGET` (default 4) so the
-  remaining call stays available for a manual sync by an owner or admin —
-  `_budget_ok(manual=True)`, reached only through `force_refresh`. A call that
-  never got an HTTP response is refunded; anything the supplier served counts.
+- **One supplier account per market**: `JASANI_API_TOKEN` is KSA,
+  `JASANI_API_TOKEN_UAE` is UAE. Never fall back from one to the other — a
+  single token carrying both markets means ten calls a day on one account and a
+  403 that parks it.
+- At most **5 primary GET calls per market per day** (products / price / stock),
+  measured in that market's **own local time** (`JASANI_UTC_OFFSET`: KSA +3,
+  UAE +4). Branding endpoints are outside the limit. Per-market counters live in
+  `runtime/cache/supplier-budget.json`; never retry a 403.
+  Automatic work stops at `EM_SUPPLIER_AUTO_BUDGET` (default 4) so the remaining
+  call stays available for a manual sync by an owner or admin —
+  `_budget_ok(market, manual=True)`, reached only through `force_refresh`. A call
+  that never got an HTTP response is refunded; anything the supplier served counts.
   One in-flight sync per market (`_refresh_lock`), so a double-click or a burst
-  of visitors on a due cache cannot spend two calls on the same work.
+  of visitors cannot spend two calls on the same work.
+- The four automatic calls are **scheduled, not demand-driven**
+  (`JASANI_SCHEDULE`): products at 00:00, stock at 08:00, 13:00 and 18:00 local.
+  Each slot is exactly one call and runs once per local day, marked in the budget
+  file whether it succeeded or failed — a failing hour must not retry all day.
+  `get_catalog` never triggers a refresh; it serves the snapshot so a page load
+  never waits on the supplier.
 - Upstream refresh cadence: products ~daily, stock ~twice daily
   (`EM_PRODUCT_REFRESH_HOURS` / `EM_STOCK_REFRESH_HOURS`). The website reads the
   cached snapshot; serve last-known-good on any supplier failure.

@@ -440,11 +440,13 @@ def test_jasani_console_status_and_search(tmp_path, monkeypatch):
     res = client.get("/api/admin/jasani")
     assert res.status_code == 200
     data = res.json()
-    assert data["budget"]["limit"] >= 1 and data["budget"]["used"] == 0
+    for market in ("ksa", "uae"):
+        assert data["budgets"][market]["limit"] >= 1
+        assert data["budgets"][market]["used"] == 0
     assert data["markets"]["ksa"]["products"] == 2
     assert data["markets"]["ksa"]["inStock"] == 1
     assert data["markets"]["uae"]["cached"] is False
-    assert "token" not in json.dumps(data).lower() or data["tokenConfigured"] in (True, False)
+    assert set(data["tokensConfigured"]) == {"ksa", "uae"}
     found = client.get("/api/admin/jasani/products?market=ksa&q=tumbler").json()["products"]
     assert len(found) == 1 and found[0]["code"] == "CTEN 2240"
     assert client.get("/api/admin/jasani/products?market=nope").status_code == 400
@@ -479,9 +481,10 @@ def test_jasani_refresh_blocked_when_budget_exhausted(tmp_path, monkeypatch):
 
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
     _seed_jasani_cache(tmp_path)
-    monkeypatch.setattr(cfg, "JASANI_API_TOKEN", "test-token")
+    monkeypatch.setattr(cfg, "JASANI_TOKENS", {"ksa": "test-token", "uae": "test-token-uae"})
     (tmp_path / "supplier-budget.json").write_text(
-        json.dumps({"day": jasani._uae_day(), "count": cfg.SUPPLIER_DAILY_BUDGET}),
+        json.dumps({m: {"day": jasani._market_day(m), "count": cfg.SUPPLIER_DAILY_BUDGET}
+                    for m in cfg.JASANI_HOSTS}),
         encoding="utf-8")
     me = client.get("/api/admin/me").json()
     res = client.post("/api/admin/jasani/refresh", json={"market": "ksa", "what": "stock"},
@@ -491,7 +494,8 @@ def test_jasani_refresh_blocked_when_budget_exhausted(tmp_path, monkeypatch):
     # the cached snapshot is untouched
     cached = json.loads((tmp_path / "giveaways-ksa.json").read_text(encoding="utf-8"))
     assert cached["products"][0]["stock"]["available"] == 40
-    assert client.get("/api/admin/jasani").json()["budget"]["remaining"] == 0
+    budgets = client.get("/api/admin/jasani").json()["budgets"]
+    assert budgets["ksa"]["remaining"] == 0 and budgets["uae"]["remaining"] == 0
     actions = {e["action"] for e in aa.audit_list(limit=10)}
     assert "jasani.refresh_failed" in actions
 
@@ -1414,10 +1418,15 @@ def test_dashboard_reports_real_system_state():
         assert entry["market"] == market
         assert {"products", "inStock", "fetchedAt", "stockAt",
                 "nextProductsAt", "nextStockAt", "lastAttempt"} <= set(entry)
-    budget = d["supplier"]["budget"]
-    assert {"used", "remaining", "limit", "resetInSeconds", "day"} <= set(budget)
+    for market in ("ksa", "uae"):
+        budget = d["supplier"]["budgets"][market]
+        assert {"used", "remaining", "limit", "resetInSeconds", "day",
+                "utcOffset", "schedule", "nextSlot"} <= set(budget)
+    # the two markets run on their own clocks and their own allowances
+    assert d["supplier"]["budgets"]["ksa"]["utcOffset"] == 3
+    assert d["supplier"]["budgets"]["uae"]["utcOffset"] == 4
     # the supplier token is never echoed to the browser, only a boolean
-    assert isinstance(d["supplier"]["tokenConfigured"], bool)
+    assert set(d["supplier"]["tokensConfigured"]) == {"ksa", "uae"}
     assert "JASANI" not in json.dumps(d).upper().replace("JASANI_API_TOKEN", "")
 
 

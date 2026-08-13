@@ -647,12 +647,12 @@ async def admin_jasani(request: Request):
     require_perm(request, "jasani.view")
     from . import jasani
 
-    return {"budget": jasani.budget_status(),
+    return {"budgets": jasani.budget_status_all(),
             "markets": {m: jasani.cache_status(m) for m in config.JASANI_HOSTS},
             "manuals": jasani.manuals_status(),
             "refreshHours": {"products": config.PRODUCT_REFRESH_HOURS,
                              "stock": config.STOCK_REFRESH_HOURS},
-            "tokenConfigured": bool(config.JASANI_API_TOKEN)}
+            "tokensConfigured": {m: bool(tok) for m, tok in config.JASANI_TOKENS.items()}}
 
 
 class JasaniRefreshBody(BaseModel):
@@ -686,7 +686,7 @@ async def admin_jasani_refresh(request: Request, body: JasaniRefreshBody,
     aa.audit(session, "jasani.refreshed", "jasani",
              {"market": body.market, "what": body.what, "products": result.get("products")},
              _ip_hash(request))
-    return {**result, "budget": jasani.budget_status()}
+    return {**result, "budgets": jasani.budget_status_all()}
 
 
 @router.get("/api/admin/jasani/products")
@@ -1662,7 +1662,7 @@ async def admin_dashboard(request: Request):
         rentals, rentals_source = [], "unknown"
 
     mail = mailer.log_stats()
-    budget = jasani.budget_status()
+    budgets = jasani.budget_status_all()
     return {"user": {"name": session["name"], "role": session["role"]},
             "requests": counts,
             "requestTotals": totals,
@@ -1670,8 +1670,9 @@ async def admin_dashboard(request: Request):
             "statusCounts": status_counts,
             "marketCounts": market_counts,
             "adminUsers": aa.user_count(),
-            "supplier": {"budget": budget, "markets": markets,
-                         "tokenConfigured": bool(config.JASANI_API_TOKEN)},
+            "supplier": {"budgets": budgets, "markets": markets,
+                         "tokensConfigured": {m: bool(tok)
+                                              for m, tok in config.JASANI_TOKENS.items()}},
             "rentals": {"count": len(rentals), "source": rentals_source},
             "mail": {**mail, "configured": bool(config.RESEND_API_KEY)},
             "audit": aa.audit_list(limit=8)}

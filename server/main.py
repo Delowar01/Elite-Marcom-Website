@@ -827,12 +827,22 @@ async def warm_supplier_cache():
     supplier call on a page load."""
     from . import jasani
 
-    async def once():
+    async def loop():
         try:
             await jasani.warm_catalogues()
         except Exception as exc:
             print(f"[jasani] warm-up skipped: {exc.__class__.__name__}", flush=True)
-    asyncio.get_event_loop().create_task(once())
+        # Each market syncs on its own local clock, so the tick only has to be
+        # finer than the hour it is watching for.
+        while True:
+            try:
+                ran = await jasani.run_due_slots()
+                if ran:
+                    print(f"[jasani] scheduled sync: {', '.join(ran)}", flush=True)
+            except Exception as exc:
+                print(f"[jasani] scheduler error: {exc.__class__.__name__}", flush=True)
+            await asyncio.sleep(300)
+    asyncio.get_event_loop().create_task(loop())
 
 
 @app.on_event("startup")

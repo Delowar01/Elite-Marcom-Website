@@ -761,11 +761,12 @@ def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
     monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
     monkeypatch.setattr(jasani.config, "SUPPLIER_AUTO_BUDGET", 5)
-    assert all(jasani._budget_ok() for _ in range(5))
-    assert jasani._budget_ok() is False
-    jasani._budget_exhaust()
-    assert jasani._budget_ok() is False
-    assert jasani._budget_ok(manual=True) is False     # a 403 stops everything
+    assert all(jasani._budget_ok("ksa") for _ in range(5))
+    assert jasani._budget_ok("ksa") is False
+    jasani._budget_exhaust("ksa")
+    assert jasani._budget_ok("ksa") is False
+    assert jasani._budget_ok("ksa", manual=True) is False   # a 403 stops everything
+    assert jasani._budget_ok("uae") is True                 # the other account is untouched
 
 
 def _png_b64(w=120, h=90, mode="RGB", fmt="PNG"):
@@ -958,7 +959,7 @@ def test_cold_cache_is_the_only_thing_that_can_block(tmp_path, monkeypatch):
     from server import jasani
 
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "tok")
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "tok", "uae": "tok"})
 
     async def fetch(market, manual=False):
         return [{"id": "7", "name": "First sync", "stock": {"available": 2}}]
@@ -975,6 +976,110 @@ def test_cold_cache_is_the_only_thing_that_can_block(tmp_path, monkeypatch):
     assert state == "cache"
 
 
+def test_each_market_has_its_own_token_and_allowance(tmp_path, monkeypatch):
+    """Two supplier accounts, two allowances. A shared counter would let one
+    market spend the other's calls; a shared token would put ten calls a day
+    on one account, which the supplier answers with a 403."""
+    import asyncio
+
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "ksa-token", "uae": "uae-token"})
+    monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_AUTO_BUDGET", 4)
+
+    assert jasani._token("ksa") == "ksa-token"
+    assert jasani._token("uae") == "uae-token"
+
+    for _ in range(4):
+        assert jasani._budget_ok("ksa")
+    assert jasani._budget_ok("ksa") is False           # KSA automatic work is done
+    assert jasani.budget_status("uae")["autoRemaining"] == 4   # UAE untouched
+    assert all(jasani._budget_ok("uae") for _ in range(4))
+    assert jasani.budget_status("ksa")["used"] == 4
+    assert jasani.budget_status("uae")["used"] == 4
+    # each keeps its own reserved call
+    assert jasani._budget_ok("ksa", manual=True) is True
+    assert jasani._budget_ok("uae", manual=True) is True
+
+    # a market with no token never spends anything, and says which one
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "ksa-token", "uae": ""})
+    with pytest.raises(jasani.SupplierUnavailable) as exc:
+        asyncio.run(jasani._fetch("https://www.jasani.ae/products/all/x", "www.jasani.ae", "uae"))
+    assert "UAE" in str(exc.value)
+
+
+def test_market_day_follows_each_markets_own_clock(monkeypatch):
+    """KSA is UTC+3 and the UAE UTC+4, so a single clock rolls one market's
+    allowance over an hour early or late."""
+    import time as _time
+
+    from server import jasani
+
+    # 22:30 UTC — already tomorrow in the UAE, still today in Saudi Arabia
+    fixed = _time.mktime(_time.strptime("2026-05-10 22:30:00", "%Y-%m-%d %H:%M:%S")) \
+        - _time.timezone
+    monkeypatch.setattr(jasani.time, "time", lambda: fixed)
+    assert jasani._market_day("ksa") == "2026-05-11"      # 01:30 local
+    assert jasani._market_day("uae") == "2026-05-11"      # 02:30 local
+    assert jasani._market_local("ksa")[1] == 1
+    assert jasani._market_local("uae")[1] == 2
+    # 21:30 UTC: 00:30 in Riyadh, 01:30 in Dubai — both already the next day
+    fixed2 = fixed - 3600
+    monkeypatch.setattr(jasani.time, "time", lambda: fixed2)
+    assert jasani._market_local("ksa")[1] == 0
+    assert jasani._market_local("uae")[1] == 1
+
+
+def test_scheduled_slots_run_once_each_and_cost_one_call(tmp_path, monkeypatch):
+    """Four automatic calls a day per market: products at midnight, then stock
+    at 08:00, 13:00 and 18:00 local. Each slot is one call and runs once."""
+    import asyncio
+    import time as _time
+
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "tok", "uae": ""})
+    monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_AUTO_BUDGET", 4)
+
+    calls = []
+
+    async def fake_products(market, manual=False):
+        calls.append(("products", market))
+        jasani._budget_ok(market, manual)          # a real fetch spends one
+        return [{"id": "1", "name": "Item", "stock": {"available": 3}}]
+
+    async def fake_stock(market, products, manual=False):
+        calls.append(("stock", market))
+        jasani._budget_ok(market, manual)
+        for p in products:
+            p["stock"] = {"available": 9}
+
+    monkeypatch.setattr(jasani, "_fetch_products", fake_products)
+    monkeypatch.setattr(jasani, "_apply_stock", fake_stock)
+
+    # 09:00 in Riyadh: midnight products and the 08:00 stock slot are both due
+    base = _time.mktime(_time.strptime("2026-05-10 06:00:00", "%Y-%m-%d %H:%M:%S")) - _time.timezone
+    monkeypatch.setattr(jasani.time, "time", lambda: base)
+    assert jasani._market_local("ksa")[1] == 9
+
+    ran = asyncio.run(jasani.run_due_slots())
+    assert ran == ["ksa:00:products"]              # one slot per tick, in order
+    ran += asyncio.run(jasani.run_due_slots())
+    assert ran[-1] == "ksa:08:stock"
+    assert asyncio.run(jasani.run_due_slots()) == []   # 13:00 has not arrived
+
+    assert calls == [("products", "ksa"), ("stock", "ksa")]
+    used = jasani.budget_status("ksa")["used"]
+    assert used == 2, f"two slots must cost two calls, spent {used}"
+    # UAE has no token, so nothing was scheduled for it at all
+    assert not [c for c in calls if c[1] == "uae"]
+    assert jasani.budget_status("ksa")["nextSlot"]["hour"] == 13
+
+
 def test_jasani_reserves_the_last_call_for_a_manual_sync(tmp_path, monkeypatch):
     """Background refreshes stop one short of the limit so a person can always
     force a sync; only an explicitly manual call may use the reserve."""
@@ -984,14 +1089,15 @@ def test_jasani_reserves_the_last_call_for_a_manual_sync(tmp_path, monkeypatch):
     monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
     monkeypatch.setattr(jasani.config, "SUPPLIER_AUTO_BUDGET", 4)
 
-    assert all(jasani._budget_ok() for _ in range(4))       # automatic work
-    assert jasani._budget_ok() is False                     # reserve is off limits
-    status = jasani.budget_status()
+    assert all(jasani._budget_ok("uae") for _ in range(4))   # automatic work
+    assert jasani._budget_ok("uae") is False                 # reserve is off limits
+    status = jasani.budget_status("uae")
     assert status == {**status, "used": 4, "remaining": 1, "autoLimit": 4,
                       "autoRemaining": 0, "reserved": 1, "limit": 5}
-    assert jasani._budget_ok(manual=True) is True           # the person gets it
-    assert jasani._budget_ok(manual=True) is False          # and no more
-    assert jasani.budget_status()["remaining"] == 0
+    assert jasani._budget_ok("uae", manual=True) is True     # the person gets it
+    assert jasani._budget_ok("uae", manual=True) is False    # and no more
+    assert jasani.budget_status("uae")["remaining"] == 0
+    assert jasani.budget_status("ksa")["remaining"] == 5     # separate account
 
 
 def test_jasani_refuses_two_syncs_of_one_market_at_once(tmp_path, monkeypatch):
@@ -1002,7 +1108,7 @@ def test_jasani_refuses_two_syncs_of_one_market_at_once(tmp_path, monkeypatch):
     from server import jasani
 
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "tok")
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "tok", "uae": "tok"})
 
     async def scenario():
         held = jasani._refresh_lock("uae")
@@ -1026,24 +1132,25 @@ def test_jasani_refunds_calls_the_supplier_never_served(tmp_path, monkeypatch):
 
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
     monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
-    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "tok")
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "tok-ksa", "uae": "tok-uae"})
 
     # our own host allowlist rejects it — nothing ever went out
     with pytest.raises(jasani.SupplierUnavailable):
-        asyncio.run(jasani._fetch("https://evil.example.com/x", "www.jasani.ae"))
-    assert jasani.budget_status()["used"] == 0
+        asyncio.run(jasani._fetch("https://evil.example.com/x", "www.jasani.ae", "uae"))
+    assert jasani.budget_status("uae")["used"] == 0
 
     # transport failure (DNS/TLS/connect/timeout) — the supplier served nothing
     with pytest.raises(jasani.SupplierUnavailable) as exc:
-        asyncio.run(jasani._fetch("https://www.jasani.ae/products/all/tok", "www.jasani.ae"))
+        asyncio.run(jasani._fetch("https://www.jasani.ae/products/all/tok",
+                                  "www.jasani.ae", "uae"))
     assert "transport" in str(exc.value)
-    assert jasani.budget_status()["used"] == 0
+    assert jasani.budget_status("uae")["used"] == 0
 
-    # a served response still counts, and a 403 still parks the whole day
-    jasani._budget_ok()
-    assert jasani.budget_status()["used"] == 1
-    jasani._budget_exhaust()
-    assert jasani._budget_ok() is False
+    # a served response still counts, and a 403 still parks that market's day
+    jasani._budget_ok("uae")
+    assert jasani.budget_status("uae")["used"] == 1
+    jasani._budget_exhaust("uae")
+    assert jasani._budget_ok("uae") is False
 
 
 def test_jasani_remembers_why_a_market_failed(tmp_path, monkeypatch):
@@ -1052,7 +1159,8 @@ def test_jasani_remembers_why_a_market_failed(tmp_path, monkeypatch):
     from server import jasani
 
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "super-secret-token")
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS",
+                        {"ksa": "ksa-secret-token", "uae": "super-secret-token"})
 
     assert jasani.cache_status("uae")["lastAttempt"] is None
     jasani.record_attempt("uae", "products", False,

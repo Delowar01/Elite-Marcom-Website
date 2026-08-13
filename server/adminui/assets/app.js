@@ -382,6 +382,8 @@
         var mk = sup.markets || {};
         var mail = d.mail || {};
         var series = d.requestSeries || [];
+        var MARKET_LIST = [["ksa", "Saudi Arabia", "Riyadh (UTC+3)"],
+                           ["uae", "United Arab Emirates", "Dubai (UTC+4)"]];
         var LABELS = { giveaway_enquiry: "Gift requests", giveaway_notification: "Stock alerts",
                        rental_enquiry: "Rental requests", rental_notification: "Availability alerts",
                        contact: "Contact messages", career: "Applications" };
@@ -497,11 +499,6 @@
           return '<div class="svc-row svc-row--' + state + '"><i class="svc-dot"></i><b>' +
                  esc(name) + "</b><small>" + esc(detail) + "</small></div>";
         }
-        var b = sup.budget || {};
-        var resetH = Math.floor((b.resetInSeconds || 0) / 3600);
-        var resetM = Math.floor(((b.resetInSeconds || 0) % 3600) / 60);
-        var supplierState = !sup.tokenConfigured ? "bad"
-          : (b.remaining === 0 ? "warn" : "ok");
         var mailState = !mail.configured ? "warn" : (mail.failed ? "bad" : "ok");
         var totalRequests = Object.keys(d.requests || {}).reduce(function (s, k) { return s + d.requests[k]; }, 0);
 
@@ -544,21 +541,36 @@
           }()) + "</div></div>" +
           "</div>" +
 
-          '<div class="admin-panel"><div class="panel-head"><h2>Jasani supplier</h2>' +
-          '<span class="admin-inline-note">' + esc(b.used) + " of " + esc(b.limit) + " calls used today · " +
-          esc(b.remaining) + " left · resets in " + resetH + "h " + resetM + "m (UAE day " + esc(b.day) + ")</span></div>" +
-          '<div class="gauge"><div class="gauge__fill' + (b.remaining === 0 ? " gauge__fill--max" : "") +
-          '" style="width:' + (b.limit ? Math.min(100, Math.round((b.used / b.limit) * 100)) : 0) + '%"></div></div>' +
-          (sup.tokenConfigured ? "" :
-            '<p class="ins-alert ins-alert--warn">No supplier token configured — set JASANI_API_TOKEN on the server.</p>') +
-          "</div>" +
+          MARKET_LIST.map(function (m) {
+            var b = (sup.budgets || {})[m[0]] || {};
+            var rh = Math.floor((b.resetInSeconds || 0) / 3600);
+            var rm = Math.floor(((b.resetInSeconds || 0) % 3600) / 60);
+            var pct = b.limit ? Math.min(100, Math.round((b.used / b.limit) * 100)) : 0;
+            return '<div class="admin-panel"><div class="panel-head"><h2>Jasani — ' + esc(m[1]) +
+              '</h2><span class="admin-inline-note">' + esc(b.used || 0) + " of " + esc(b.limit || 0) +
+              " calls used · " + esc(b.remaining || 0) + " left · resets in " + rh + "h " + rm +
+              "m · " + esc(m[2]) + "</span></div>" +
+              '<div class="gauge gauge--split"><div class="gauge__fill' +
+              (b.autoRemaining === 0 ? " gauge__fill--max" : "") + '" style="width:' + pct + '%"></div>' +
+              (b.reserved ? '<i class="gauge__reserve" style="width:' +
+                Math.round((b.reserved / Math.max(1, b.limit)) * 100) + '%"></i>' : "") + "</div>" +
+              ((sup.tokensConfigured || {})[m[0]] ? "" :
+                '<p class="ins-alert ins-alert--warn">No API token for this market — set ' +
+                esc(m[0] === "uae" ? "JASANI_API_TOKEN_UAE" : "JASANI_API_TOKEN") +
+                " on the server.</p>") + "</div>";
+          }).join("") +
           '<div class="jz-grid">' + marketPanel("ksa", "Saudi Arabia — giftsksa.com") +
           marketPanel("uae", "United Arab Emirates — jasani.ae") + "</div>" +
 
           '<div class="dash-grid">' +
           '<div class="admin-panel"><h2>Service status</h2><div class="svc-list">' +
-          svc(supplierState, "Jasani supplier API",
-              !sup.tokenConfigured ? "no token" : b.remaining + " of " + b.limit + " calls left") +
+          MARKET_LIST.map(function (m) {
+            var b = (sup.budgets || {})[m[0]] || {};
+            var ok = (sup.tokensConfigured || {})[m[0]];
+            return svc(!ok ? "bad" : (b.autoRemaining === 0 ? "warn" : "ok"),
+                       "Jasani " + m[0].toUpperCase(),
+                       !ok ? "no token" : (b.remaining || 0) + " of " + (b.limit || 0) + " calls left");
+          }).join("") +
           svc(mailState, "Transactional email",
               !mail.configured ? "no API key set" :
               (mail.pending ? mail.pending + " queued" : "queue clear") +
@@ -733,13 +745,46 @@
       api("/api/admin/jasani").then(function (r) {
         if (!r.ok) return apiErr(r);
         var d = r.data;
-        var b = d.budget || {};
-        var pct = b.limit ? Math.min(100, Math.round((b.used / b.limit) * 100)) : 0;
-        var resetH = Math.floor((b.resetInSeconds || 0) / 3600);
-        var resetM = Math.floor(((b.resetInSeconds || 0) % 3600) / 60);
-        function marketCard(key, label) {
+        var budgets = d.budgets || {};
+        var tokens = d.tokensConfigured || {};
+        var MARKETS = [["ksa", "Saudi Arabia — giftsksa.com", "Riyadh (UTC+3)"],
+                       ["uae", "United Arab Emirates — jasani.ae", "Dubai (UTC+4)"]];
+
+        function hhmm(h) { return (h < 10 ? "0" + h : h) + ":00"; }
+        function budgetBlock(key, zone) {
+          var b = budgets[key] || {};
+          var pct = b.limit ? Math.min(100, Math.round((b.used / b.limit) * 100)) : 0;
+          var resetH = Math.floor((b.resetInSeconds || 0) / 3600);
+          var resetM = Math.floor(((b.resetInSeconds || 0) % 3600) / 60);
+          var done = b.slotsDone || [];
+          var next = b.nextSlot || {};
+          return '<div class="gauge gauge--split"><div class="gauge__fill' +
+            (b.autoRemaining === 0 ? " gauge__fill--max" : "") + '" style="width:' + pct + '%"></div>' +
+            (b.reserved ? '<i class="gauge__reserve" style="width:' +
+              Math.round((b.reserved / Math.max(1, b.limit)) * 100) + '%"></i>' : "") + "</div>" +
+            '<p class="admin-inline-note">' + esc(b.used || 0) + " of " + esc(b.limit || 0) +
+            " calls used · " + esc(b.remaining || 0) + " left · resets in " + resetH + "h " + resetM +
+            "m · " + esc(zone) + " day " + esc(b.day || "—") + "<br>" +
+            "Automatic syncs stop after " + esc(b.autoLimit || 0) + "; the last " +
+            esc(b.reserved || 0) + " is reserved for a manual sync by an owner or admin.</p>" +
+            '<div class="slot-row">' + (b.schedule || []).map(function (s) {
+              var ran = done.indexOf(s.hour) !== -1;
+              return '<span class="slot' + (ran ? " slot--done" : "") +
+                (!ran && next.hour === s.hour ? (next.due ? " slot--due" : " slot--next") : "") + '">' +
+                esc(hhmm(s.hour)) + "<em>" + esc(s.what) + "</em></span>";
+            }).join("") + "</div>";
+        }
+
+        function marketCard(key, label, zone) {
           var m = (d.markets || {})[key] || {};
-          return '<div class="admin-panel jz-market"><h2>' + label + "</h2>" +
+          var a = m.lastAttempt;
+          return '<div class="admin-panel jz-market"><div class="panel-head"><h2>' + esc(label) +
+            '</h2><span class="jz-flag">' + esc(key.toUpperCase()) + "</span></div>" +
+            (tokens[key] ? "" :
+              '<p class="ins-alert ins-alert--warn">No API token for this market — set ' +
+              esc(key === "uae" ? "JASANI_API_TOKEN_UAE" : "JASANI_API_TOKEN") +
+              " on the server. Nothing is called and the cached snapshot keeps serving.</p>") +
+            budgetBlock(key, zone) +
             (m.cached
               ? '<div class="stat-row stat-row--tight">' +
                 '<div class="stat-card"><b>' + esc(m.products) + "</b><span>Products cached</span></div>" +
@@ -750,7 +795,6 @@
                 (m.stockFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') + "</p>"
               : '<p class="admin-inline-note">Nothing cached yet for this market.</p>') +
             (function () {
-              var a = m.lastAttempt;
               if (!a) return "";
               return a.ok
                 ? '<p class="admin-inline-note">Last supplier call: ' + esc(when(a.ts)) +
@@ -764,26 +808,15 @@
                 '<button class="btn btn--ghost btn--small" data-refresh="products" data-market="' + key + '">Full refresh (2 calls)</button></div>'
               : "") + "</div>";
         }
+
         main.innerHTML =
           '<h1 class="admin-h1">Jasani console</h1>' +
-          '<p class="admin-sub">The supplier allows ' + esc(b.limit) + " primary calls per day (UAE time). The website serves the cached snapshot; refresh only when needed.</p>" +
-          (d.tokenConfigured ? "" : '<div class="admin-panel"><h2>Supplier connection</h2>' +
-            '<p class="badge-bad">No supplier token configured — set JASANI_API_TOKEN on the server.</p>' +
-            '<p class="admin-inline-note">Until it is set the site serves the local preview catalogue ' +
-            "and no supplier call is attempted.</p></div>") +
-          '<div class="admin-panel"><h2>Daily call budget</h2>' +
-          '<div class="gauge gauge--split"><div class="gauge__fill' + (b.autoRemaining === 0 ? " gauge__fill--max" : "") +
-          '" style="width:' + pct + '%"></div>' +
-          (b.reserved ? '<i class="gauge__reserve" style="width:' +
-            Math.round((b.reserved / Math.max(1, b.limit)) * 100) + '%"></i>' : "") + "</div>" +
-          '<p class="admin-inline-note">' + esc(b.used) + " of " + esc(b.limit) + " used · " + esc(b.remaining) +
-          " remaining · resets in about " + resetH + "h " + resetM + "m (UAE day " + esc(b.day) + ")" +
-          (b.reserved
-            ? "<br>Automatic refreshes stop after " + esc(b.autoLimit) + " (" + esc(b.autoRemaining) +
-              " left). The last " + esc(b.reserved) + " call" + (b.reserved === 1 ? " is" : "s are") +
-              " held back for a manual sync by an owner or admin."
-            : "") + "</p></div>" +
-          '<div class="jz-grid">' + marketCard("ksa", "Saudi Arabia — giftsksa.com") + marketCard("uae", "UAE — jasani.ae") + "</div>" +
+          '<p class="admin-sub">Each market has its own supplier account, its own five calls a day and ' +
+          "its own local clock. The website always serves the cached snapshot — a page load never waits " +
+          "on the supplier.</p>" +
+          '<div class="jz-grid">' + MARKETS.map(function (m) {
+            return marketCard(m[0], m[1], m[2]);
+          }).join("") + "</div>" +
           '<div class="admin-panel"><h2>Printing manuals cache</h2><p class="admin-inline-note">' +
           esc(d.manuals.cachedPdfs) + " PDF(s) cached (" + (d.manuals.bytes / (1024 * 1024)).toFixed(1) + " MB) · " +
           esc(d.manuals.validVerdicts) + " valid · " + esc(d.manuals.failedVerdicts) + " marked unavailable</p></div>" +
@@ -796,10 +829,11 @@
         main.querySelectorAll("[data-refresh]").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var what = btn.getAttribute("data-refresh"), market = btn.getAttribute("data-market");
+            var b = budgets[market] || {};
             var cost = what === "products" ? 2 : 1;
             var reserve = b.autoRemaining < cost && b.remaining >= cost;
-            if (!confirm("This uses " + cost + " of the " + b.limit + " daily supplier calls (" +
-                         b.remaining + " remaining)." +
+            if (!confirm("This uses " + cost + " of " + market.toUpperCase() + "'s " + b.limit +
+                         " daily supplier calls (" + b.remaining + " remaining)." +
                          (reserve ? " It will use the call reserved for manual syncs." : "") +
                          " Continue?")) return;
             btn.disabled = true;
