@@ -5,6 +5,35 @@
    ============================================================ */
 (function () {
   "use strict";
+  /* Detail pages are rendered from the catalogue after load, so their share
+     metadata has to be written at the same time — otherwise every product
+     shares as the generic page. Indexing stays off (see the robots meta); this
+     is what makes a shared link show the right product. */
+  function seoMeta(opts) {
+    function set(sel, attr, value) {
+      if (!value) return;
+      var el = document.head.querySelector(sel);
+      if (!el) {
+        el = document.createElement(sel.indexOf("link") === 0 ? "link" : "meta");
+        if (sel.indexOf('[property=') !== -1) el.setAttribute("property", sel.split('"')[1]);
+        else if (sel.indexOf("[name=") !== -1) el.setAttribute("name", sel.split('"')[1]);
+        else if (sel.indexOf("[rel=") !== -1) el.setAttribute("rel", sel.split('"')[1]);
+        document.head.appendChild(el);
+      }
+      el.setAttribute(attr, value);
+    }
+    document.title = opts.title;
+    set('meta[name="description"]', "content", opts.description);
+    set('link[rel="canonical"]', "href", opts.url);
+    set('meta[property="og:title"]', "content", opts.title);
+    set('meta[property="og:description"]', "content", opts.description);
+    set('meta[property="og:url"]', "content", opts.url);
+    set('meta[property="og:image"]', "content", opts.image);
+    set('meta[name="twitter:title"]', "content", opts.title);
+    set('meta[name="twitter:description"]', "content", opts.description);
+    set('meta[name="twitter:image"]', "content", opts.image);
+  }
+
   var EM = window.EM;
 
   var REQUEST_KEY = "em-giveaway-request";
@@ -211,7 +240,13 @@
     els.loading.hidden = true;
     els.loading.style.display = "none";
     els.pdp.hidden = false;
-    document.title = p.name + " — Corporate Gifts | Elite Marcom";
+    seoMeta({
+      title: p.name + " — Corporate Gifts | Elite Marcom",
+      description: (p.description || ("Branded " + p.name + " from Elite Marcom — corporate gifts and "
+        + "merchandise for Saudi Arabia and the UAE.")).replace(/\s+/g, " ").slice(0, 300),
+      url: location.origin + location.pathname + location.search,
+      image: (p.images && p.images[0]) || p.image || ""
+    });
 
     /* re-rendering (variant switch): drop carousel controls before rebuilding */
     els.carousel.querySelectorAll(".carousel__btn, .carousel__dots").forEach(function (n) { n.remove(); });
