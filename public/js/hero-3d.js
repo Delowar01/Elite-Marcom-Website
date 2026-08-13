@@ -148,6 +148,34 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
       rafId = requestAnimationFrame(tick);
     }
 
+    /* framing — the model turns, so it must be fitted by the radius it sweeps
+       around the pivot, never by its bounding box. A box-based fit looks right
+       head-on and then clips the corners as soon as the stand rotates, which
+       reads as an invisible border cutting the edges. */
+    var LOOK_Y = 0.1;
+    var MAX_PITCH = 0.42;     /* the drag clamp in bindInteraction */
+    var EDGE_CLEARANCE = 1.04;
+    var sweepR = 0;           /* horizontal reach from the pivot, any Y rotation */
+    var sweepH = 0;           /* half-height once the steepest pitch is applied */
+
+    function fitCamera() {
+      if (!sweepR) return;
+      var vHalf = camera.fov * Math.PI / 360;
+      var hHalf = Math.atan(Math.tan(vHalf) * camera.aspect);
+      /* sideways the silhouette is a circle of radius sweepR about the axis,
+         so the tangent condition applies; vertically the extreme corner also
+         sits up to sweepR nearer the lens, which costs that much extra room */
+      var needH = (sweepR * EDGE_CLEARANCE) / Math.sin(hHalf);
+      var needV = ((sweepH + Math.abs(LOOK_Y)) * EDGE_CLEARANCE) / Math.tan(vHalf) + sweepR;
+      var need = Math.max(needH, needV);
+      var dy = camera.position.y - LOOK_Y;
+      var z = Math.sqrt(Math.max(need * need - dy * dy, 0.04));
+      /* honour a wider admin/query framing, never a tighter one */
+      camera.position.z = Math.max(CAM_Z, z);
+      camera.lookAt(0, LOOK_Y, 0);
+      camera.updateProjectionMatrix();
+    }
+
     /* sizing */
     function resize() {
       var w = stage.clientWidth, h = stage.clientHeight;
@@ -156,6 +184,7 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
       renderer.setPixelRatio(Math.max(0.4, dpr));
       renderer.setSize(w, h, true);
       camera.aspect = w / h;
+      fitCamera();
       camera.updateProjectionMatrix();
       requestRender();
     }
@@ -206,9 +235,20 @@ import { DRACOLoader } from "/vendor/three/DRACOLoader.js";
         });
 
         pivot.add(model);
+
+        /* the pivot spins the model about the origin, so measure the reach it
+           sweeps rather than the box it occupies: a box-based fit frames the
+           head-on view and then clips the corners the moment it turns */
+        var placed = new THREE.Box3().setFromObject(model);
+        var reachX = Math.max(Math.abs(placed.min.x), Math.abs(placed.max.x));
+        var reachY = Math.max(Math.abs(placed.min.y), Math.abs(placed.max.y));
+        var reachZ = Math.max(Math.abs(placed.min.z), Math.abs(placed.max.z));
+        sweepR = Math.sqrt(reachX * reachX + reachZ * reachZ);
+        sweepH = reachY * Math.cos(MAX_PITCH) + sweepR * Math.sin(MAX_PITCH);
+
         camera.fov = CAM_FOV;
         camera.position.set(0, CAM_Y, CAM_Z);
-        camera.lookAt(0, 0.1, 0);
+        fitCamera();
 
         if (stageWrap) stageWrap.classList.remove("is-loading");
         if (cue) cue.classList.add("is-ready");
