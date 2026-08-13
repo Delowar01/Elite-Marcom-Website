@@ -341,7 +341,6 @@ async def admin_audit(request: Request, limit: int = 100, offset: int = 0,
 
 SETTINGS_KEYS = {
     "notify.emails": list,       # staff notification recipients
-    "notify.whatsapp": str,      # staff WhatsApp number
     "site.defaultLanguage": str,  # published language (en now, ar later)
     "site.languages": list,
     "analytics.enabled": bool,       # first-party measurement on/off
@@ -360,7 +359,13 @@ SETTINGS_KEYS = {
 @router.get("/api/admin/settings")
 async def admin_settings(request: Request):
     require_perm(request, "settings.manage")
-    return {key: aa.setting_get(key) for key in SETTINGS_KEYS}
+    from . import notify
+
+    data = {key: aa.setting_get(key) for key in SETTINGS_KEYS}
+    # whether the legacy SMTP alert route can actually deliver, so the screen
+    # can say so rather than letting an admin fill in a field that does nothing
+    data["notify.smtpConfigured"] = bool(getattr(notify, "SMTP_HOST", ""))
+    return data
 
 
 class SettingsBody(BaseModel):

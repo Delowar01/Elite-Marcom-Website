@@ -2600,28 +2600,81 @@
         if (!r.ok) return apiErr(r);
         var s = r.data;
         var langs = s["site.languages"] || ["en"];
+        var smtp = !!s["notify.smtpConfigured"];
+
+        function help(text) { return '<span class="field-help">' + text + "</span>"; }
+        function elsewhere(title, view, what) {
+          return '<div class="svc-row"><i class="svc-dot"></i><b>' + esc(title) + "</b><small>" +
+            esc(what) + '</small><button class="btn btn--ghost btn--small" data-goto="' + view +
+            '">Open</button></div>';
+        }
+
         main.innerHTML =
           '<h1 class="admin-h1">Settings</h1>' +
-          '<p class="admin-sub">Staff notifications and language publishing. More settings arrive with later phases.</p>' +
-          '<div class="admin-panel"><h2>Staff notifications</h2><form class="admin-form" id="settings-form">' +
-          '<div class="full"><label for="s-emails">Notification emails (one per line)</label>' +
-          '<textarea id="s-emails" rows="3">' + esc((s["notify.emails"] || []).join("\n")) + "</textarea></div>" +
-          '<div><label for="s-wa">WhatsApp number (with country code)</label>' +
-          '<input id="s-wa" maxlength="32" value="' + esc(s["notify.whatsapp"] || "") + '"></div>' +
-          '<div><label for="s-lang">Published languages</label><select id="s-lang">' +
+          '<p class="admin-sub">Everything the site reads from configuration, and where each one shows up. ' +
+          "Settings that live on their own screen are listed at the bottom with a link.</p>" +
+
+          '<div class="admin-panel"><h2>Staff notifications</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:14px;">Internal alerts about new submissions. ' +
+          "These are separate from the customer emails, which are configured on the Email screen.</p>" +
+          '<form class="admin-form" id="settings-form">' +
+
+          '<div class="full"><label for="s-emails">Alert recipients (one email per line)</label>' +
+          '<textarea id="s-emails" rows="3">' + esc((s["notify.emails"] || []).join("\n")) + "</textarea>" +
+          help("Who gets a plain-text heads-up when a form is submitted, over the optional legacy SMTP " +
+               "route. Maximum 20 addresses. " +
+               (smtp
+                 ? "SMTP is configured on this server, so these alerts are being sent."
+                 : "<b>No SMTP host is configured on this server (EM_SMTP_HOST), so nothing is sent from " +
+                   "here right now</b> — the customer-facing and internal emails on the Email screen go " +
+                   "through Resend and are unaffected.")) + "</div>" +
+
+          '<div class="full"><label for="s-lang">Published languages</label><select id="s-lang">' +
           '<option value="en"' + (langs.indexOf("ar") === -1 ? " selected" : "") + ">English only</option>" +
           '<option value="en,ar"' + (langs.indexOf("ar") !== -1 ? " selected" : "") + ">English + Arabic</option>" +
-          "</select></div>" +
+          "</select>" +
+          help("Choosing English + Arabic makes <b>Publish site</b> bake a second, right-to-left edition " +
+               "under /ar/ alongside the English pages. Arabic wording is entered per field on Pages &amp; " +
+               "SEO; this switch only decides whether that edition is published.") + "</div>" +
+
           '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save settings</button>' +
-          '<span class="admin-inline-note">Arabic content entry opens in the Pages phase; this switch controls what publishes.</span></div>' +
-          "</form></div>";
+          '<span class="admin-inline-note">Saved immediately; language changes reach the public site at the next publish.</span></div>' +
+          "</form></div>" +
+
+          '<div class="admin-panel"><h2>Configured on other screens</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:14px;">These are real settings, kept where the ' +
+          "work happens rather than duplicated here.</p><div class=\"svc-list\">" +
+          elsewhere("Logo, colours, fonts and the 3D hero", "brand",
+                    "Website & Brand — brand tokens and hero camera") +
+          elsewhere("Page text, SEO and share images", "pages",
+                    "Pages & SEO — titles, descriptions, canonical and social cards") +
+          elsewhere("Sender address, routing and templates", "email",
+                    "Email — six notification types, delivery log and queue health") +
+          elsewhere("Visitor analytics and GA4", "insights",
+                    "Site Insights — tracking on/off, GA4 id, retention in days") +
+          elsewhere("Site-wide announcement bar", "operations",
+                    "Operations — text, link, style and the dates it shows between") +
+          elsewhere("Backups, restore and scheduled publishing", "operations",
+                    "Operations — download a backup, restore one, schedule a publish") +
+          elsewhere("Supplier catalogue and call budget", "jasani",
+                    "Jasani — cache state per market, refresh, daily call budget") +
+          "</div></div>" +
+
+          '<div class="admin-panel"><h2>Server configuration</h2>' +
+          '<p class="admin-inline-note">Set as environment variables on the server, never in this panel: ' +
+          "the Resend API key, the Jasani supplier token, the encryption and session secrets, Turnstile " +
+          "keys, retention periods and the supplier call budget. They are deliberately not editable here — " +
+          "a secret that can be read back from a browser is a secret you have to rotate.</p></div>";
+
+        main.querySelectorAll("[data-goto]").forEach(function (btn) {
+          btn.addEventListener("click", function () { location.hash = "#" + btn.getAttribute("data-goto"); });
+        });
         document.getElementById("settings-form").addEventListener("submit", function (e) {
           e.preventDefault();
           var emails = document.getElementById("s-emails").value.split("\n")
             .map(function (x) { return x.trim(); }).filter(Boolean).slice(0, 20);
           api("/api/admin/settings", { values: {
             "notify.emails": emails,
-            "notify.whatsapp": document.getElementById("s-wa").value.trim(),
             "site.languages": document.getElementById("s-lang").value.split(","),
             "site.defaultLanguage": "en"
           } }).then(function (r2) { r2.ok ? toast("Settings saved.") : apiErr(r2); });
@@ -2721,6 +2774,8 @@
     me = r.data;
     document.getElementById("me-name").textContent = me.name;
     document.getElementById("me-role").textContent = me.role;
+    document.getElementById("me-initials").textContent =
+      (me.name || "?").trim().split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join("").toUpperCase();
     document.querySelectorAll(".admin-nav a[data-perm]").forEach(function (a) {
       if (!can(a.getAttribute("data-perm"))) a.hidden = true;
     });

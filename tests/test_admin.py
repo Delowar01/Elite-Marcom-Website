@@ -152,14 +152,30 @@ def test_wrong_password_and_lockout():
 
 def test_csrf_required_for_mutations():
     me = client.get("/api/admin/me").json()
-    no_csrf = client.post("/api/admin/settings", json={"values": {"notify.whatsapp": "+966500000000"}})
+    no_csrf = client.post("/api/admin/settings",
+                          json={"values": {"notify.emails": ["ops@elitemarcom.com"]}})
     assert no_csrf.status_code == 403
     ok = client.post("/api/admin/settings",
-                     json={"values": {"notify.whatsapp": "+966500000000",
-                                      "notify.emails": ["ops@elitemarcom.com"]}},
+                     json={"values": {"notify.emails": ["ops@elitemarcom.com"]}},
                      headers={"X-CSRF": me["csrf"]})
     assert ok.status_code == 200
-    assert client.get("/api/admin/settings").json()["notify.whatsapp"] == "+966500000000"
+    assert client.get("/api/admin/settings").json()["notify.emails"] == ["ops@elitemarcom.com"]
+
+
+def test_settings_screen_only_offers_settings_that_do_something():
+    """A field that stores a value nothing ever reads is worse than no field:
+    it reads as configured. notify.whatsapp was one, and is gone."""
+    from server import admin_api
+
+    assert "notify.whatsapp" not in admin_api.SETTINGS_KEYS
+    rejected = client.post("/api/admin/settings",
+                           json={"values": {"notify.whatsapp": "+966500000000"}},
+                           headers={"X-CSRF": client.get("/api/admin/me").json()["csrf"]})
+    assert rejected.status_code == 400
+    data = client.get("/api/admin/settings").json()
+    assert "notify.whatsapp" not in data
+    # the screen is told whether the legacy SMTP alert route can actually deliver
+    assert isinstance(data["notify.smtpConfigured"], bool)
 
 
 def test_role_permissions_enforced():

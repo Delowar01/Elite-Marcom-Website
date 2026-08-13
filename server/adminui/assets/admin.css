@@ -18,6 +18,11 @@
   --adm-inset: rgba(19, 24, 36, 0.55);
   --adm-line: rgba(245, 242, 237, 0.09);
   --adm-line-strong: rgba(245, 242, 237, 0.16);
+  /* elevation: cards sit off the page, popovers sit off the cards */
+  --adm-shadow-1: 0 1px 2px rgba(6, 9, 16, 0.28), 0 8px 24px rgba(6, 9, 16, 0.26);
+  --adm-shadow-2: 0 2px 6px rgba(6, 9, 16, 0.34), 0 24px 60px rgba(6, 9, 16, 0.44);
+  --adm-ring: 0 0 0 1px rgba(245, 242, 237, 0.05) inset;
+  --adm-sheen: linear-gradient(180deg, rgba(245, 242, 237, 0.05), rgba(245, 242, 237, 0) 42%);
 
   /* semantic status — one set, used by badges, pills, charts and dots */
   --adm-ok: #55c98c;
@@ -30,11 +35,16 @@
   --adm-info-bg: rgba(110, 168, 240, 0.14);
 }
 html[data-theme="light"] .admin-body {
-  --adm-card: rgba(255, 253, 250, 0.86);
-  --adm-card-hover: #fffdfa;
-  --adm-inset: rgba(240, 235, 228, 0.75);
-  --adm-line: rgba(23, 29, 41, 0.09);
-  --adm-line-strong: rgba(23, 29, 41, 0.16);
+  /* the site's warm-white palette, not a bleached version of the dark one */
+  --adm-card: #fffdfa;
+  --adm-card-hover: #fffefc;
+  --adm-inset: #f6f1e9;
+  --adm-line: rgba(97, 84, 68, 0.14);
+  --adm-line-strong: rgba(97, 84, 68, 0.24);
+  --adm-shadow-1: 0 1px 2px rgba(97, 84, 68, 0.08), 0 10px 26px rgba(97, 84, 68, 0.10);
+  --adm-shadow-2: 0 2px 8px rgba(97, 84, 68, 0.12), 0 26px 64px rgba(97, 84, 68, 0.18);
+  --adm-ring: 0 0 0 1px rgba(255, 255, 255, 0.7) inset;
+  --adm-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0) 46%);
   --adm-ok: #1f8f57;
   --adm-ok-bg: rgba(31, 143, 87, 0.12);
   --adm-warn: #a9761a;
@@ -130,12 +140,30 @@ html[data-theme="light"] .admin-body {
 .admin-nav a[hidden] { display: none; }
 
 .admin-side__foot {
-  margin-top: auto; display: flex; flex-direction: column; gap: 12px;
-  padding: 16px 8px 0; border-top: 1px solid var(--adm-line);
+  margin-top: auto; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 6px 2px; border-top: 1px solid var(--adm-line);
 }
-.admin-user { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; min-width: 0; }
-.admin-user strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.admin-side__actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.admin-user {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 10px; min-width: 0;
+  padding: 8px 10px; border-radius: 12px;
+  border: 1px solid var(--adm-line); background: var(--adm-inset);
+}
+.admin-user__avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex: none;
+  display: grid; place-items: center;
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.02em; color: #fff;
+  background: linear-gradient(135deg, var(--orange), var(--violet-2));
+}
+.admin-user__id { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.admin-user__id strong { font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-user__role {
+  font-size: 0.63rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.admin-user .theme-toggle { flex: none; }
+.admin-side__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.admin-side__actions .btn { width: 100%; justify-content: center; text-align: center; }
 
 .admin-burger { display: none; }
 
@@ -148,7 +176,9 @@ html[data-theme="light"] .admin-body {
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 14px; margin-bottom: 26px; }
 .stat-card {
   padding: 16px 18px; border-radius: var(--adm-radius);
-  border: 1px solid var(--adm-line); background: var(--adm-card);
+  border: 1px solid var(--adm-line);
+  background: var(--adm-sheen), var(--adm-card);
+  box-shadow: var(--adm-shadow-1), var(--adm-ring);
   display: flex; flex-direction: column; gap: 2px; min-width: 0;
 }
 .stat-card b { font-size: 1.65rem; display: block; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -172,8 +202,11 @@ html[data-theme="light"] .admin-body {
 
 .admin-panel {
   border: 1px solid var(--adm-line); border-radius: var(--adm-radius);
-  background: var(--adm-card); padding: 20px 22px; margin-bottom: var(--adm-gap);
+  background: var(--adm-sheen), var(--adm-card);
+  box-shadow: var(--adm-shadow-1), var(--adm-ring);
+  padding: 22px 24px; margin-bottom: var(--adm-gap);
 }
+.admin-panel > h2:first-child, .panel-head:first-child { margin-top: -2px; }
 .admin-panel h2 {
   font-size: 0.95rem; margin-bottom: 14px; letter-spacing: 0.01em;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -212,7 +245,8 @@ html[data-theme="light"] .admin-body {
   border-radius: var(--adm-radius-sm);
   border: 1px solid var(--adm-line-strong); background: var(--adm-inset);
   color: var(--text); font: inherit; font-size: 0.9rem;
-  transition: border-color 0.15s ease;
+  box-shadow: 0 1px 0 rgba(6, 9, 16, 0.06) inset;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .admin-form textarea { min-height: 0; }
 .admin-form input:hover, .admin-form select:hover, .admin-form textarea:hover { border-color: var(--adm-line-strong); }
@@ -277,7 +311,7 @@ html[data-theme="light"] .admin-body {
   position: fixed; z-index: 500; min-width: 190px; padding: 6px;
   border-radius: 12px; border: 1px solid var(--adm-line-strong);
   background: var(--surface-strong); backdrop-filter: blur(18px);
-  box-shadow: var(--shadow-2); display: flex; flex-direction: column;
+  box-shadow: var(--adm-shadow-2); display: flex; flex-direction: column;
 }
 .menu-pop button {
   display: block; width: 100%; text-align: left; padding: 8px 12px;
@@ -293,7 +327,7 @@ html[data-theme="light"] .admin-body {
   display: none; position: absolute; top: -6px; right: calc(100% + 2px);
   min-width: 170px; padding: 6px; border-radius: 12px;
   border: 1px solid var(--adm-line-strong); background: var(--surface-strong);
-  backdrop-filter: blur(18px); box-shadow: var(--shadow-2);
+  backdrop-filter: blur(18px); box-shadow: var(--adm-shadow-2);
   flex-direction: column; z-index: 501;
 }
 .menu-item.has-sub:hover .menu-sub-pop, .menu-item.has-sub.open .menu-sub-pop { display: flex; }
