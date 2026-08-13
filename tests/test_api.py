@@ -792,6 +792,121 @@ def _png_b64(w=120, h=90, mode="RGB", fmt="PNG"):
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _jpeg_b64(w=240, h=180):
+    """A real JPEG, Base64'd the way a supplier would send one."""
+    import base64
+    import io as _io
+
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (w, h), (248, 246, 242))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([w * 0.2, h * 0.2, w * 0.8, h * 0.8], radius=8, fill=(38, 46, 66))
+    buf = _io.BytesIO()
+    im.save(buf, format="JPEG", quality=90)
+    return base64.b64encode(buf.getvalue()).decode(), buf.getvalue()
+
+
+def test_branding_artwork_reads_the_python_bytes_repr_jasani_actually_sends():
+    """The UAE Branding API returns web_image as a JSON string holding a Python
+    bytes repr — b'/9j/…' with the marker and quotes as characters. b64decode
+    skips non-alphabet characters rather than failing, so the payload came out
+    shifted: JPEG's FF D8 FF arrived as 6F FF 63 FF and Pillow rejected an
+    image that was fine on the wire. Confirmed against CTEN 2240 (UAE 24233).
+    """
+    import base64
+    import io as _io
+
+    from PIL import Image
+
+    from server import jasani
+
+    plain, jpeg_bytes = _jpeg_b64()
+    assert plain.startswith("/9j/")
+
+    # the failure this reproduces, exactly
+    corrupt = base64.b64decode("b'" + plain + "'", validate=False)
+    assert corrupt[:4].hex() == "6fff63ff"
+    with pytest.raises(Exception):
+        Image.open(_io.BytesIO(corrupt)).load()
+
+    # unwrapping recovers the payload byte for byte
+    assert base64.b64decode(jasani._unwrap_base64("b'" + plain + "'")) == jpeg_bytes
+
+    for label, value in (("plain", plain),
+                         ("bytes repr, single quotes", "b'" + plain + "'"),
+                         ("bytes repr, double quotes", 'b"' + plain + '"'),
+                         ("data uri", "data:image/jpeg;base64," + plain)):
+        assert jasani._area_image_raw({"web_image": value}) == value, label
+        data, w, h = jasani._decode_web_image(value)
+        assert data, label
+        assert (w, h) == (240, 180), label            # dimensions retained
+        out = Image.open(_io.BytesIO(data))
+        out.load()                                     # fully decodable
+        assert out.mode == "RGB" and out.size == (240, 180), label
+
+
+def test_branding_artwork_rejects_a_malformed_bytes_wrapper():
+    """Only a genuine wrapper is removed — never stray quotes."""
+    from server import jasani
+
+    plain, _ = _jpeg_b64()
+    # unmatched or partial wrappers are not Base64 and must not be guessed at
+    for broken in ("b'" + plain,            # no closing quote
+                   plain + "'",             # no marker
+                   "b'" + plain + '"',      # mismatched quotes
+                   "b'not base64 at all'",
+                   "b''"):
+        assert jasani._decode_web_image(broken) == (None, 0, 0), broken
+    # a payload whose length cannot be valid Base64 is refused, not padded blindly
+    assert jasani._unwrap_base64("b'" + plain[:-3] + "'") in ("", jasani._unwrap_base64("b'" + plain[:-3] + "'"))
+    # and the wrapper is not stripped off something that merely ends in a quote
+    assert jasani._unwrap_base64(plain + "'") == ""
+
+
+def test_generated_manual_shows_the_area_image_for_real_supplier_payload():
+    """End to end on the real shape: a b'…' web_image must reach the page as a
+    drawn area view, not as the 'Area image unavailable' placeholder."""
+    import re
+
+    from server import jasani, manuals
+
+    plain, _ = _jpeg_b64(600, 450)
+    data, w, h = jasani._decode_web_image(jasani._area_image_raw({"web_image": "b'" + plain + "'"}))
+    assert data and (w, h) == (600, 450)
+
+    areas = [{"name": "Front centre", "methods": ["Screen print"],
+              "areaWidthMm": 90, "areaHeightMm": 48,
+              "image": {"data": data, "width": w, "height": h},
+              "rect": {"left": 150, "top": 120, "width": 300, "height": 160},
+              "colorChoices": "Up to 4", "leadTime": "5 days"}]
+    pdf = manuals.build_manual({"id": "24233", "code": "CTEN 2240", "name": "Test product",
+                                "brand": "Jasani"}, areas, "uae", None)
+    assert pdf[:5] == b"%PDF-"
+    embedded = {(int(a), int(b2)) for a, b2 in
+                zip(re.findall(rb"/Width\s+(\d+)", pdf), re.findall(rb"/Height\s+(\d+)", pdf))}
+    assert (600, 450) in embedded, "the area view is missing from the manual"
+    assert b"Area image unavailable" not in pdf, \
+        "an area that supplied valid web_image still rendered the placeholder"
+
+
+def test_branding_cache_from_the_old_decoder_is_not_reused():
+    """Fixing the decoder does not fix what the broken one already stored, so
+    the cache carries the decoder version and a mismatch forces a refetch."""
+    import json as _json
+
+    from server import jasani
+
+    assert jasani.BRANDING_DECODER_VERSION >= 2
+    assert jasani.GEN_MANUAL_VERSION >= 2      # old PDFs have no area images
+
+    stale = {"fetchedAt": 9999999999, "decoder": 1,
+             "areas": [{"name": "Front", "methods": [], "rect": None}]}
+    fresh = {**stale, "decoder": jasani.BRANDING_DECODER_VERSION}
+    assert stale["decoder"] != jasani.BRANDING_DECODER_VERSION
+    assert _json.loads(_json.dumps(fresh))["decoder"] == jasani.BRANDING_DECODER_VERSION
+
+
 def test_branding_artwork_decodes_from_any_field_and_format():
     """A branding area whose artwork is not read renders as 'Area image
     unavailable' in the printing manual — a missing picture to the customer."""

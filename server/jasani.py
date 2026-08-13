@@ -1219,7 +1219,10 @@ async def _fetch_image_bytes(url: str) -> bytes | None:
         return None
 
 
-GEN_MANUAL_VERSION = 1
+# v2: manuals generated before the branding decoder fix have no area images in
+# them, so they must not be served from cache — the filename carries this, which
+# leaves other cached manuals and every unrelated runtime cache alone.
+GEN_MANUAL_VERSION = 2
 
 
 async def _generated_manual(market: str, product: dict) -> bytes | None:
@@ -1320,6 +1323,12 @@ async def get_manual(market: str, product_id: str) -> tuple[bytes, str]:
 
 # ---------------- branding ----------------
 
+# Bumped when the branding decoder changes in a way that makes previously
+# stored entries wrong. v2: web_image arrives as a Python bytes repr — b'…' —
+# and everything cached before this parsed to corrupt bytes and stored no image.
+BRANDING_DECODER_VERSION = 2
+
+
 def _branding_cache_path(market: str, product_id: str):
     d = _CACHE_DIR / "branding"
     d.mkdir(parents=True, exist_ok=True)
@@ -1367,6 +1376,43 @@ def _area_image_raw(rec: dict) -> Any:
     return None
 
 
+_B64_ALPHABET = re.compile(r"^[A-Za-z0-9+/]*={0,2}$")
+
+
+def _unwrap_base64(raw: str) -> str:
+    """Get to the actual Base64 inside whatever the field is wrapped in.
+
+    Jasani's UAE Branding API returns web_image as a JSON *string* holding a
+    Python bytes repr — literally b'/9j/4AAQ…' with the marker and quotes as
+    characters. Feeding that to b64decode(validate=False) does not fail: the
+    non-alphabet characters are skipped and what comes out is shifted, so the
+    JPEG magic FF D8 FF arrives as 6F FF 63 FF and Pillow rejects an image
+    that was perfectly good on the wire.
+
+    The wrapper is removed only when it is genuinely one — a b prefix with
+    matching quotes at both ends — never by stripping stray quotes, so a
+    payload that legitimately ends in a quote character is untouched. Parsed
+    by hand rather than with ast.literal_eval: this needs to recognise one
+    fixed shape, and a general literal parser on unbounded upstream input is
+    more machinery and more surface than the job needs."""
+    text = raw.strip()
+    if text.startswith("data:"):
+        text = text.split(",", 1)[-1]
+    for prefix, quote in (("b'", "'"), ('b"', '"')):
+        if text.startswith(prefix) and text.endswith(quote) and len(text) > len(prefix) + 1:
+            text = text[len(prefix):-1]
+            break
+    text = "".join(text.split())          # newlines and spaces are not payload
+    if not text or not _B64_ALPHABET.match(text):
+        return ""
+    pad = len(text) % 4
+    if pad == 1:
+        return ""                         # cannot be valid Base64, do not guess
+    if pad:
+        text += "=" * (4 - pad)
+    return text
+
+
 def _decode_web_image(raw: Any) -> tuple[bytes | None, int, int]:
     """Base64 branding artwork → (bytes, width, height).
 
@@ -1378,10 +1424,8 @@ def _decode_web_image(raw: Any) -> tuple[bytes | None, int, int]:
     never handed a palette or CMYK image it will refuse."""
     if not isinstance(raw, str) or len(raw) < 64:
         return None, 0, 0
-    b64 = raw.strip()
-    if b64.startswith("data:"):
-        b64 = b64.split(",", 1)[-1]
-    if len(b64) > 24 * 1024 * 1024:
+    b64 = _unwrap_base64(raw)
+    if not b64 or len(b64) > 24 * 1024 * 1024:
         return None, 0, 0
     import base64
     import io as _io
@@ -1441,7 +1485,12 @@ async def get_branding_areas(market: str, product_id: str) -> list[dict]:
     now = time.time()
     try:
         stored = json.loads(cache.read_text(encoding="utf-8"))
-        if now - stored.get("fetchedAt", 0) < config.BRANDING_CACHE_HOURS * 3600:
+        fresh = now - stored.get("fetchedAt", 0) < config.BRANDING_CACHE_HOURS * 3600
+        # An entry from an older decoder is not reusable however fresh it is:
+        # it holds what that decoder managed to make of the payload, which for
+        # v1 was nothing at all. Refetching is free — the Branding API sits
+        # outside the primary five-call allowance.
+        if fresh and stored.get("decoder") == BRANDING_DECODER_VERSION:
             for a in stored["areas"]:
                 if a.get("imageB64"):
                     a["image"] = {"data": base64.b64decode(a.pop("imageB64")),
@@ -1499,7 +1548,8 @@ async def get_branding_areas(market: str, product_id: str) -> list[dict]:
                 s["imageB64"] = base64.b64encode(a["image"]["data"]).decode()
                 s["imageW"], s["imageH"] = a["image"]["width"], a["image"]["height"]
             serializable.append(s)
-        cache.write_text(json.dumps({"fetchedAt": int(now), "areas": serializable}),
+        cache.write_text(json.dumps({"fetchedAt": int(now), "areas": serializable,
+                                     "decoder": BRANDING_DECODER_VERSION}),
                          encoding="utf-8")
     except OSError:
         pass
