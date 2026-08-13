@@ -1157,15 +1157,50 @@ def _fnum(rec: dict, *keys: str) -> float | None:
         return None
 
 
+# The branding record does not always call the artwork the same thing.
+_B64ISH_RE = re.compile(r"^(?:data:image/[a-z.+-]+;base64,)?[A-Za-z0-9+/=\s]+$")
+_AREA_IMAGE_KEYS = ("web_image", "webimage", "image", "image_1920", "image1920",
+                    "area_image", "areaimage", "view_image", "viewimage",
+                    "branding_image", "brandingimage", "picture", "photo")
+
+
+def _area_image_raw(rec: dict) -> Any:
+    """The base64 artwork on a branding record, whatever key it arrived under.
+
+    A missed key is not a blank field — the area simply renders as
+    'Area image unavailable' in the manual, which is what a missing branding
+    image looks like to a customer."""
+    for key in _AREA_IMAGE_KEYS:
+        val = rec.get(key)
+        if isinstance(val, str) and len(val.strip()) >= 64:
+            marker = val.strip().lower()
+            if marker not in _EMPTY_MARKERS:
+                return val
+    # Fall back to any long value that actually decodes as an image. This is
+    # self-validating — a field only qualifies if PIL can open what it holds —
+    # so an unfamiliar field name costs a customer their area view no longer.
+    for val in rec.values():
+        if isinstance(val, str) and len(val.strip()) >= 512 and _B64ISH_RE.match(val.strip()[:64]):
+            if _decode_web_image(val)[0] is not None:
+                return val
+    return None
+
+
 def _decode_web_image(raw: Any) -> tuple[bytes | None, int, int]:
-    """Base64 web_image → (bytes, natural_width, natural_height); size-capped
-    and verified server-side so only genuine images reach the PDF generator."""
+    """Base64 branding artwork → (bytes, width, height).
+
+    The image is fully decoded here rather than header-checked: PIL's verify()
+    passes on a truncated payload that then fails at draw time, and by then the
+    manual has already been generated with a missing area view. Whatever comes
+    back is normalised to PNG at its original pixel size, so the area rectangle
+    — which is expressed in those pixels — still lines up, and reportlab is
+    never handed a palette or CMYK image it will refuse."""
     if not isinstance(raw, str) or len(raw) < 64:
         return None, 0, 0
     b64 = raw.strip()
     if b64.startswith("data:"):
         b64 = b64.split(",", 1)[-1]
-    if len(b64) > 8 * 1024 * 1024:
+    if len(b64) > 24 * 1024 * 1024:
         return None, 0, 0
     import base64
     import io as _io
@@ -1174,19 +1209,28 @@ def _decode_web_image(raw: Any) -> tuple[bytes | None, int, int]:
         data = base64.b64decode(b64, validate=False)
     except Exception:
         return None, 0, 0
-    if len(data) < 128 or len(data) > 6 * 1024 * 1024:
+    # 32 bytes is below any real image header; anything above that is left for
+    # PIL to accept or reject, rather than guessing from the byte count.
+    if len(data) < 32 or len(data) > 16 * 1024 * 1024:
         return None, 0, 0
     try:
         from PIL import Image as _Image
 
         im = _Image.open(_io.BytesIO(data))
-        im.verify()
         w, h = im.size
+        if not (8 <= w <= 6000 and 8 <= h <= 6000):
+            return None, 0, 0
+        im.load()                      # actually decode: catches truncation now
+        if im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGBA" if "A" in im.getbands() or im.mode == "P" else "RGB")
+        out = _io.BytesIO()
+        im.save(out, format="PNG", optimize=False)
+        normalised = out.getvalue()
     except Exception:
         return None, 0, 0
-    if not (8 <= w <= 6000 and 8 <= h <= 6000):
-        return None, 0, 0
-    return data, w, h
+    # no size floor on the re-encoded bytes: a flat or largely transparent area
+    # view compresses to almost nothing and is still a perfectly good image.
+    return normalised, w, h
 
 
 async def get_branding_areas(market: str, product_id: str) -> list[dict]:
@@ -1224,10 +1268,13 @@ async def get_branding_areas(market: str, product_id: str) -> list[dict]:
     )
     records = _parse_records(raw, ctype)[:20]
     areas: list[dict] = []
+    dropped_images = 0
     for rec in records:
         rec = _normalize_keys(rec)
         methods = _rel_names(rec.get("pricing_products") or rec.get("pricingproducts"))[:8]
-        img_data, img_w, img_h = _decode_web_image(rec.get("web_image") or rec.get("webimage"))
+        img_data, img_w, img_h = _decode_web_image(_area_image_raw(rec))
+        if img_data is None and _area_image_raw(rec):
+            dropped_images += 1
         rect = None
         left, top = _fnum(rec, "left"), _fnum(rec, "top")
         r_w, r_h = _fnum(rec, "width"), _fnum(rec, "height")
@@ -1248,6 +1295,9 @@ async def get_branding_areas(market: str, product_id: str) -> list[dict]:
         }
         if entry["name"] or entry["methods"] or entry["image"]:
             areas.append(entry)
+    with_images = sum(1 for a in areas if a["image"])
+    print(f"[jasani] {market} branding {product_id}: {len(areas)} areas, "
+          f"{with_images} with artwork, {dropped_images} unreadable", flush=True)
     try:
         serializable = []
         for a in areas:

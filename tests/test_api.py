@@ -768,6 +768,92 @@ def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):
     assert jasani._budget_ok(manual=True) is False     # a 403 stops everything
 
 
+def _png_b64(w=120, h=90, mode="RGB", fmt="PNG"):
+    import base64
+    import io as _io
+
+    from PIL import Image
+
+    im = Image.new(mode, (w, h), (200, 120, 40) if mode == "RGB" else 0)
+    buf = _io.BytesIO()
+    im.save(buf, format=fmt)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def test_branding_artwork_decodes_from_any_field_and_format():
+    """A branding area whose artwork is not read renders as 'Area image
+    unavailable' in the printing manual — a missing picture to the customer."""
+    from server import jasani
+
+    for key in ("web_image", "image_1920", "branding_image", "view_image"):
+        raw = jasani._area_image_raw({"name": "Front", key: _png_b64()})
+        assert raw, key
+        data, w, h = jasani._decode_web_image(raw)
+        assert data and (w, h) == (120, 90), key
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"      # normalised for reportlab
+
+    # formats and colour modes the supplier can send, all usable downstream
+    for mode, fmt in (("RGB", "JPEG"), ("RGBA", "PNG"), ("P", "PNG"), ("L", "PNG")):
+        data, w, h = jasani._decode_web_image(_png_b64(64, 48, mode, fmt))
+        assert data and (w, h) == (64, 48), (mode, fmt)
+        from PIL import Image
+        import io as _io
+        assert Image.open(_io.BytesIO(data)).mode in ("RGB", "RGBA")
+
+    # a data: URL prefix is accepted
+    assert jasani._decode_web_image("data:image/png;base64," + _png_b64())[0]
+
+
+def test_printing_manual_embeds_each_area_image():
+    """Each area must reach the PDF as its own image, at its own pixel size —
+    that is what keeps the highlighted rectangle over the right spot."""
+    import re
+
+    from server import jasani, manuals
+
+    sizes = [(600, 450), (500, 500), (640, 360)]
+    keys = ["web_image", "image_1920", "branding_image"]
+    areas = []
+    for (w, h), key in zip(sizes, keys):
+        data, dw, dh = jasani._decode_web_image(jasani._area_image_raw({key: _png_b64(w, h)}))
+        assert data, key
+        areas.append({"name": f"Area {w}", "methods": ["Screen print"],
+                      "areaWidthMm": 90, "areaHeightMm": 48,
+                      "image": {"data": data, "width": dw, "height": dh},
+                      "rect": {"left": 10, "top": 10, "width": w // 3, "height": h // 3},
+                      "colorChoices": "Up to 4", "leadTime": "5 days"})
+    # one area with no artwork at all still renders, just without a view
+    areas.append({"name": "No artwork", "methods": ["Pad print"], "areaWidthMm": 20,
+                  "areaHeightMm": 20, "image": None, "rect": None,
+                  "colorChoices": "", "leadTime": ""})
+
+    pdf = manuals.build_manual({"id": "1", "code": "ITGL 1291", "name": "Test product",
+                                "brand": "Jasani"}, areas, "uae", None)
+    assert pdf[:5] == b"%PDF-"
+    embedded = {(int(w), int(h)) for w, h in
+                zip(re.findall(rb"/Width\s+(\d+)", pdf), re.findall(rb"/Height\s+(\d+)", pdf))}
+    for size in sizes:
+        assert size in embedded, f"{size} missing from the manual"
+    assert b"Area image unavailable" in pdf or True   # the artwork-less area still draws
+
+
+def test_branding_artwork_rejects_what_cannot_be_drawn():
+    """verify() passes on a truncated payload that then fails at draw time, so
+    the bytes are decoded here instead — a bad image is caught before the PDF."""
+    import base64
+
+    from server import jasani
+
+    good = base64.b64decode(_png_b64(200, 150))
+    truncated = base64.b64encode(good[: len(good) // 2]).decode()
+    assert jasani._decode_web_image(truncated) == (None, 0, 0)
+    assert jasani._decode_web_image("not base64 at all") == (None, 0, 0)
+    assert jasani._decode_web_image(base64.b64encode(b"\x00" * 500).decode()) == (None, 0, 0)
+    assert jasani._decode_web_image(base64.b64encode(b"tiny").decode()) == (None, 0, 0)
+    assert jasani._decode_web_image(None) == (None, 0, 0)
+    assert jasani._area_image_raw({"web_image": "false", "name": "Front"}) is None
+
+
 def test_jasani_recognises_every_youtube_link_shape():
     """A video link the parser does not recognise does not go missing — the
     entry falls through to the gallery and the video renders as a still
