@@ -766,6 +766,58 @@ def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):
     assert jasani._budget_ok() is False
 
 
+def test_jasani_refunds_calls_the_supplier_never_served(tmp_path, monkeypatch):
+    """A call is spent before the request leaves; if the supplier was never
+    reached it must be given back, or a few failed attempts silently exhaust
+    the day for BOTH markets and look like a dead API."""
+    import asyncio
+
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
+    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "tok")
+
+    # our own host allowlist rejects it — nothing ever went out
+    with pytest.raises(jasani.SupplierUnavailable):
+        asyncio.run(jasani._fetch("https://evil.example.com/x", "www.jasani.ae"))
+    assert jasani.budget_status()["used"] == 0
+
+    # transport failure (DNS/TLS/connect/timeout) — the supplier served nothing
+    with pytest.raises(jasani.SupplierUnavailable) as exc:
+        asyncio.run(jasani._fetch("https://www.jasani.ae/products/all/tok", "www.jasani.ae"))
+    assert "transport" in str(exc.value)
+    assert jasani.budget_status()["used"] == 0
+
+    # a served response still counts, and a 403 still parks the whole day
+    jasani._budget_ok()
+    assert jasani.budget_status()["used"] == 1
+    jasani._budget_exhaust()
+    assert jasani._budget_ok() is False
+
+
+def test_jasani_remembers_why_a_market_failed(tmp_path, monkeypatch):
+    """'Nothing cached yet' cannot be told apart from 'every refresh failed',
+    so the last attempt is persisted per market and shown in the console."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "super-secret-token")
+
+    assert jasani.cache_status("uae")["lastAttempt"] is None
+    jasani.record_attempt("uae", "products", False,
+                          "transport: ConnectError super-secret-token")
+    entry = jasani.cache_status("uae")["lastAttempt"]
+    assert entry["ok"] is False and entry["what"] == "products"
+    assert "super-secret-token" not in entry["reason"]      # never leak the token
+    assert entry["ts"] > 0
+    # the other market keeps its own record
+    assert jasani.cache_status("ksa")["lastAttempt"] is None
+    jasani.record_attempt("ksa", "stock", True, "40 products")
+    assert jasani.cache_status("ksa")["lastAttempt"]["ok"] is True
+    assert jasani.cache_status("uae")["lastAttempt"]["ok"] is False
+
+
 def test_jasani_stock_merge_matches_on_any_identifier():
     from server import jasani
 

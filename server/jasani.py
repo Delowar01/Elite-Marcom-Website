@@ -72,11 +72,69 @@ def _budget_ok() -> bool:
         return True
 
 
+def _budget_refund() -> None:
+    """Give back a call that never reached Jasani.
+
+    _budget_ok() spends the call before the request goes out, so a DNS, TLS,
+    connect or timeout failure — where the supplier never served anything —
+    would otherwise burn one of the five. A handful of failed attempts could
+    then exhaust the day for BOTH markets and look exactly like a dead API.
+    Anything that came back with an HTTP status was served and still counts."""
+    day = _uae_day()
+    with _lock:
+        budget = _read_budget()
+        if budget["day"] == day and budget["count"] > 0:
+            budget["count"] -= 1
+            _write_budget(budget)
+
+
 def _budget_exhaust() -> None:
     """After a 403 (documented for over-limit, bad token or bad URL) stop
     calling the primary APIs until the UAE day resets — never retry a 403."""
     with _lock:
         _write_budget({"day": _uae_day(), "count": config.SUPPLIER_DAILY_BUDGET})
+
+
+def _status_file():
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return _CACHE_DIR / "supplier-status.json"
+
+
+def _scrub(text: str) -> str:
+    """A reason string is shown in the admin panel — never let it carry the token."""
+    token = config.JASANI_API_TOKEN
+    return (text.replace(token, "***") if token else text)[:160]
+
+
+def record_attempt(market: str, what: str, ok: bool, reason: str = "") -> None:
+    """Persist the outcome of a supplier call.
+
+    Without this a failed refresh is a toast that disappears, and the console
+    can only say 'nothing cached yet' — which is indistinguishable from never
+    having tried. The supplier guide also asks that staff be alerted when a
+    previously working configuration starts refusing calls."""
+    with _lock:
+        try:
+            data = json.loads(_status_file().read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data[market] = {"ts": int(time.time()), "what": what, "ok": bool(ok),
+                        "reason": _scrub(reason)}
+        try:
+            _status_file().write_text(json.dumps(data), encoding="utf-8")
+        except OSError:
+            pass
+
+
+def last_attempt(market: str) -> dict | None:
+    try:
+        data = json.loads(_status_file().read_text(encoding="utf-8"))
+        entry = data.get(market) if isinstance(data, dict) else None
+        return entry if isinstance(entry, dict) else None
+    except (OSError, ValueError):
+        return None
 
 
 def _host(market: str) -> str:
@@ -95,6 +153,8 @@ async def _fetch(url: str, expected_host: str, primary: bool = True) -> tuple[by
         raise SupplierUnavailable("daily supplier budget exhausted")
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname != expected_host or parsed.port not in (None, 443):
+        if primary:
+            _budget_refund()
         raise SupplierUnavailable("blocked upstream url")
     try:
         async with httpx.AsyncClient(
@@ -122,6 +182,8 @@ async def _fetch(url: str, expected_host: str, primary: bool = True) -> tuple[by
     except SupplierUnavailable:
         raise
     except Exception as exc:  # network/TLS/protocol failures → controlled unavailability
+        if primary:
+            _budget_refund()   # nothing was served, so nothing was spent
         raise SupplierUnavailable(f"transport: {exc.__class__.__name__}") from exc
     return b"".join(chunks), ctype
 
@@ -708,9 +770,11 @@ def budget_status() -> dict:
 
 def cache_status(market: str) -> dict:
     cached = _read_cache(market)
+    attempt = last_attempt(market)
     if not cached:
         return {"market": market, "cached": False, "products": 0, "inStock": 0,
-                "fetchedAt": None, "stockAt": None, "productsFresh": False, "stockFresh": False}
+                "fetchedAt": None, "stockAt": None, "productsFresh": False,
+                "stockFresh": False, "lastAttempt": attempt}
     now = time.time()
     products = cached.get("products", [])
     fetched_at = cached.get("fetchedAt", 0)
@@ -721,6 +785,7 @@ def cache_status(market: str) -> dict:
         "fetchedAt": fetched_at or None, "stockAt": stock_at or None,
         "productsFresh": now - fetched_at < config.PRODUCT_REFRESH_HOURS * 3600,
         "stockFresh": now - stock_at < config.STOCK_REFRESH_HOURS * 3600,
+        "lastAttempt": attempt,
     }
 
 
@@ -755,14 +820,22 @@ async def force_refresh(market: str, what: str) -> dict:
     exhausted or upstream fails — the cached snapshot is left untouched."""
     now = time.time()
     if what == "products":
-        products = await _fetch_products(market)
+        try:
+            products = await _fetch_products(market)
+        except SupplierUnavailable as exc:
+            record_attempt(market, "products", False, str(exc))
+            raise
         stock_at = 0.0
         try:
             await _apply_stock(market, products)
             stock_at = now
         except SupplierUnavailable as exc:
             print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
+            record_attempt(market, "stock", False, str(exc))
         _write_cache(market, products, fetched_at=now, stock_at=stock_at)
+        if stock_at:
+            record_attempt(market, "products", True,
+                           f"{len(products)} products with stock")
         return {"refreshed": "products", "products": len(products),
                 "stockApplied": stock_at > 0}
     if what == "stock":
@@ -770,8 +843,13 @@ async def force_refresh(market: str, what: str) -> dict:
         if not cached or not cached.get("products"):
             raise SupplierUnavailable("no cached products — run a full product refresh first")
         products = cached["products"]
-        await _apply_stock(market, products)
+        try:
+            await _apply_stock(market, products)
+        except SupplierUnavailable as exc:
+            record_attempt(market, "stock", False, str(exc))
+            raise
         _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
+        record_attempt(market, "stock", True, f"{len(products)} products")
         return {"refreshed": "stock", "products": len(products), "stockApplied": True}
     raise ValueError("unknown refresh target")
 

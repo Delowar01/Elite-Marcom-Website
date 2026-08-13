@@ -521,6 +521,15 @@
                 "<br>Stock: " + esc(when(m.stockAt)) +
                 (m.stockFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') + "</p>"
               : '<p class="admin-inline-note">Nothing cached yet for this market.</p>') +
+            (function () {
+              var a = m.lastAttempt;
+              if (!a) return "";
+              return a.ok
+                ? '<p class="admin-inline-note">Last supplier call: ' + esc(when(a.ts)) +
+                  ' <span class="badge-ok">reached</span> · ' + esc(a.reason) + "</p>"
+                : '<p class="ins-alert ins-alert--warn">Last supplier call failed — ' +
+                  esc(a.what) + ", " + esc(when(a.ts)) + ": " + esc(a.reason) + "</p>";
+            }()) +
             (can("jasani.refresh")
               ? '<div class="admin-actions">' +
                 '<button class="btn btn--ghost btn--small" data-refresh="stock" data-market="' + key + '">Refresh stock (1 call)</button>' +
