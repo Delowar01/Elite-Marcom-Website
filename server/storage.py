@@ -59,6 +59,12 @@ def _connect() -> sqlite3.Connection:
             )"""
         )
         _conn.execute("CREATE INDEX IF NOT EXISTS idx_records_expiry ON records(expires_at)")
+        # market is a routing label, not personal data: keeping it in the clear
+        # lets the dashboard split KSA from UAE without decrypting any record
+        cols = {r[1] for r in _conn.execute("PRAGMA table_info(records)")}
+        if "market" not in cols:
+            _conn.execute("ALTER TABLE records ADD COLUMN market TEXT NOT NULL DEFAULT ''")
+        _conn.execute("CREATE INDEX IF NOT EXISTS idx_records_market ON records(market)")
         _conn.commit()
     return _conn
 
@@ -78,6 +84,13 @@ def save_record(kind: str, payload: dict, ip_hash: str,
         "rental_enquiry": "RN", "rental_notification": "RA",
     }.get(kind, "EM")
     reference = make_reference(prefix)
+    market = str(payload.get("market") or "").strip().lower()
+    if market in ("saudi arabia", "ksa", "sa"):
+        market = "ksa"
+    elif market in ("united arab emirates", "uae", "ae"):
+        market = "uae"
+    elif market not in ("ksa", "uae"):
+        market = ""
     now = int(time.time())
     expires = now + retention_days * 86400
     blob = encrypt(json.dumps(payload, ensure_ascii=False).encode())
@@ -91,9 +104,9 @@ def save_record(kind: str, payload: dict, ip_hash: str,
     with _lock:
         conn = _connect()
         conn.execute(
-            "INSERT INTO records (kind, reference, created_at, expires_at, ip_hash, payload, cv_path)"
-            " VALUES (?,?,?,?,?,?,?)",
-            (kind, reference, now, expires, ip_hash, blob, cv_path),
+            "INSERT INTO records (kind, reference, created_at, expires_at, ip_hash,"
+            " payload, cv_path, market) VALUES (?,?,?,?,?,?,?,?)",
+            (kind, reference, now, expires, ip_hash, blob, cv_path, market),
         )
         conn.commit()
     return reference

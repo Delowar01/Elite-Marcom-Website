@@ -1566,15 +1566,71 @@ async def admin_dashboard(request: Request):
     session = require_session(request)
     from . import storage as st
 
+    import time as _time
+
+    from . import content, jasani, mailer
+
+    KINDS = ("giveaway_enquiry", "giveaway_notification", "rental_enquiry",
+             "rental_notification", "contact", "career")
+    now = int(_time.time())
+    day = 86400
     counts: dict = {}
+    series: list[dict] = []
+    totals = {"last30": 0, "prev30": 0, "last7": 0}
     try:
         conn = st._connect()
-        for kind in ("giveaway_enquiry", "rental_enquiry", "contact", "career"):
+        for kind in KINDS:
             counts[kind] = conn.execute(
                 "SELECT COUNT(*) FROM records WHERE kind=?", (kind,)).fetchone()[0]
+        # 14 day trend, one bucket per UTC day, oldest first
+        start = now - 13 * day
+        rows = conn.execute(
+            "SELECT kind, created_at FROM records WHERE created_at >= ?", (start,)).fetchall()
+        buckets: dict[int, dict[str, int]] = {}
+        for i in range(14):
+            buckets[(start + i * day) // day] = {"enquiries": 0, "notifications": 0}
+        for kind, created in rows:
+            slot = buckets.get(created // day)
+            if slot is None:
+                continue
+            slot["notifications" if kind.endswith("notification") else "enquiries"] += 1
+        series = [{"day": (d * day), **v} for d, v in sorted(buckets.items())]
+        totals["last30"] = conn.execute(
+            "SELECT COUNT(*) FROM records WHERE created_at >= ?", (now - 30 * day,)).fetchone()[0]
+        totals["prev30"] = conn.execute(
+            "SELECT COUNT(*) FROM records WHERE created_at >= ? AND created_at < ?",
+            (now - 60 * day, now - 30 * day)).fetchone()[0]
+        totals["last7"] = conn.execute(
+            "SELECT COUNT(*) FROM records WHERE created_at >= ?", (now - 7 * day,)).fetchone()[0]
     except Exception:
         counts = {}
+
+    # workload by status, and the KSA/UAE split — both from plaintext admin columns
+    status_counts = aa.request_status_counts()
+    market_counts = aa.request_market_counts()
+
+    markets = {m: jasani.cache_status(m) for m in config.JASANI_HOSTS}
+    for key, entry in markets.items():
+        fetched = entry.get("fetchedAt") or 0
+        stocked = entry.get("stockAt") or 0
+        entry["nextProductsAt"] = int(fetched + config.PRODUCT_REFRESH_HOURS * 3600) if fetched else None
+        entry["nextStockAt"] = int(stocked + config.STOCK_REFRESH_HOURS * 3600) if stocked else None
+    try:
+        rentals, rentals_source = content.rentals_load()
+    except Exception:
+        rentals, rentals_source = [], "unknown"
+
+    mail = mailer.log_stats()
+    budget = jasani.budget_status()
     return {"user": {"name": session["name"], "role": session["role"]},
             "requests": counts,
+            "requestTotals": totals,
+            "requestSeries": series,
+            "statusCounts": status_counts,
+            "marketCounts": market_counts,
             "adminUsers": aa.user_count(),
+            "supplier": {"budget": budget, "markets": markets,
+                         "tokenConfigured": bool(config.JASANI_API_TOKEN)},
+            "rentals": {"count": len(rentals), "source": rentals_source},
+            "mail": {**mail, "configured": bool(config.RESEND_API_KEY)},
             "audit": aa.audit_list(limit=8)}

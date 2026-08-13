@@ -1319,6 +1319,66 @@ def test_security_centre_and_operations_permissions():
 
 # ---------------- Email settings in the admin panel ----------------
 
+def test_dashboard_reports_real_system_state():
+    """Every dashboard figure comes from the live system — no placeholders."""
+    res = client.get("/api/admin/dashboard")
+    assert res.status_code == 200
+    d = res.json()
+    for key in ("requests", "requestTotals", "requestSeries", "statusCounts",
+                "marketCounts", "supplier", "rentals", "mail", "audit"):
+        assert key in d, key
+    assert len(d["requestSeries"]) == 14           # one bucket per day, oldest first
+    assert d["requestSeries"] == sorted(d["requestSeries"], key=lambda x: x["day"])
+    # KSA and UAE are reported separately, never merged
+    assert set(d["supplier"]["markets"]) == {"ksa", "uae"}
+    assert set(d["marketCounts"]) == {"ksa", "uae", "other"}
+    for market in ("ksa", "uae"):
+        entry = d["supplier"]["markets"][market]
+        assert entry["market"] == market
+        assert {"products", "inStock", "fetchedAt", "stockAt",
+                "nextProductsAt", "nextStockAt", "lastAttempt"} <= set(entry)
+    budget = d["supplier"]["budget"]
+    assert {"used", "remaining", "limit", "resetInSeconds", "day"} <= set(budget)
+    # the supplier token is never echoed to the browser, only a boolean
+    assert isinstance(d["supplier"]["tokenConfigured"], bool)
+    assert "JASANI" not in json.dumps(d).upper().replace("JASANI_API_TOKEN", "")
+
+
+def test_untouched_requests_count_as_new():
+    """A request nobody has opened has no meta row; the inbox shows it as
+    'new', so the totals must say 'new' too."""
+    from server import adminauth as aa, storage as st
+
+    before = aa.request_status_counts()
+    reference = st.save_record("contact", {"fullName": "Counted", "email": "c@example.com"},
+                               "iphash", 30)
+    after = aa.request_status_counts()
+    assert after["new"] == before["new"] + 1
+    assert set(after) == set(aa.REQUEST_STATUSES)
+    aa.request_meta_set(reference, "owner@elitemarcom.com", status="won")
+    moved = aa.request_status_counts()
+    assert moved["new"] == before["new"] and moved["won"] == before.get("won", 0) + 1
+
+
+def test_market_is_stored_in_the_clear_for_reporting():
+    """Market is a routing label, not personal data — it stays queryable so the
+    dashboard can split KSA from UAE without decrypting anything."""
+    from server import adminauth as aa, storage as st
+
+    before = aa.request_market_counts()
+    st.save_record("rental_enquiry", {"fullName": "A", "market": "ksa"}, "iphash", 30)
+    st.save_record("giveaway_enquiry", {"fullName": "B", "market": "UAE"}, "iphash", 30)
+    st.save_record("contact", {"fullName": "C"}, "iphash", 30)
+    after = aa.request_market_counts()
+    assert after["ksa"] == before["ksa"] + 1
+    assert after["uae"] == before["uae"] + 1          # normalised from "UAE"
+    assert after["other"] == before["other"] + 1      # no market on the form
+    row = st._connect().execute(
+        "SELECT market, payload FROM records ORDER BY id DESC LIMIT 1").fetchone()
+    assert row[0] == ""                                # plaintext column only
+    assert b"fullName" not in row[1]                   # the payload is still encrypted
+
+
 def test_email_settings_screen_and_permissions():
     res = client.get("/api/admin/email")
     assert res.status_code == 200

@@ -455,6 +455,20 @@ def request_meta_bulk(references: list[str]) -> dict[str, dict]:
     return out
 
 
+def request_market_counts() -> dict:
+    """KSA / UAE split, read from the plaintext market column on records."""
+    from . import storage as st
+
+    out = {"ksa": 0, "uae": 0, "other": 0}
+    try:
+        for market, n in st._connect().execute(
+                "SELECT market, COUNT(*) FROM records GROUP BY market"):
+            out[market if market in ("ksa", "uae") else "other"] += n
+    except Exception:
+        pass
+    return out
+
+
 def request_meta_set(reference: str, by: str, status: str | None = None,
                      assignee: str | None = None, note: str | None = None) -> dict:
     if status is not None and status not in REQUEST_STATUSES:
@@ -488,9 +502,24 @@ def request_meta_delete(reference: str) -> None:
 
 
 def request_status_counts() -> dict[str, int]:
+    """Workload by status. A request nobody has opened yet has no meta row at
+    all, and request_meta_get() reports those as 'new' — so they are counted
+    as 'new' here rather than vanishing from the totals."""
+    from . import storage as st
+
     rows = _connect().execute(
         "SELECT status, COUNT(*) AS c FROM request_meta GROUP BY status").fetchall()
-    return {r["status"]: r["c"] for r in rows}
+    counts = {s: 0 for s in REQUEST_STATUSES}
+    tracked = 0
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + r["c"]
+        tracked += r["c"]
+    try:
+        total = st._connect().execute("SELECT COUNT(*) FROM records").fetchone()[0]
+    except Exception:
+        total = tracked
+    counts["new"] += max(0, total - tracked)
+    return counts
 
 
 # ---------------- settings ----------------

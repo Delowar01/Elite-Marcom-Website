@@ -332,22 +332,205 @@
       api("/api/admin/dashboard").then(function (r) {
         if (!r.ok) return apiErr(r);
         var d = r.data;
-        var reqRows = Object.keys(d.requests || {}).map(function (k) {
-          var labels = { giveaway_enquiry: "Gift enquiries", rental_enquiry: "Rental enquiries",
-                         contact: "Contact messages", career: "Career applications" };
-          return '<div class="stat-card"><b>' + esc(d.requests[k]) + "</b><span>" + esc(labels[k] || k) + "</span></div>";
-        }).join("");
+        var tot = d.requestTotals || {};
+        var sup = d.supplier || {};
+        var mk = sup.markets || {};
+        var mail = d.mail || {};
+        var series = d.requestSeries || [];
+        var LABELS = { giveaway_enquiry: "Gift requests", giveaway_notification: "Stock alerts",
+                       rental_enquiry: "Rental requests", rental_notification: "Availability alerts",
+                       contact: "Contact messages", career: "Applications" };
+
+        function delta(now, prev) {
+          if (!prev && !now) return '<span class="stat-delta stat-delta--flat">no change</span>';
+          if (!prev) return '<span class="stat-delta stat-delta--up">new</span>';
+          var pc = Math.round(((now - prev) / prev) * 100);
+          var cls = pc > 0 ? "up" : (pc < 0 ? "down" : "flat");
+          return '<span class="stat-delta stat-delta--' + cls + '">' +
+                 (pc > 0 ? "▲ +" : pc < 0 ? "▼ " : "= ") + esc(pc) + "% vs previous 30 days</span>";
+        }
+        /* 14-day trend, drawn inline — no chart library, no external request */
+        function sparkline(vals) {
+          if (!vals.length) return "";
+          var max = Math.max.apply(null, vals.concat([1]));
+          var w = 100, h = 30;
+          var pts = vals.map(function (v, i) {
+            return [(i / Math.max(1, vals.length - 1)) * w, h - (v / max) * (h - 3) - 1.5];
+          });
+          var line = pts.map(function (p, i) { return (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1); }).join(" ");
+          return '<svg class="stat-spark" viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="none" aria-hidden="true">' +
+            '<path d="' + line + " L" + w + " " + h + " L0 " + h + ' Z" fill="var(--orange)" opacity="0.13"/>' +
+            '<path d="' + line + '" fill="none" stroke="var(--orange-2)" stroke-width="1.6" ' +
+            'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>';
+        }
+        function areaChart(rows) {
+          if (!rows.length) return '<p class="admin-inline-note">No submissions in the last 14 days.</p>';
+          var w = 560, h = 150, pad = 22;
+          var max = Math.max.apply(null, rows.map(function (x) { return x.enquiries + x.notifications; }).concat([1]));
+          var step = (w - pad * 2) / Math.max(1, rows.length - 1);
+          function path(key, stack) {
+            return rows.map(function (x, i) {
+              var v = stack ? x.enquiries + x.notifications : x[key];
+              var y = h - pad - (v / max) * (h - pad * 2);
+              return (i ? "L" : "M") + (pad + i * step).toFixed(1) + " " + y.toFixed(1);
+            }).join(" ");
+          }
+          var base = " L" + (pad + (rows.length - 1) * step).toFixed(1) + " " + (h - pad) + " L" + pad + " " + (h - pad) + " Z";
+          return '<svg class="chart" viewBox="0 0 ' + w + " " + h + '" role="img" aria-label="Submissions over the last 14 days">' +
+            '<line x1="' + pad + '" y1="' + (h - pad) + '" x2="' + (w - pad) + '" y2="' + (h - pad) +
+            '" stroke="var(--adm-line-strong)" stroke-width="1"/>' +
+            '<path d="' + path("x", true) + base + '" fill="var(--violet)" opacity="0.16"/>' +
+            '<path d="' + path("x", true) + '" fill="none" stroke="var(--violet-2)" stroke-width="2"/>' +
+            '<path d="' + path("enquiries") + base + '" fill="var(--orange)" opacity="0.18"/>' +
+            '<path d="' + path("enquiries") + '" fill="none" stroke="var(--orange-2)" stroke-width="2"/>' +
+            '<text x="' + pad + '" y="' + (h - 5) + '" font-size="9" fill="var(--text-muted)">' +
+            esc(dayLabel(rows[0].day)) + "</text>" +
+            '<text x="' + (w - pad) + '" y="' + (h - 5) + '" font-size="9" fill="var(--text-muted)" text-anchor="end">' +
+            esc(dayLabel(rows[rows.length - 1].day)) + "</text>" +
+            '<text x="' + pad + '" y="12" font-size="9" fill="var(--text-muted)">peak ' + esc(max) + "/day</text></svg>";
+        }
+        function dayLabel(ts) {
+          var dt = new Date(ts * 1000);
+          return dt.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+        }
+        /* status mix as a donut — one ring segment per status, real counts only */
+        function donut(counts) {
+          var order = ["new", "in_progress", "quoted", "won", "lost", "closed"];
+          var colors = { new: "var(--orange-2)", in_progress: "var(--adm-info)", quoted: "var(--violet-2)",
+                         won: "var(--adm-ok)", lost: "var(--adm-bad)", closed: "var(--text-muted)" };
+          var total = order.reduce(function (s, k) { return s + (counts[k] || 0); }, 0);
+          if (!total) return '<p class="admin-inline-note">No requests yet.</p>';
+          var C = 2 * Math.PI * 42, at = 0;
+          var ring = order.map(function (k) {
+            var v = counts[k] || 0;
+            if (!v) return "";
+            var len = (v / total) * C;
+            var seg = '<circle cx="60" cy="60" r="42" fill="none" stroke="' + colors[k] +
+              '" stroke-width="15" stroke-dasharray="' + len.toFixed(2) + " " + (C - len).toFixed(2) +
+              '" stroke-dashoffset="' + (-at).toFixed(2) + '" transform="rotate(-90 60 60)"><title>' +
+              esc(STATUS_LABELS[k] || k) + ": " + esc(v) + "</title></circle>";
+            at += len;
+            return seg;
+          }).join("");
+          return '<div class="donut-wrap"><svg class="donut" viewBox="0 0 120 120" role="img" aria-label="Requests by status">' +
+            '<circle cx="60" cy="60" r="42" fill="none" stroke="var(--adm-inset)" stroke-width="15"/>' + ring +
+            '<text class="donut-mid" x="60" y="60" text-anchor="middle" dominant-baseline="central">' + esc(total) + "</text>" +
+            '<text class="donut-sub" x="60" y="78" text-anchor="middle">total</text></svg>' +
+            '<div class="bar-list" style="flex:1;min-width:180px">' + order.map(function (k) {
+              var v = counts[k] || 0;
+              return '<div class="bar-row"><span class="bar-label">' + esc(STATUS_LABELS[k] || k) + "</span>" +
+                '<span class="bar-track"><i class="bar-fill" style="width:' + Math.round((v / total) * 100) +
+                "%;background:" + colors[k] + '"></i></span><span class="bar-num">' + esc(v) + "</span></div>";
+            }).join("") + "</div></div>";
+        }
+        function marketPanel(key, label) {
+          var m = mk[key] || {};
+          var a = m.lastAttempt;
+          var enq = (d.marketCounts || {})[key] || 0;
+          return '<div class="admin-panel"><div class="panel-head"><h2>' + esc(label) +
+            '</h2><span class="jz-flag">' + esc(key.toUpperCase()) + "</span></div>" +
+            '<div class="stat-row stat-row--tight">' +
+            '<div class="stat-card"><b>' + esc(m.products || 0) + "</b><span>Products cached</span></div>" +
+            '<div class="stat-card' + (m.cached && !m.inStock ? " stat-card--warn" : "") + '"><b>' +
+            esc(m.inStock || 0) + "</b><span>In stock</span></div>" +
+            '<div class="stat-card"><b>' + esc(enq) + "</b><span>Requests</span></div></div>" +
+            (m.cached
+              ? '<p class="admin-inline-note">Products synced ' + esc(when(m.fetchedAt)) +
+                (m.productsFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') +
+                (m.nextProductsAt ? " · next due " + esc(when(m.nextProductsAt)) : "") +
+                "<br>Stock synced " + esc(when(m.stockAt)) +
+                (m.stockFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') +
+                (m.nextStockAt ? " · next due " + esc(when(m.nextStockAt)) : "") + "</p>"
+              : '<p class="admin-inline-note">Nothing cached for this market yet.</p>') +
+            (a && !a.ok
+              ? '<p class="ins-alert ins-alert--warn">Last sync failed (' + esc(a.what) + ", " +
+                esc(when(a.ts)) + "): " + esc(a.reason) + "</p>"
+              : a ? '<p class="admin-inline-note">Last sync ' + esc(when(a.ts)) +
+                    ' <span class="badge-ok">reached</span></p>' : "");
+        }
+        function svc(state, name, detail) {
+          return '<div class="svc-row svc-row--' + state + '"><i class="svc-dot"></i><b>' +
+                 esc(name) + "</b><small>" + esc(detail) + "</small></div>";
+        }
+        var b = sup.budget || {};
+        var resetH = Math.floor((b.resetInSeconds || 0) / 3600);
+        var resetM = Math.floor(((b.resetInSeconds || 0) % 3600) / 60);
+        var supplierState = !sup.tokenConfigured ? "bad"
+          : (b.remaining === 0 ? "warn" : "ok");
+        var mailState = !mail.configured ? "warn" : (mail.failed ? "bad" : "ok");
+        var totalRequests = Object.keys(d.requests || {}).reduce(function (s, k) { return s + d.requests[k]; }, 0);
+
         main.innerHTML =
           '<h1 class="admin-h1">Welcome back, ' + esc(d.user.name) + "</h1>" +
-          '<p class="admin-sub">Everything on the public site is running. Open Requests to work the inbox, or Jasani for supplier status.</p>' +
-          '<div class="stat-row">' + reqRows +
-            '<div class="stat-card"><b>' + esc(d.adminUsers) + "</b><span>Admin accounts</span></div></div>" +
-          '<div class="admin-panel"><h2>Recent activity</h2><div class="table-scroll"><table class="admin-table"><thead>' +
-          "<tr><th>When</th><th>Who</th><th>Action</th><th>Module</th></tr></thead><tbody>" +
-          (d.audit || []).map(function (a) {
-            return "<tr><td class=\"muted\">" + esc(when(a.ts)) + "</td><td>" + esc(a.user_email) +
-                   "</td><td>" + esc(a.action) + "</td><td class=\"muted\">" + esc(a.module) + "</td></tr>";
-          }).join("") + "</tbody></table></div></div>";
+          '<p class="admin-sub">Live figures from the site — enquiries, supplier catalogue and delivery. ' +
+          "Everything here reads the real system state.</p>" +
+
+          '<div class="stat-row">' +
+          '<div class="stat-card stat-card--click" data-go="requests"><b>' + esc(totalRequests) +
+          "</b><span>Requests all time</span>" + delta(tot.last30 || 0, tot.prev30 || 0) +
+          sparkline(series.map(function (x) { return x.enquiries + x.notifications; })) + "</div>" +
+          '<div class="stat-card stat-card--click" data-go="requests"><b>' + esc((d.statusCounts || {}).new || 0) +
+          "</b><span>Awaiting a first reply</span></div>" +
+          '<div class="stat-card"><b>' + esc(tot.last7 || 0) + "</b><span>Last 7 days</span></div>" +
+          '<div class="stat-card' + (mail.failed ? " stat-card--bad" : "") + '"><b>' + esc(mail.sent || 0) +
+          "</b><span>Emails delivered</span>" +
+          (mail.failed ? '<span class="stat-delta stat-delta--down">' + esc(mail.failed) + " failed</span>" : "") + "</div>" +
+          '<div class="stat-card"><b>' + esc((d.rentals || {}).count || 0) + "</b><span>Rental items</span></div>" +
+          "</div>" +
+
+          '<div class="dash-grid">' +
+          '<div class="admin-panel dash-wide"><div class="panel-head"><h2>Submissions · last 14 days</h2>' +
+          '<span class="legend"><span><i class="key key--orange"></i> Enquiries</span>' +
+          '<span><i class="key key--violet"></i> Including alerts</span></span></div>' +
+          areaChart(series) + "</div>" +
+
+          '<div class="admin-panel"><h2>Where requests stand</h2>' + donut(d.statusCounts || {}) + "</div>" +
+
+          '<div class="admin-panel"><h2>What people ask for</h2><div class="bar-list">' +
+          (function () {
+            var keys = Object.keys(d.requests || {});
+            var max = Math.max.apply(null, keys.map(function (k) { return d.requests[k]; }).concat([1]));
+            return keys.map(function (k) {
+              return '<div class="bar-row"><span class="bar-label">' + esc(LABELS[k] || k) + "</span>" +
+                '<span class="bar-track"><i class="bar-fill' + (k.indexOf("notification") !== -1 ? " bar-fill--violet" : "") +
+                '" style="width:' + Math.round((d.requests[k] / max) * 100) + '%"></i></span>' +
+                '<span class="bar-num">' + esc(d.requests[k]) + "</span></div>";
+            }).join("");
+          }()) + "</div></div>" +
+          "</div>" +
+
+          '<div class="admin-panel"><div class="panel-head"><h2>Jasani supplier</h2>' +
+          '<span class="admin-inline-note">' + esc(b.used) + " of " + esc(b.limit) + " calls used today · " +
+          esc(b.remaining) + " left · resets in " + resetH + "h " + resetM + "m (UAE day " + esc(b.day) + ")</span></div>" +
+          '<div class="gauge"><div class="gauge__fill' + (b.remaining === 0 ? " gauge__fill--max" : "") +
+          '" style="width:' + (b.limit ? Math.min(100, Math.round((b.used / b.limit) * 100)) : 0) + '%"></div></div>' +
+          (sup.tokenConfigured ? "" :
+            '<p class="ins-alert ins-alert--warn">No supplier token configured — set JASANI_API_TOKEN on the server.</p>') +
+          "</div>" +
+          '<div class="jz-grid">' + marketPanel("ksa", "Saudi Arabia — giftsksa.com") +
+          marketPanel("uae", "United Arab Emirates — jasani.ae") + "</div>" +
+
+          '<div class="dash-grid">' +
+          '<div class="admin-panel"><h2>Service status</h2><div class="svc-list">' +
+          svc(supplierState, "Jasani supplier API",
+              !sup.tokenConfigured ? "no token" : b.remaining + " of " + b.limit + " calls left") +
+          svc(mailState, "Transactional email",
+              !mail.configured ? "no API key set" :
+              (mail.pending ? mail.pending + " queued" : "queue clear") +
+              (mail.failed ? ", " + mail.failed + " failed" : "")) +
+          svc("ok", "Rental catalogue", ((d.rentals || {}).count || 0) + " items · " + esc((d.rentals || {}).source || "")) +
+          svc("ok", "Admin accounts", d.adminUsers + " with access") +
+          "</div></div>" +
+          '<div class="admin-panel"><h2>Recent activity</h2><div class="act-list">' +
+          ((d.audit || []).map(function (a) {
+            return '<div class="act-item"><time>' + esc(when(a.ts)) + "</time><b>" + esc(a.action) +
+              "</b><span>" + esc(a.user_email || "system") + "</span></div>";
+          }).join("") || '<p class="admin-inline-note">Nothing yet.</p>') + "</div></div>" +
+          "</div>";
+
+        main.querySelectorAll("[data-go]").forEach(function (el) {
+          el.addEventListener("click", function () { location.hash = "#" + el.getAttribute("data-go"); });
+        });
       });
     },
 
@@ -2475,6 +2658,41 @@
   }
   window.addEventListener("hashchange", route);
 
+  /* mobile drawer: the sidebar is off-canvas under 1024px */
+  (function () {
+    var side = document.getElementById("admin-side");
+    var burger = document.getElementById("admin-burger");
+    var scrim = document.getElementById("admin-scrim");
+    if (!side || !burger || !scrim) return;
+    function setOpen(open) {
+      side.classList.toggle("is-open", open);
+      scrim.hidden = !open;
+      burger.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    burger.addEventListener("click", function () { setOpen(!side.classList.contains("is-open")); });
+    scrim.addEventListener("click", function () { setOpen(false); });
+    side.addEventListener("click", function (e) {
+      if (e.target.closest("a[data-view]")) setOpen(false);   // navigating closes it
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") setOpen(false);
+    });
+  }());
+
+  /* an empty section heading means every link under it is permission-hidden */
+  function tidyNavGroups() {
+    var nav = document.getElementById("admin-nav");
+    if (!nav) return;
+    var heading = null, shown = 0;
+    Array.prototype.forEach.call(nav.children, function (el) {
+      if (el.tagName === "B") {
+        if (heading) heading.hidden = shown === 0;
+        heading = el; shown = 0;
+      } else if (!el.hidden) { shown++; }
+    });
+    if (heading) heading.hidden = shown === 0;
+  }
+
   document.getElementById("logout-btn").addEventListener("click", function () {
     api("/api/admin/logout", {}).then(function () { location.replace("/admin"); });
   });
@@ -2495,6 +2713,7 @@
     document.querySelectorAll(".admin-nav a[data-perm]").forEach(function (a) {
       if (!can(a.getAttribute("data-perm"))) a.hidden = true;
     });
+    tidyNavGroups();
     route();
   });
 })();

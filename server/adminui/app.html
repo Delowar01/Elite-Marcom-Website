@@ -7,34 +7,41 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="stylesheet" href="/styles.css?v=7">
-<link rel="stylesheet" href="/admin/assets/admin.css?v=14">
+<link rel="stylesheet" href="/admin/assets/admin.css?v=15">
 <script src="/js/theme-init.js?v=1"></script>
 <link rel="stylesheet" href="/theme-custom.css">
 </head>
 <body class="admin-body">
+<button class="admin-burger" id="admin-burger" type="button" aria-label="Open the admin menu" aria-expanded="false" aria-controls="admin-side"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+<div class="admin-scrim" id="admin-scrim" hidden></div>
 <div class="admin-shell">
-  <aside class="admin-side">
+  <aside class="admin-side" id="admin-side">
     <div class="admin-side__brand">
       <img src="/assets/logo-light.svg" alt="Elite Marcom" width="130" height="44" class="logo-dark-only">
       <img src="/assets/logo.svg" alt="Elite Marcom" width="130" height="44" class="logo-light-only">
       <span class="admin-side__tag">Admin</span>
     </div>
     <nav class="admin-nav" id="admin-nav" aria-label="Admin sections">
-      <a href="#dashboard" data-view="dashboard">Dashboard</a>
-      <a href="#requests" data-view="requests" data-perm="requests.view">Requests</a>
-      <a href="#jasani" data-view="jasani" data-perm="jasani.view">Jasani</a>
-      <a href="#media" data-view="media" data-perm="media.manage">Media</a>
-      <a href="#brand" data-view="brand" data-perm="brand.edit">Website &amp; Brand</a>
-      <a href="#pages" data-view="pages" data-perm="content.edit">Pages &amp; SEO</a>
-      <a href="#rentals" data-view="rentals" data-perm="rentals.manage">Rentals</a>
-      <a href="#editor" data-view="editor" data-perm="content.edit">Visual editor</a>
-      <a href="#insights" data-view="insights" data-perm="insights.view">Site Insights</a>
-      <a href="#email" data-view="email" data-perm="settings.manage">Email</a>
-      <a href="#operations" data-view="operations" data-perm="settings.manage">Operations</a>
-      <a href="#users" data-view="users" data-perm="users.manage">Users &amp; roles</a>
-      <a href="#audit" data-view="audit" data-perm="audit.view">Activity log</a>
-      <a href="#settings" data-view="settings" data-perm="settings.manage">Settings</a>
-      <a href="#security" data-view="security">My security</a>
+      <b>Overview</b>
+      <a href="#dashboard" data-view="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><em>Dashboard</em></a>
+      <a href="#requests" data-view="requests" data-perm="requests.view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg><em>Requests</em></a>
+      <b>Catalogue</b>
+      <a href="#jasani" data-view="jasani" data-perm="jasani.view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg><em>Jasani</em></a>
+      <a href="#rentals" data-view="rentals" data-perm="rentals.manage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 7V5h8v2"/></svg><em>Rentals</em></a>
+      <a href="#media" data-view="media" data-perm="media.manage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg><em>Media</em></a>
+      <b>Website</b>
+      <a href="#brand" data-view="brand" data-perm="brand.edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg><em>Website &amp; Brand</em></a>
+      <a href="#pages" data-view="pages" data-perm="content.edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg><em>Pages &amp; SEO</em></a>
+      <a href="#editor" data-view="editor" data-perm="content.edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M14 4l6 6-9 9H5v-6z"/></svg><em>Visual editor</em></a>
+      <b>Insight</b>
+      <a href="#insights" data-view="insights" data-perm="insights.view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg><em>Site Insights</em></a>
+      <b>System</b>
+      <a href="#email" data-view="email" data-perm="settings.manage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg><em>Email</em></a>
+      <a href="#operations" data-view="operations" data-perm="settings.manage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10l2 2M19 5l-2 2M7 17l-2 2"/></svg><em>Operations</em></a>
+      <a href="#users" data-view="users" data-perm="users.manage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0112 0"/><path d="M16 6a3 3 0 010 6M18 20a6 6 0 00-3-5"/></svg><em>Users &amp; roles</em></a>
+      <a href="#audit" data-view="audit" data-perm="audit.view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg><em>Activity log</em></a>
+      <a href="#settings" data-view="settings" data-perm="settings.manage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.1 14.6a1.7 1.7 0 00.4 1.9l.1.1-1.9 1.9-.1-.1a1.7 1.7 0 00-1.9-.4 1.7 1.7 0 00-1 1.6v.2h-2.6v-.2a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.4l-.1.1-1.9-1.9.1-.1a1.7 1.7 0 00.4-1.9 1.7 1.7 0 00-1.6-1h-.2v-2.6h.2a1.7 1.7 0 001.6-1 1.7 1.7 0 00-.4-1.9l-.1-.1 1.9-1.9.1.1a1.7 1.7 0 001.9.4 1.7 1.7 0 001-1.6V4h2.6v.2a1.7 1.7 0 001 1.6 1.7 1.7 0 001.9-.4l.1-.1 1.9 1.9-.1.1a1.7 1.7 0 00-.4 1.9 1.7 1.7 0 001.6 1h.2v2.6h-.2a1.7 1.7 0 00-1.6 1z"/></svg><em>Settings</em></a>
+      <a href="#security" data-view="security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg><em>My security</em></a>
     </nav>
     <div class="admin-side__foot">
       <div class="admin-user">
@@ -57,6 +64,6 @@
   </main>
 </div>
 <div class="admin-toast" id="admin-toast" role="status" aria-live="polite" hidden></div>
-<script src="/admin/assets/app.js?v=17" defer></script>
+<script src="/admin/assets/app.js?v=18" defer></script>
 </body>
 </html>
