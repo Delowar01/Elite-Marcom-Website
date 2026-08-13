@@ -2833,21 +2833,33 @@
 
           '<div class="full"><label for="s-emails">Alert recipients (one email per line)</label>' +
           '<textarea id="s-emails" rows="3">' + esc((s["notify.emails"] || []).join("\n")) + "</textarea>" +
-          help("Who gets a plain-text heads-up when a form is submitted, over the optional legacy SMTP " +
-               "route. Maximum 20 addresses. " +
-               (smtp
-                 ? "SMTP is configured on this server, so these alerts are being sent."
-                 : "<b>No SMTP host is configured on this server (EM_SMTP_HOST), so nothing is sent from " +
-                   "here right now</b> — the customer-facing and internal emails on the Email screen go " +
-                   "through Resend and are unaffected.")) + "</div>" +
+          help("Who gets a heads-up the moment any of the six forms is submitted. The alert carries " +
+               "the reference and the kind of request only — never a name, address or message — so a " +
+               "compromised team mailbox leaks nothing about a customer. Maximum 20 addresses. " +
+               "Delivery uses the same durable queue as every other email, so an alert survives a " +
+               "restart, is retried on failure and appears in the Email screen's delivery log. " +
+               (smtp ? "The legacy SMTP route is also configured and is used if the mail service is not."
+                     : "")) + "</div>" +
 
-          '<div class="full"><label for="s-lang">Published languages</label><select id="s-lang">' +
+          '<div><label for="s-lang">Published languages</label><select id="s-lang">' +
           '<option value="en"' + (langs.indexOf("ar") === -1 ? " selected" : "") + ">English only</option>" +
           '<option value="en,ar"' + (langs.indexOf("ar") !== -1 ? " selected" : "") + ">English + Arabic</option>" +
           "</select>" +
           help("Choosing English + Arabic makes <b>Publish site</b> bake a second, right-to-left edition " +
                "under /ar/ alongside the English pages. Arabic wording is entered per field on Pages &amp; " +
                "SEO; this switch only decides whether that edition is published.") + "</div>" +
+
+          '<div><label for="s-default-lang">Language shown by default</label><select id="s-default-lang"' +
+          (langs.indexOf("ar") === -1 ? " disabled" : "") + ">" +
+          '<option value="en"' + (s["site.defaultLanguage"] === "ar" ? "" : " selected") + ">English</option>" +
+          '<option value="ar"' + (s["site.defaultLanguage"] === "ar" ? " selected" : "") + ">Arabic</option>" +
+          "</select>" +
+          help("Which edition a visitor gets at elitemarcom.com without a language in the address. " +
+               "/ar/ keeps working either way. " +
+               (langs.indexOf("ar") === -1
+                 ? "<b>Publish Arabic first to enable this.</b>"
+                 : "Only a published language can be the default, so this cannot leave the site " +
+                   "serving nothing.")) + "</div>" +
 
           '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save settings</button>' +
           '<span class="admin-inline-note">Saved immediately; language changes reach the public site at the next publish.</span></div>' +
@@ -2888,7 +2900,7 @@
           api("/api/admin/settings", { values: {
             "notify.emails": emails,
             "site.languages": document.getElementById("s-lang").value.split(","),
-            "site.defaultLanguage": "en"
+            "site.defaultLanguage": document.getElementById("s-default-lang").value
           } }).then(function (r2) { r2.ok ? toast("Settings saved.") : apiErr(r2); });
         });
       });

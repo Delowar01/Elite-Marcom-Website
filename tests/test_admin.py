@@ -162,6 +162,25 @@ def test_csrf_required_for_mutations():
     assert client.get("/api/admin/settings").json()["notify.emails"] == ["ops@elitemarcom.com"]
 
 
+def test_default_language_decides_what_an_unprefixed_url_serves():
+    """site.defaultLanguage was writable and read by nothing at all."""
+    from server import adminauth as aa, content
+
+    original = (aa.setting_get("site.languages"), aa.setting_get("site.defaultLanguage"))
+    try:
+        aa.setting_set("site.languages", ["en"])
+        aa.setting_set("site.defaultLanguage", "ar")
+        # Arabic is not published, so it cannot become the default
+        assert content.default_language() == "en"
+        aa.setting_set("site.languages", ["en", "ar"])
+        assert content.default_language() == "ar"
+        aa.setting_set("site.defaultLanguage", "en")
+        assert content.default_language() == "en"
+    finally:
+        aa.setting_set("site.languages", original[0] or ["en"])
+        aa.setting_set("site.defaultLanguage", original[1] or "en")
+
+
 def test_settings_screen_only_offers_settings_that_do_something():
     """A field that stores a value nothing ever reads is worse than no field:
     it reads as configured. notify.whatsapp was one, and is gone."""

@@ -54,9 +54,24 @@ def _send(subject: str, body: str, recipients: list[str]) -> None:
 
 
 def notify_new_request(kind: str, reference: str) -> None:
-    """Queue a background email about a new request. Never raises and never
-    blocks the customer's response — notification failure is invisible to
-    the public site."""
+    """Alert the staff list about a new request.
+
+    Delivery goes through the durable mail outbox when the mail service is
+    configured — the same queue as every other email, so the alert survives a
+    restart, is retried on failure and shows up in the delivery log. The
+    legacy SMTP route is still honoured when EM_SMTP_HOST is set and no mail
+    service is; it remains fire-and-forget, which is why it is the fallback
+    rather than the path. Never raises: a failed alert must never affect the
+    customer's submission."""
+    try:
+        from . import mailer
+
+        if config.RESEND_API_KEY:
+            mailer.enqueue_team_alert(kind, reference)
+            return
+    except Exception as exc:      # queueing must never break a submission
+        print(f"[notify] could not queue alert: {exc.__class__.__name__}", flush=True)
+
     if not SMTP_HOST:
         return
     recipients = _recipients()

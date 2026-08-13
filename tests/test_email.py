@@ -604,3 +604,48 @@ def test_retry_all_failed_requeues_every_failure():
         assert len(entries) == 2 and all(e["status"] == "sent" for e in entries)
     assert len([s for s in SENT if "bulk1@example.com" in s["payload"]["to"]]) == 1
     assert len([s for s in SENT if "bulk2@example.com" in s["payload"]["to"]]) == 1
+
+
+# ---------------- staff alerts ----------------
+
+def test_staff_alerts_go_through_the_durable_outbox():
+    """The alert recipients setting was inert unless legacy SMTP happened to be
+    configured — with the mail service in use it sent nothing at all."""
+    from server import adminauth as aa, notify
+
+    aa.setting_set("notify.emails", ["ops@elitemarcom.com", "sales@elitemarcom.com"])
+    assert mailer.team_recipients() == ["ops@elitemarcom.com", "sales@elitemarcom.com"]
+
+    reference = storage.save_record("contact", {"fullName": "Alerted", "email": "a@example.com"},
+                                    "iphash", 30)
+    notify.notify_new_request("contact", reference)
+    queued = [e for e in mailer.log_entries(80)
+              if e["reference"] == reference and e["kind"] == "team"]
+    assert len(queued) == 1                       # one broadcast, not one per address
+    assert queued[0]["status"] == "pending"       # persisted before anything is sent
+
+    notify.notify_new_request("contact", reference)
+    assert len([e for e in mailer.log_entries(80)
+                if e["reference"] == reference and e["kind"] == "team"]) == 1
+
+    drain()
+    sent = [s for s in SENT if "ops@elitemarcom.com" in s["payload"]["to"]]
+    assert len(sent) == 1
+    payload = sent[0]["payload"]
+    assert payload["to"] == ["ops@elitemarcom.com", "sales@elitemarcom.com"]
+    assert reference in payload["subject"]
+    # the alert names the request and nothing about the person who sent it
+    for personal in ("Alerted", "a@example.com"):
+        assert personal not in payload["html"]
+    aa.setting_set("notify.emails", [])
+
+
+def test_no_alert_recipients_means_no_alert():
+    from server import adminauth as aa, notify
+
+    aa.setting_set("notify.emails", [])
+    reference = storage.save_record("contact", {"fullName": "Quiet", "email": "q@example.com"},
+                                    "iphash", 30)
+    notify.notify_new_request("contact", reference)
+    assert not [e for e in mailer.log_entries(80)
+                if e["reference"] == reference and e["kind"] == "team"]

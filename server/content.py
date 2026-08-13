@@ -477,18 +477,46 @@ def unpublish_all() -> bool:
 _PUBLISHABLE = {cfg["file"] for cfg in PAGES.values()} | {"sitemap.xml"}
 
 
+def default_language() -> str:
+    """Which edition an unprefixed URL serves. Only a published language can
+    be the default, so switching to Arabic before publishing it cannot leave
+    the site serving nothing."""
+    try:
+        from . import adminauth as aa
+
+        lang = str(aa.setting_get("site.defaultLanguage", "en") or "en").lower()
+        published = [str(x).lower() for x in (aa.setting_get("site.languages") or ["en"])]
+    except Exception:
+        return "en"
+    return lang if lang in ("en", "ar") and lang in published else "en"
+
+
 def published_file(path: str) -> Path | None:
     """Called by the static server; must stay cheap and traversal-safe."""
     name = "index.html" if path in ("", ".", "/") else path
     prefix = ""
+    asked_for_edition = False
     if name.startswith("ar/") or name == "ar":
         name = name[3:] or "index.html"
         name = name or "index.html"
         prefix = "ar/"
+        asked_for_edition = True
+    elif default_language() == "ar":
+        # Arabic is the site default: an unprefixed URL serves that edition,
+        # and /ar/… keeps working for anyone who has the link.
+        prefix = "ar/"
     if name not in _PUBLISHABLE:
         return None
     p = PUBLISHED_DIR / prefix / name
-    return p if p.is_file() else None
+    if p.is_file():
+        return p
+    if prefix and not asked_for_edition:
+        # the default edition is not baked yet — serve English rather than
+        # nothing. A URL that asked for /ar/ explicitly still 404s, so an
+        # unpublished edition is never silently served in another language.
+        p = PUBLISHED_DIR / name
+        return p if p.is_file() else None
+    return None
 
 
 # ---------------- rental inventory (runtime copy wins) ----------------

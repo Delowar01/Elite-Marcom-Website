@@ -572,17 +572,18 @@ def _mask(detail: str) -> str:
     return re.sub(r"re_[A-Za-z0-9_]{6,}", "***", detail)[:300]
 
 
-def send_email(*, to: str, subject: str, html: str, reply_to: str = "",
+def send_email(*, to: str | list[str], subject: str, html: str, reply_to: str = "",
                attachments: list[dict] | None = None, general: dict | None = None) -> str:
     """POST one message to Resend. Returns the provider id; raises MailError."""
     if not config.RESEND_API_KEY:
         raise MailError("Email sending is not configured on the server.")
     general = general or general_settings()
-    if not _valid_email(to):
+    recipients = to if isinstance(to, list) else [to]
+    if not recipients or not all(_valid_email(r) for r in recipients):
         raise MailError("The recipient address is not valid.")
     payload = {
         "from": f'{general["fromName"]} <{general["fromEmail"]}>',
-        "to": [to],
+        "to": recipients,
         "subject": subject[:200],
         "html": html,
         "text": to_text(html),
@@ -656,6 +657,65 @@ def enqueue(kind: str, reference: str) -> int:
                 pass  # already queued for this submission
         conn.commit()
     return queued
+
+
+def team_recipients() -> list[str]:
+    """The staff broadcast list from Settings → Alert recipients."""
+    from . import adminauth as aa
+
+    raw = aa.setting_get("notify.emails") or []
+    return [e.strip() for e in raw
+            if isinstance(e, str) and _valid_email(e.strip())][:20]
+
+
+def enqueue_team_alert(kind: str, reference: str) -> int:
+    """Queue the terse staff alert for a new submission.
+
+    Deliberately carries only the reference and the kind of request — never a
+    name, address or message — so a compromised team mailbox leaks nothing
+    personal. It rides the same durable outbox as everything else, so it
+    survives a restart and is retried and visible in the delivery log."""
+    if not team_recipients():
+        return 0
+    form_key = KIND_TO_FORM.get(kind, "")
+    now = int(time.time())
+    with _log_lock:
+        conn = _log_conn()
+        try:
+            conn.execute(
+                "INSERT INTO sends (ts, form, kind, reference, recipient, status,"
+                " next_attempt_at) VALUES (?,?,?,?,?, 'pending', ?)",
+                (now, form_key or "team", "team", reference, "", now))
+        except sqlite3.IntegrityError:
+            return 0        # already queued for this submission
+        conn.commit()
+    return 1
+
+
+def _team_alert_body(form_key: str, reference: str) -> tuple[str, str]:
+    general = general_settings()
+    label = (FORMS.get(form_key) or {}).get("label", "Website request")
+    site = str(general.get("websiteUrl") or "").rstrip("/")
+    link = f"{site}/admin#requests" if site.startswith("https://") else ""
+    subject = f"New {label.lower()} — {reference}"
+    button = ""
+    if link:
+        button = (f'<tr><td style="padding:4px 32px 20px;">'
+                  f'<a href="{html_mod.escape(link, quote=True)}" '
+                  f'style="display:inline-block;background:{BRAND_ORANGE};color:#ffffff;'
+                  f'text-decoration:none;font-weight:700;font-size:15px;padding:13px 26px;'
+                  f'border-radius:999px;">Open the requests inbox</a></td></tr>')
+    inner = (f'<tr><td style="padding:24px 32px 6px;">'
+             f'<h1 style="margin:0 0 14px;font-size:23px;line-height:1.3;color:{BRAND_INK};'
+             f'font-weight:800;">New website request</h1>'
+             f'<p style="margin:0 0 12px;font-size:16px;line-height:1.65;color:#3f4650;">'
+             f'A new {html_mod.escape(label.lower())} came in on the website.</p>'
+             f'<p style="margin:0 0 12px;font-size:16px;line-height:1.65;color:#3f4650;">'
+             f'Reference: <strong>{html_mod.escape(reference)}</strong></p>'
+             f'<p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#6b7280;">'
+             f'The customer details are not in this email — they stay encrypted. '
+             f'Open the request in the admin panel to read it.</p></td></tr>' + button)
+    return subject, _shell(general, subject, "New website request", inner)
 
 
 def _claim_due(limit: int = 10) -> list[dict]:
@@ -747,6 +807,31 @@ def _load_submission(reference: str) -> tuple[dict, tuple[bytes, str] | None]:
 def _send_job(job: dict) -> None:
     form_key, audience, reference = job["form"], job["kind"], job["reference"]
     attempts = int(job["attempts"]) + 1
+
+    if audience == "team":
+        recipients = team_recipients()
+        if not recipients:
+            _finish(job["id"], "failed", detail="no alert recipients configured",
+                    attempts=attempts)
+            return
+        subject, html = _team_alert_body(form_key, reference)
+        general = general_settings()
+        try:
+            provider_id = send_email(to=recipients, subject=subject, html=html, general=general)
+        except MailError as exc:
+            if attempts >= MAX_ATTEMPTS:
+                _finish(job["id"], "failed", subject=subject, recipient=", ".join(recipients),
+                        detail=f"{exc} (gave up after {attempts} attempts)", attempts=attempts)
+            else:
+                delay = BACKOFF_S[min(attempts - 1, len(BACKOFF_S) - 1)]
+                _finish(job["id"], "pending", subject=subject, recipient=", ".join(recipients),
+                        detail=f"{exc} — retrying", attempts=attempts,
+                        next_attempt_at=int(time.time()) + delay)
+            return
+        _finish(job["id"], "sent", subject=subject, recipient=", ".join(recipients),
+                provider_id=provider_id, attempts=attempts)
+        return
+
     if form_key not in FORMS:
         _finish(job["id"], "failed", detail="unknown form", attempts=attempts)
         return

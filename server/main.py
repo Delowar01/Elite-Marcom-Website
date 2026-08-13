@@ -528,6 +528,7 @@ async def rentals_notification(request: Request, body: RentalNotification):
         "sourcePage": check_source_page(body.sourcePage),
     }
     reference = storage.save_record("rental_notification", payload, ip_hash, config.RETENTION_SUBMISSIONS_DAYS)
+    notify.notify_new_request("rental_notification", reference)
     mailer.enqueue("rental_notification", reference)
     return {"reference": reference}
 
@@ -788,6 +789,7 @@ async def giveaways_notification(request: Request, body: GiveawayNotification):
     }
     reference = storage.save_record("giveaway_notification", payload, ip_hash,
                                     config.RETENTION_SUBMISSIONS_DAYS)
+    notify.notify_new_request("giveaway_notification", reference)
     mailer.enqueue("giveaway_notification", reference)
     return {"reference": reference}
 
