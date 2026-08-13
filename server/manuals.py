@@ -73,7 +73,15 @@ def _image_reader(data: bytes) -> tuple[ImageReader | None, int, int]:
         im.load()
         if im.width < 8 or im.height < 8 or im.width > 6000 or im.height > 6000:
             return None, 0, 0
-        if im.mode not in ("RGB", "RGBA"):
+        # Flatten anything still carrying alpha onto the white of the page: a
+        # soft mask in the PDF is what makes an area view come out blank in
+        # some readers, and the manual is printed on white regardless.
+        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+            rgba = im.convert("RGBA")
+            flat = Image.new("RGB", rgba.size, (255, 255, 255))
+            flat.paste(rgba, mask=rgba.split()[-1])
+            im = flat
+        elif im.mode != "RGB":
             im = im.convert("RGB")
         return ImageReader(im), im.width, im.height
     except Exception:

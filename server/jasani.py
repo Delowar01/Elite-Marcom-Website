@@ -1221,8 +1221,19 @@ def _decode_web_image(raw: Any) -> tuple[bytes | None, int, int]:
         if not (8 <= w <= 6000 and 8 <= h <= 6000):
             return None, 0, 0
         im.load()                      # actually decode: catches truncation now
-        if im.mode not in ("RGB", "RGBA"):
-            im = im.convert("RGBA" if "A" in im.getbands() or im.mode == "P" else "RGB")
+        # Branding artwork is nearly always a cut-out on a transparent
+        # background. Alpha survives into the PDF as a soft mask, which several
+        # viewers — including the one most customers open the manual in — draw
+        # as nothing at all, so the area view comes out blank. The manual is a
+        # white page, so flatten onto white here and ship plain RGB: what is
+        # printed is identical and there is no mask left to mishandle.
+        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+            rgba = im.convert("RGBA")
+            flat = _Image.new("RGB", rgba.size, (255, 255, 255))
+            flat.paste(rgba, mask=rgba.split()[-1])
+            im = flat
+        elif im.mode != "RGB":
+            im = im.convert("RGB")
         out = _io.BytesIO()
         im.save(out, format="PNG", optimize=False)
         normalised = out.getvalue()

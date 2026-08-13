@@ -769,14 +769,25 @@ def test_jasani_primary_budget_capped_per_uae_day(tmp_path, monkeypatch):
 
 
 def _png_b64(w=120, h=90, mode="RGB", fmt="PNG"):
+    """A branding area view: opaque marks on a transparent ground, the way
+    supplier artwork actually arrives."""
     import base64
     import io as _io
 
-    from PIL import Image
+    from PIL import Image, ImageDraw
 
-    im = Image.new(mode, (w, h), (200, 120, 40) if mode == "RGB" else 0)
+    transparent = mode in ("RGBA", "LA", "P")
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0) if transparent else (255, 255, 255, 255))
+    ImageDraw.Draw(im).rectangle([w * 0.2, h * 0.2, w * 0.8, h * 0.8], fill=(200, 120, 40, 255))
     buf = _io.BytesIO()
-    im.save(buf, format=fmt)
+    if mode == "P":
+        im.convert("P", palette=Image.ADAPTIVE, colors=32).save(buf, format="PNG", transparency=0)
+    elif mode == "L":
+        im.convert("L").save(buf, format="PNG")
+    elif fmt == "JPEG" or mode == "RGB":
+        im.convert("RGB").save(buf, format=fmt)
+    else:
+        im.save(buf, format=fmt)
     return base64.b64encode(buf.getvalue()).decode()
 
 
@@ -792,13 +803,22 @@ def test_branding_artwork_decodes_from_any_field_and_format():
         assert data and (w, h) == (120, 90), key
         assert data[:8] == b"\x89PNG\r\n\x1a\n"      # normalised for reportlab
 
-    # formats and colour modes the supplier can send, all usable downstream
+    # Formats and colour modes the supplier can send. Every one must come out
+    # as flat RGB: alpha survives into the PDF as a soft mask, and a reader
+    # that ignores it draws the area view as nothing at all — which is what a
+    # customer sees as "the manual has no images".
+    import io as _io
+
+    from PIL import Image
+
     for mode, fmt in (("RGB", "JPEG"), ("RGBA", "PNG"), ("P", "PNG"), ("L", "PNG")):
         data, w, h = jasani._decode_web_image(_png_b64(64, 48, mode, fmt))
         assert data and (w, h) == (64, 48), (mode, fmt)
-        from PIL import Image
-        import io as _io
-        assert Image.open(_io.BytesIO(data)).mode in ("RGB", "RGBA")
+        out = Image.open(_io.BytesIO(data))
+        assert out.mode == "RGB", (mode, fmt, out.mode)
+        assert "transparency" not in out.info, (mode, fmt)
+        # the artwork itself survived the flatten — not a blank white page
+        assert len(set(out.convert("RGB").getdata())) > 1, (mode, fmt)
 
     # a data: URL prefix is accepted
     assert jasani._decode_web_image("data:image/png;base64," + _png_b64())[0]
