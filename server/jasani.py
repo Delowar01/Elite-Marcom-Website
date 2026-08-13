@@ -751,70 +751,111 @@ async def _apply_stock(market: str, products: list[dict], manual: bool = False) 
               f"{json.dumps(stock_records[0], ensure_ascii=False, default=str)[:400]}", flush=True)
 
 
-async def get_catalog(market: str) -> tuple[list[dict], str]:
-    """Return (products, state) — state in {'live','cache','stale'}.
-
-    The supplier's daily primary-call limit rules out frequent upstream
-    refreshes: the product feed refreshes about once per day and the stock
-    feed about twice per day; everything else is served from the last-known-
-    good snapshot. Raises SupplierUnavailable only when nothing is cached."""
-    def read_state():
+async def _refresh_in_background(market: str) -> None:
+    """Bring a due snapshot up to date without anyone waiting for it."""
+    lock = _refresh_lock(market)
+    if lock.locked():
+        return
+    async with lock:
         cached = _read_cache(market)
         now = time.time()
-        return cached, now, (
-            bool(cached) and now - cached.get("fetchedAt", 0) < config.PRODUCT_REFRESH_HOURS * 3600
-        ), (
-            bool(cached) and now - cached.get("stockAt", cached.get("fetchedAt", 0))
-            < config.STOCK_REFRESH_HOURS * 3600
-        )
-
-    cached, now, products_fresh, stock_fresh = read_state()
-    if products_fresh and stock_fresh:
-        return cached["products"], "cache"
-
-    # One upstream refresh per market at a time. Without this a burst of
-    # visitors arriving on a due cache would each start their own sync and
-    # spend the day's calls on identical work.
-    lock = _refresh_lock(market)
-    if lock.locked() and cached:
-        return cached["products"], "stale"
-    async with lock:
-        # whoever waited on the lock takes the snapshot the winner just wrote
-        cached, now, products_fresh, stock_fresh = read_state()
-        if products_fresh and stock_fresh:
-            return cached["products"], "cache"
-
-        if not products_fresh:
-            try:
+        products_due = not cached or now - cached.get("fetchedAt", 0) >= config.PRODUCT_REFRESH_HOURS * 3600
+        stock_due = not cached or now - cached.get("stockAt", cached.get("fetchedAt", 0)) >= config.STOCK_REFRESH_HOURS * 3600
+        try:
+            if products_due:
                 products = await _fetch_products(market)
                 stock_at = 0.0
                 try:
                     await _apply_stock(market, products)
                     stock_at = now
                 except SupplierUnavailable as exc:
-                    # best-effort: the product payload may carry stock already
-                    print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
                     record_attempt(market, "stock", False, str(exc))
                 _write_cache(market, products, fetched_at=now, stock_at=stock_at)
                 if stock_at:
                     record_attempt(market, "products", True, f"{len(products)} products with stock")
-                return products, "live"
-            except SupplierUnavailable as exc:
-                record_attempt(market, "products", False, str(exc))
-                if cached:
-                    return cached["products"], "stale"
-                raise
-        # products are fresh; only the stock snapshot is due — refresh it in place
-        products = cached["products"]
+            elif stock_due and cached:
+                products = cached["products"]
+                await _apply_stock(market, products)
+                _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
+                record_attempt(market, "stock", True, f"{len(products)} products")
+        except SupplierUnavailable as exc:
+            record_attempt(market, "products" if products_due else "stock", False, str(exc))
+        except Exception as exc:  # never let a background task escape
+            print(f"[jasani] {market}: background refresh error {exc.__class__.__name__}", flush=True)
+
+
+def _schedule_refresh(market: str) -> None:
+    """Kick off a refresh and forget about it. Nothing awaits this: a visitor
+    must never wait on the supplier."""
+    if _refresh_lock(market).locked():
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(_refresh_in_background(market))
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+    except RuntimeError:
+        pass  # no running loop (tests, scripts) — the next request will try again
+
+
+_background: set = set()
+
+
+async def get_catalog(market: str) -> tuple[list[dict], str]:
+    """Return (products, state) — state in {'live','cache','stale'}.
+
+    A visitor is never made to wait on Jasani. The cached snapshot is returned
+    straight away and, when it is due, a refresh runs in the background for the
+    next visitor to benefit from. Only a completely cold cache — no snapshot at
+    all — has anything to block on, and even then the page falls back to the
+    local preview catalogue rather than hanging."""
+    cached = _read_cache(market)
+    if cached and cached.get("products"):
+        now = time.time()
+        products_fresh = now - cached.get("fetchedAt", 0) < config.PRODUCT_REFRESH_HOURS * 3600
+        stock_fresh = now - cached.get("stockAt", cached.get("fetchedAt", 0)) < config.STOCK_REFRESH_HOURS * 3600
+        if not (products_fresh and stock_fresh):
+            _schedule_refresh(market)          # refresh for the next visitor
+        return cached["products"], "cache" if (products_fresh and stock_fresh) else "stale"
+
+    # Nothing cached at all: this is the only path that can wait, and it only
+    # happens before the first successful sync of a market.
+    lock = _refresh_lock(market)
+    if lock.locked():
+        raise SupplierUnavailable("first catalogue sync in progress")
+    async with lock:
+        cached = _read_cache(market)
+        if cached and cached.get("products"):
+            return cached["products"], "cache"
+        now = time.time()
+        try:
+            products = await _fetch_products(market)
+        except SupplierUnavailable as exc:
+            record_attempt(market, "products", False, str(exc))
+            raise
+        stock_at = 0.0
         try:
             await _apply_stock(market, products)
-            _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
-            record_attempt(market, "stock", True, f"{len(products)} products")
-            return products, "live"
+            stock_at = now
         except SupplierUnavailable as exc:
-            # keep serving the products snapshot with the previous stock values
+            print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
             record_attempt(market, "stock", False, str(exc))
-            return products, "cache"
+        _write_cache(market, products, fetched_at=now, stock_at=stock_at)
+        if stock_at:
+            record_attempt(market, "products", True, f"{len(products)} products with stock")
+        return products, "live"
+
+
+async def warm_catalogues() -> None:
+    """Startup warm-up so the first visitor of the day meets a filled cache
+    rather than a supplier call. Uses the automatic allowance only."""
+    for market in config.JASANI_HOSTS:
+        cached = _read_cache(market)
+        now = time.time()
+        due = (not cached or not cached.get("products")
+               or now - cached.get("fetchedAt", 0) >= config.PRODUCT_REFRESH_HOURS * 3600
+               or now - cached.get("stockAt", cached.get("fetchedAt", 0)) >= config.STOCK_REFRESH_HOURS * 3600)
+        if due:
+            await _refresh_in_background(market)
 
 
 # ---------------- admin console (Phase 1) ----------------

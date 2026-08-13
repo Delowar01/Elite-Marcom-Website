@@ -820,6 +820,20 @@ async def start_mail_worker():
 
 
 @app.on_event("startup")
+async def warm_supplier_cache():
+    """Fill the catalogue snapshot before visitors arrive, so nobody meets a
+    supplier call on a page load."""
+    from . import jasani
+
+    async def once():
+        try:
+            await jasani.warm_catalogues()
+        except Exception as exc:
+            print(f"[jasani] warm-up skipped: {exc.__class__.__name__}", flush=True)
+    asyncio.get_event_loop().create_task(once())
+
+
+@app.on_event("startup")
 async def start_schedule_task():
     async def loop():
         while True:

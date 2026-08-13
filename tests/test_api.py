@@ -914,6 +914,67 @@ def test_jasani_video_entry_is_never_mistaken_for_a_gallery_image():
     assert jasani._video_entries([plain]) == []
 
 
+def test_catalogue_never_makes_a_visitor_wait_for_the_supplier(tmp_path, monkeypatch):
+    """A due cache must be served immediately and refreshed behind the request.
+    Blocking here is what turns an ordinary page load into a five-second wait
+    on every refresh."""
+    import asyncio
+    import json as _json
+    import time as _time
+
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "tok")
+    stale = _time.time() - 10 * 24 * 3600          # long past due
+    (tmp_path / "giveaways-uae.json").write_text(_json.dumps({
+        "fetchedAt": stale, "stockAt": stale,
+        "products": [{"id": "1", "name": "Cached item", "stock": {"available": 5}}]}))
+
+    calls = []
+
+    async def slow_fetch(market, manual=False):
+        calls.append(market)
+        await asyncio.sleep(3)                     # a supplier that takes its time
+        return [{"id": "1", "name": "Fresh item", "stock": {"available": 9}}]
+
+    monkeypatch.setattr(jasani, "_fetch_products", slow_fetch)
+
+    async def scenario():
+        started = asyncio.get_running_loop().time()
+        products, state = await jasani.get_catalog("uae")
+        elapsed = asyncio.get_running_loop().time() - started
+        return products, state, elapsed
+
+    products, state, elapsed = asyncio.run(scenario())
+    assert products[0]["name"] == "Cached item"    # served from the snapshot
+    assert state == "stale"
+    assert elapsed < 0.5, f"the visitor waited {elapsed:.1f}s on the supplier"
+
+
+def test_cold_cache_is_the_only_thing_that_can_block(tmp_path, monkeypatch):
+    import asyncio
+
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "JASANI_API_TOKEN", "tok")
+
+    async def fetch(market, manual=False):
+        return [{"id": "7", "name": "First sync", "stock": {"available": 2}}]
+
+    async def apply_stock(market, products, manual=False):
+        return None
+
+    monkeypatch.setattr(jasani, "_fetch_products", fetch)
+    monkeypatch.setattr(jasani, "_apply_stock", apply_stock)
+    products, state = asyncio.run(jasani.get_catalog("ksa"))
+    assert state == "live" and products[0]["name"] == "First sync"
+    # and once cached, the next call is served straight from disk
+    products, state = asyncio.run(jasani.get_catalog("ksa"))
+    assert state == "cache"
+
+
 def test_jasani_reserves_the_last_call_for_a_manual_sync(tmp_path, monkeypatch):
     """Background refreshes stop one short of the limit so a person can always
     force a sync; only an explicitly manual call may use the reserve."""
