@@ -39,6 +39,51 @@
   function apiErr(r) {
     toast((r.data && r.data.detail) || "That did not work — try again.", true);
   }
+  /* Shared Media Library picker. The visual editor has its own inline copy
+     bound to its overlay; this one builds its overlay on demand so any screen
+     can offer "choose an existing image" without duplicating the markup. */
+  function mediaPicker(onPick) {
+    var overlay = document.getElementById("shared-picker");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "picker-overlay";
+      overlay.id = "shared-picker";
+      overlay.innerHTML = '<div class="picker-box"><div class="picker-head">' +
+        "<h2>Choose an image</h2>" +
+        '<button class="btn btn--ghost btn--small" type="button" data-close>Close</button></div>' +
+        '<div class="picker-grid"></div></div>';
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", function (e) {
+        if (e.target === overlay || e.target.hasAttribute("data-close")) overlay.hidden = true;
+      });
+    }
+    var grid = overlay.querySelector(".picker-grid");
+    grid.innerHTML = '<p class="admin-inline-note">Loading…</p>';
+    overlay.hidden = false;
+    api("/api/admin/media").then(function (r) {
+      if (!r.ok) { overlay.hidden = true; return apiErr(r); }
+      var lib = (r.data.library || []).map(function (m) {
+        return { url: "/media/" + m.file, label: m.name || m.file };
+      });
+      var assets = (r.data.siteAssets || []).filter(function (a) {
+        return a.ext !== "glb" && a.ext !== "svg";
+      }).map(function (a) { return { url: "/" + a.path, label: a.path.replace("assets/", "") }; });
+      var items = lib.concat(assets);
+      grid.innerHTML = items.length
+        ? items.map(function (it) {
+            return '<button type="button" class="picker-item" data-url="' + esc(it.url) + '">' +
+              '<img src="' + esc(it.url) + '" alt="" loading="lazy"><span>' + esc(it.label) + "</span></button>";
+          }).join("")
+        : '<p class="admin-inline-note">Nothing in the library yet — upload an image above or on the Media screen.</p>';
+      grid.querySelectorAll(".picker-item").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          overlay.hidden = true;
+          onPick(btn.getAttribute("data-url"));
+        });
+      });
+    });
+  }
+
   function apiUpload(path, formData) {
     return fetch(path, {
       method: "POST", headers: { "X-CSRF": me ? me.csrf : "" }, body: formData
@@ -881,7 +926,17 @@
           '<div><label for="rf-code">Code</label><input id="rf-code" maxlength="40"></div>' +
           '<div><label for="rf-name">Name</label><input id="rf-name" required maxlength="160"></div>' +
           '<div><label for="rf-category">Category</label><input id="rf-category" required maxlength="80"></div>' +
-          '<div class="full"><label for="rf-images">Images — one path per line (/assets/… or /media/…, first is the card image)</label><textarea id="rf-images" rows="3"></textarea></div>' +
+          '<div class="full"><label>Images</label>' +
+          '<div class="up-drop" id="rf-drop" tabindex="0" role="button">' +
+          '<b>Drop images here, or click to choose from your computer</b>' +
+          '<span class="field-help">JPG, PNG or WebP · up to 8 MB each · converted and stored in the Media Library. ' +
+          'The first image is the one shown on the rental card.</span>' +
+          '<input type="file" id="rf-file" accept="image/*" multiple hidden></div>' +
+          '<div class="admin-actions" style="margin-top:10px">' +
+          '<button class="btn btn--ghost btn--small" type="button" id="rf-pick">Choose from Media Library</button>' +
+          '<span class="admin-inline-note" id="rf-upstatus"></span></div>' +
+          '<div class="up-bar" id="rf-bar" hidden><span style="width:0%"></span></div>' +
+          '<div class="gal-grid" id="rf-gallery"></div></div>' +
           '<div class="full"><label for="rf-desc">Description</label><textarea id="rf-desc" rows="3" maxlength="2000"></textarea></div>' +
           '<div class="full"><label for="rf-specs">Specifications — one per line</label><textarea id="rf-specs" rows="4"></textarea></div>' +
           '<div><label for="rf-tags">Search tags (comma separated)</label><input id="rf-tags" maxlength="300"></div>' +
@@ -894,6 +949,94 @@
 
         var byId = {};
         (d.products || []).forEach(function (p) { byId[p.id] = p; });
+
+        /* ---- image gallery: upload, pick, reorder, set primary, remove ---- */
+        var galleryImages = [];
+        function renderGallery() {
+          var grid = document.getElementById("rf-gallery");
+          if (!grid) return;
+          grid.innerHTML = galleryImages.length
+            ? galleryImages.map(function (src, i) {
+                return '<figure class="gal-item' + (i === 0 ? " is-primary" : "") + '">' +
+                  (i === 0 ? '<span class="gal-tag">Card image</span>' : "") +
+                  '<img src="' + esc(src) + '" alt="" loading="lazy">' +
+                  '<figcaption class="gal-btns">' +
+                  '<button type="button" data-gal-left="' + i + '" title="Move earlier"' +
+                  (i === 0 ? " disabled" : "") + ">←</button>" +
+                  '<button type="button" data-gal-right="' + i + '" title="Move later"' +
+                  (i === galleryImages.length - 1 ? " disabled" : "") + ">→</button>" +
+                  '<button type="button" data-gal-primary="' + i + '" title="Use as the card image"' +
+                  (i === 0 ? " disabled" : "") + ">★</button>" +
+                  '<button type="button" data-gal-del="' + i + '" title="Remove">✕</button>' +
+                  "</figcaption></figure>";
+              }).join("")
+            : '<p class="admin-inline-note">No images yet — upload one or choose from the Media Library.</p>';
+          grid.querySelectorAll("[data-gal-left]").forEach(function (b) {
+            b.addEventListener("click", function () {
+              var i = +b.getAttribute("data-gal-left");
+              galleryImages.splice(i - 1, 0, galleryImages.splice(i, 1)[0]);
+              renderGallery();
+            });
+          });
+          grid.querySelectorAll("[data-gal-right]").forEach(function (b) {
+            b.addEventListener("click", function () {
+              var i = +b.getAttribute("data-gal-right");
+              galleryImages.splice(i + 1, 0, galleryImages.splice(i, 1)[0]);
+              renderGallery();
+            });
+          });
+          grid.querySelectorAll("[data-gal-primary]").forEach(function (b) {
+            b.addEventListener("click", function () {
+              var i = +b.getAttribute("data-gal-primary");
+              galleryImages.unshift(galleryImages.splice(i, 1)[0]);
+              renderGallery();
+            });
+          });
+          grid.querySelectorAll("[data-gal-del]").forEach(function (b) {
+            b.addEventListener("click", function () {
+              galleryImages.splice(+b.getAttribute("data-gal-del"), 1);
+              renderGallery();
+            });
+          });
+        }
+        function addImage(src) {
+          if (src && galleryImages.indexOf(src) === -1 && galleryImages.length < 10) {
+            galleryImages.push(src);
+            renderGallery();
+          }
+        }
+        function uploadFiles(files) {
+          var list = Array.prototype.slice.call(files || []).filter(function (f) {
+            return /^image\//.test(f.type);
+          });
+          if (!list.length) return;
+          var bar = document.getElementById("rf-bar");
+          var fill = bar.querySelector("span");
+          var status = document.getElementById("rf-upstatus");
+          bar.hidden = false;
+          var done = 0;
+          function step() {
+            if (!list.length) {
+              bar.hidden = true;
+              fill.style.width = "0%";
+              status.textContent = done ? done + " image(s) added." : "";
+              return;
+            }
+            var file = list.shift();
+            status.textContent = "Uploading " + file.name + "…";
+            var fd = new FormData();
+            fd.append("file", file);
+            fd.append("alt", file.name.replace(/\.[^.]+$/, "").slice(0, 120));
+            apiUpload("/api/admin/media/upload", fd).then(function (r2) {
+              if (r2.ok) { addImage("/media/" + r2.data.item.file); done++; }
+              else { status.textContent = (r2.data && r2.data.detail) || "That file was rejected."; }
+              fill.style.width = Math.round((done / (done + list.length)) * 100) + "%";
+              step();
+            });
+          }
+          step();
+        }
+
         function openForm(p) {
           document.getElementById("rent-form-panel").hidden = false;
           document.getElementById("rent-form-title").textContent = p ? "Edit — " + p.name : "Add new item";
@@ -902,7 +1045,9 @@
           document.getElementById("rf-code").value = p ? p.code || "" : "";
           document.getElementById("rf-name").value = p ? p.name : "";
           document.getElementById("rf-category").value = p ? p.category : "";
-          document.getElementById("rf-images").value = p ? (p.images || []).join("\n") : "";
+          galleryImages = p ? (p.images || []).slice() : [];
+          if (p && p.image && galleryImages.indexOf(p.image) === -1) galleryImages.unshift(p.image);
+          renderGallery();
           document.getElementById("rf-desc").value = p ? p.description || "" : "";
           document.getElementById("rf-specs").value = p ? (p.specs || []).join("\n") : "";
           document.getElementById("rf-tags").value = p ? (p.tags || []).join(", ") : "";
@@ -911,6 +1056,26 @@
           document.getElementById("rf-uae").value = p ? p.stockByMarket.uae : 0;
           document.getElementById("rent-form-panel").scrollIntoView({ behavior: "smooth", block: "start" });
         }
+        (function wireGallery() {
+          var drop = document.getElementById("rf-drop");
+          var input = document.getElementById("rf-file");
+          if (!drop || !input) return;
+          drop.addEventListener("click", function () { input.click(); });
+          drop.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); }
+          });
+          input.addEventListener("change", function () { uploadFiles(input.files); input.value = ""; });
+          ["dragenter", "dragover"].forEach(function (ev) {
+            drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("is-over"); });
+          });
+          ["dragleave", "drop"].forEach(function (ev) {
+            drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("is-over"); });
+          });
+          drop.addEventListener("drop", function (e) { uploadFiles(e.dataTransfer.files); });
+          document.getElementById("rf-pick").addEventListener("click", function () {
+            mediaPicker(function (url) { addImage(url); });
+          });
+        }());
         document.getElementById("rent-new").addEventListener("click", function () { openForm(null); });
         document.getElementById("rent-cancel").addEventListener("click", function () {
           document.getElementById("rent-form-panel").hidden = true;
@@ -934,8 +1099,7 @@
         });
         document.getElementById("rent-form").addEventListener("submit", function (e) {
           e.preventDefault();
-          var images = document.getElementById("rf-images").value.split("\n")
-            .map(function (x) { return x.trim(); }).filter(Boolean);
+          var images = galleryImages.slice(0, 10);
           api("/api/admin/rentals/save", { product: {
             id: document.getElementById("rf-id").value.trim(),
             code: document.getElementById("rf-code").value.trim(),
