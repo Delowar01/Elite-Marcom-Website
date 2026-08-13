@@ -39,7 +39,10 @@ JASANI_UTC_OFFSET = {"ksa": 3, "uae": 4}
 # automatic sync times in each market's own local time: one products refresh at
 # midnight, then stock through the trading day. Four calls, leaving the fifth.
 JASANI_SCHEDULE = ((0, "products"), (8, "stock"), (13, "stock"), (18, "stock"))
-SUPPLIER_TIMEOUT_S = 20.0
+# The UAE products feed is ~4 MB and was measured from the production VPS at
+# 24.2s to the last byte, 24.17s of it before the first — a 20s read timeout
+# aborts a response that was on its way.
+SUPPLIER_TIMEOUT_S = float(os.environ.get("EM_SUPPLIER_TIMEOUT_S", "60"))
 SUPPLIER_MAX_BYTES = 5 * 1024 * 1024
 SUPPLIER_MAX_RECORDS = 5000
 # Jasani documents at most 5 primary GET calls (products/price/stock) per day,

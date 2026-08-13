@@ -87,6 +87,13 @@ private persistent volume. Set `EM_ENV=production` — startup aborts unless all
 required configuration is present. Back up `runtime/` (encrypted data) and the
 encryption keys separately.
 
+Supplier calls are slow and large: the UAE products feed is about 4 MB and was
+measured from the production VPS at 24.2 seconds, almost all of it before the
+first byte. `EM_SUPPLIER_TIMEOUT_S` (default 60) is the read timeout for those
+calls — set it well above the slowest feed, because a timeout aborts a reply
+that was on its way. Nothing is charged against the daily allowance for it: a
+call that never got an HTTP response is refunded.
+
 ## Tests
 
 ```bash

@@ -31,6 +31,9 @@ documentation). Non-negotiable rules from it:
   file whether it succeeded or failed — a failing hour must not retry all day.
   `get_catalog` never triggers a refresh; it serves the snapshot so a page load
   never waits on the supplier.
+- `EM_SUPPLIER_TIMEOUT_S` (default 60) is the read timeout for supplier calls.
+  The UAE products feed is ~4 MB and measured 24.2s from the production VPS, so
+  a 20s timeout aborted valid replies. A timed-out call is refunded, not spent.
 - Upstream refresh cadence: products ~daily, stock ~twice daily
   (`EM_PRODUCT_REFRESH_HOURS` / `EM_STOCK_REFRESH_HOURS`). The website reads the
   cached snapshot; serve last-known-good on any supplier failure.
