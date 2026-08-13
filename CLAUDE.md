@@ -39,7 +39,24 @@ documentation). Non-negotiable rules from it:
 
 ## Site conventions
 
-- Bump the `?v=` query on any changed CSS/JS asset in every referencing HTML page.
+- **Cache busting is mandatory, not optional.** Production serves CSS/JS by
+  path (no hashed filenames), so a changed asset only reaches returning
+  visitors when its `?v=` changes. Every time you edit a `.css` or `.js` file,
+  before the task is done:
+  1. Bump `?v=` for that asset — and only that asset; assets you did not
+     change keep their version.
+  2. Update **every** page that references it — `public/*.html` *and*
+     `server/adminui/*.html` (`app.html`, `login.html`). Shared assets like
+     `styles.css`, `site.js`, `theme-init.js` and `insights.js` appear on a
+     dozen pages; missing one leaves that page on the stale copy.
+  3. Grep the repo for the *old* value and confirm nothing still references it.
+  4. Run `python -m pytest tests/test_asset_versions.py` — it fails if one
+     asset carries two different versions, if a local CSS/JS reference has no
+     `?v=` at all, or if a referenced file is missing from disk.
+  `runtime/published/site/` needs no hand-editing: it is baked from
+  `public/` by **Publish site**, so bumping the sources and publishing carries
+  the new versions through. `/theme-custom.css` is server-rendered with
+  `Cache-Control: no-cache` and is exempt.
 - Corporate Gifts UI: catalog + product page share variant grouping via
   `EM.giftKey` (`public/js/site.js`); request lists live in localStorage
   (`em-giveaway-request`, per market, max 50 items).
