@@ -94,6 +94,12 @@ calls — set it well above the slowest feed, because a timeout aborts a reply
 that was on its way. Nothing is charged against the daily allowance for it: a
 call that never got an HTTP response is refunded.
 
+`EM_SUPPLIER_MAX_BYTES` (default 8388608, 8 MB) is the hard ceiling on an
+upstream response. The UAE products feed is about 4.17 MB today, so the cap
+needs headroom for the catalogue to grow: a response over the limit is rejected
+outright, which looks like a supplier failure rather than a size problem. Keep
+it strict — it is what stops a hostile or broken upstream streaming without end.
+
 ## Tests
 
 ```bash

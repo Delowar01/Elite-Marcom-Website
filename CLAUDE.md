@@ -34,6 +34,10 @@ documentation). Non-negotiable rules from it:
 - `EM_SUPPLIER_TIMEOUT_S` (default 60) is the read timeout for supplier calls.
   The UAE products feed is ~4 MB and measured 24.2s from the production VPS, so
   a 20s timeout aborted valid replies. A timed-out call is refunded, not spent.
+- `EM_SUPPLIER_MAX_BYTES` (default 8388608 = 8 MB) caps an upstream response.
+  The UAE products feed is ~4.17 MB, so keep headroom above the live size — an
+  over-limit response is rejected and reads as a supplier failure. Never remove
+  the cap: it is what stops an endless upstream stream.
 - Upstream refresh cadence: products ~daily, stock ~twice daily
   (`EM_PRODUCT_REFRESH_HOURS` / `EM_STOCK_REFRESH_HOURS`). The website reads the
   cached snapshot; serve last-known-good on any supplier failure.

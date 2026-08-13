@@ -43,7 +43,10 @@ JASANI_SCHEDULE = ((0, "products"), (8, "stock"), (13, "stock"), (18, "stock"))
 # 24.2s to the last byte, 24.17s of it before the first — a 20s read timeout
 # aborts a response that was on its way.
 SUPPLIER_TIMEOUT_S = float(os.environ.get("EM_SUPPLIER_TIMEOUT_S", "60"))
-SUPPLIER_MAX_BYTES = 5 * 1024 * 1024
+# Hard ceiling on an upstream response. The UAE products feed is ~4.17 MB, so
+# 5 MB left almost no room for the catalogue to grow before a valid reply was
+# rejected as too large; 8 MB keeps the protection strict with headroom.
+SUPPLIER_MAX_BYTES = int(os.environ.get("EM_SUPPLIER_MAX_BYTES", str(8 * 1024 * 1024)))
 SUPPLIER_MAX_RECORDS = 5000
 # Jasani documents at most 5 primary GET calls (products/price/stock) per day,
 # measured in UAE time; branding endpoints are documented outside that limit.
