@@ -788,11 +788,21 @@
             (m.cached
               ? '<div class="stat-row stat-row--tight">' +
                 '<div class="stat-card"><b>' + esc(m.products) + "</b><span>Products cached</span></div>" +
-                '<div class="stat-card"><b>' + esc(m.inStock) + "</b><span>In stock</span></div></div>" +
+                '<div class="stat-card"><b>' + esc(m.inStock) + "</b><span>In stock</span></div>" +
+                '<div class="stat-card"><b>' + esc(m.withWholesale) + "</b><span>With wholesale price</span></div>" +
+                '<div class="stat-card"><b>' + esc(m.withRetail) + "</b><span>With retail price</span></div></div>" +
                 '<p class="admin-inline-note">Products: ' + esc(when(m.fetchedAt)) +
                 (m.productsFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') +
+                "<br>Prices: " + (m.priceAt ? esc(when(m.priceAt)) +
+                    (m.pricesFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') +
+                    (m.currencies && m.currencies.length ? " · " + esc(m.currencies.join(", ")) : "")
+                  : '<span class="badge-bad">never synced</span>') +
                 "<br>Stock: " + esc(when(m.stockAt)) +
-                (m.stockFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') + "</p>"
+                (m.stockFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') + "</p>" +
+                (m.withWholesale === 0 && m.products
+                  ? '<p class="ins-alert ins-alert--warn">No product carries a price. Prices come from ' +
+                    "the supplier's own Price API — a products sync does not fetch them. Run " +
+                    "<b>Prices</b> below, or wait for the scheduled price call.</p>" : "")
               : '<p class="admin-inline-note">Nothing cached yet for this market.</p>') +
             (function () {
               if (!a) return "";
@@ -804,8 +814,10 @@
             }()) +
             (can("jasani.refresh")
               ? '<div class="admin-actions">' +
-                '<button class="btn btn--ghost btn--small" data-refresh="stock" data-market="' + key + '">Refresh stock (1 call)</button>' +
-                '<button class="btn btn--ghost btn--small" data-refresh="products" data-market="' + key + '">Full refresh (2 calls)</button></div>'
+                '<button class="btn btn--primary btn--small" data-refresh="full" data-market="' + key + '">Full sync (3 calls)</button>' +
+                '<button class="btn btn--ghost btn--small" data-refresh="products" data-market="' + key + '">Products (1 call)</button>' +
+                '<button class="btn btn--ghost btn--small" data-refresh="prices" data-market="' + key + '">Prices (1 call)</button>' +
+                '<button class="btn btn--ghost btn--small" data-refresh="stock" data-market="' + key + '">Stock (1 call)</button></div>'
               : "") + "</div>";
         }
 
@@ -958,7 +970,7 @@
           btn.addEventListener("click", function () {
             var what = btn.getAttribute("data-refresh"), market = btn.getAttribute("data-market");
             var b = budgets[market] || {};
-            var cost = what === "products" ? 2 : 1;
+            var cost = (d.refreshCost || {})[what] || 1;
             var reserve = b.autoRemaining < cost && b.remaining >= cost;
             if (!confirm("This uses " + cost + " of " + market.toUpperCase() + "'s " + b.limit +
                          " daily supplier calls (" + b.remaining + " remaining)." +
@@ -968,7 +980,10 @@
             api("/api/admin/jasani/refresh", { market: market, what: what }).then(function (r2) {
               btn.disabled = false;
               if (!r2.ok) return apiErr(r2);
-              toast("Refreshed " + what + " for " + market.toUpperCase() + ".");
+              toast(what === "full"
+                ? "Full sync done for " + market.toUpperCase() + " — " +
+                  jzNum(r2.data.priced || 0) + " products priced."
+                : "Refreshed " + what + " for " + market.toUpperCase() + ".");
               views.jasani();
             });
           });
@@ -3581,11 +3596,12 @@
           // stock exist only in the supplier's payload, so they arrive with the
           // next sync rather than being invented here
           (d.pricesPending
-            ? '<div class="jz-pending"><b>Prices and booked stock arrive with the next sync.</b> ' +
-              "The cached snapshot was taken before this page existed, so it carries no " +
-              "wholesale, retail or booked figures. The scheduled products call fills the " +
-              "prices and the next stock call fills booked — or run a products sync now from " +
-              "the Jasani console.</div>"
+            ? '<div class="jz-pending"><b>No prices in this snapshot yet.</b> ' +
+              "Wholesale and retail come from the supplier's own Price API, which is a call " +
+              "of its own — a products sync does not fetch them. The scheduled price call " +
+              "fills them, or press <b>Prices</b> on the " +
+              '<a href="#jasani">Jasani console</a> to do it now. Booked stock arrives with ' +
+              "the next stock call.</div>"
             : "") +
           '<div class="table-scroll"><table class="jz-table"><thead><tr>' +
             "<th>SN</th><th></th><th>SKU</th><th>Name</th><th>Brand</th><th>Colour</th>" +

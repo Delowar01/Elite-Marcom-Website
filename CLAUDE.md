@@ -26,11 +26,29 @@ documentation). Non-negotiable rules from it:
   One in-flight sync per market (`_refresh_lock`), so a double-click or a burst
   of visitors cannot spend two calls on the same work.
 - The four automatic calls are **scheduled, not demand-driven**
-  (`JASANI_SCHEDULE`): products at 00:00, stock at 08:00, 13:00 and 18:00 local.
-  Each slot is exactly one call and runs once per local day, marked in the budget
-  file whether it succeeded or failed — a failing hour must not retry all day.
+  (`JASANI_SCHEDULE`): products at 00:00, **price at 01:00**, stock at 08:00 and
+  18:00 local. Each slot is exactly one call and runs once per local day, marked
+  in the budget file whether it succeeded or failed — a failing hour must not
+  retry all day. Four slots is exactly `SUPPLIER_AUTO_BUDGET`: adding one
+  without raising that spends the reserved manual call.
   `get_catalog` never triggers a refresh; it serves the snapshot so a page load
   never waits on the supplier.
+- **Prices are their own primary call.** `list_price` and `retail_price` are
+  *not* in the Product API (reference §12 lists no price field); they come from
+  the **Price API**, `GET https://{host}/products/price/{token}` (§22), with
+  `id`, `default_code`, `currency`, `list_price`, `retail_price`. Join on **`id`
+  only** — the two markets share product codes but never share ids, so matching
+  on `default_code` is how a KSA price lands on a UAE product; the code is kept
+  for mismatch reporting and nothing else. Never try to read prices off the
+  products feed again: that is how 1,778 KSA and 2,573 UAE products sat at zero
+  prices through any number of syncs.
+- Manual sync targets (`force_refresh`, `REFRESH_COST`): `products`, `prices`,
+  `stock` — one call each — and `full` = all three. A multi-call target checks
+  `_budget_left` **before the first request**, so a full sync never spends one
+  call and then dies half-applied. A products refresh carries forward cached
+  stock, and a failed price leg leaves the last-known-good prices in place —
+  `_lift_internal` merges each write into the stored map rather than replacing
+  it.
 - `EM_SUPPLIER_TIMEOUT_S` (default 60) is the read timeout for supplier calls.
   The UAE products feed is ~4 MB and measured 24.2s from the production VPS, so
   a 20s timeout aborted valid replies. A timed-out call is refunded, not spent.

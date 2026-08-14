@@ -742,6 +742,41 @@ def test_jasani_refresh_stock_success_and_audit(tmp_path, monkeypatch):
     assert "jasani.refreshed" in actions
 
 
+def test_jasani_refresh_targets_and_the_reserved_call(tmp_path, monkeypatch):
+    """Four buttons, four targets. The reserve is owner/admin only — a role
+    with jasani.refresh but no seniority works against the automatic four."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_jasani_cache(tmp_path)
+    calls = []
+
+    async def fake_refresh(market, what, manual=True):
+        calls.append((market, what, manual))
+        return {"refreshed": what, "products": 2, "priced": 2}
+
+    monkeypatch.setattr(jasani, "force_refresh", fake_refresh)
+    me = client.get("/api/admin/me").json()
+    for what in ("products", "prices", "stock", "full"):
+        res = client.post("/api/admin/jasani/refresh", json={"market": "ksa", "what": what},
+                          headers={"X-CSRF": me["csrf"]})
+        assert res.status_code == 200, (what, res.text)
+    assert [c[1] for c in calls] == ["products", "prices", "stock", "full"]
+    assert all(c[2] is True for c in calls)        # the owner may use the reserve
+
+    bad = client.post("/api/admin/jasani/refresh", json={"market": "ksa", "what": "branding"},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+
+    # a catalogue role has jasani.refresh but is not owner/admin: manual=False,
+    # so it can never reach the fifth call
+    cat, cat_me = _catalog_client()
+    calls.clear()
+    ok = cat.post("/api/admin/jasani/refresh", json={"market": "ksa", "what": "prices"},
+                  headers={"X-CSRF": cat_me["csrf"]})
+    assert ok.status_code == 200 and calls == [("ksa", "prices", False)]
+
+
 def test_jasani_refresh_blocked_when_budget_exhausted(tmp_path, monkeypatch):
     from server import config as cfg
     from server import jasani

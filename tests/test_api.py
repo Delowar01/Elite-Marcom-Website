@@ -1197,8 +1197,9 @@ def test_market_day_follows_each_markets_own_clock(monkeypatch):
 
 
 def test_scheduled_slots_run_once_each_and_cost_one_call(tmp_path, monkeypatch):
-    """Four automatic calls a day per market: products at midnight, then stock
-    at 08:00, 13:00 and 18:00 local. Each slot is one call and runs once."""
+    """Four automatic calls a day per market: products at midnight, prices at
+    01:00, then stock at 08:00 and 18:00 local. Each slot is one call and runs
+    once, and four slots is exactly the automatic allowance."""
     import asyncio
     import time as _time
 
@@ -1222,8 +1223,22 @@ def test_scheduled_slots_run_once_each_and_cost_one_call(tmp_path, monkeypatch):
         for p in products:
             p["stock"] = {"available": 9}
 
+    async def fake_prices(market, products, manual=False):
+        calls.append(("price", market))
+        jasani._budget_ok(market, manual)
+        for p in products:
+            p.setdefault(jasani._INT_KEY, {}).update({"wholesale": 4.0, "currency": "SAR"})
+        return {"rows": len(products), "matched": len(products), "unmatched": 0,
+                "codeMismatch": 0, "currencies": ["SAR"]}
+
     monkeypatch.setattr(jasani, "_fetch_products", fake_products)
     monkeypatch.setattr(jasani, "_apply_stock", fake_stock)
+    monkeypatch.setattr(jasani, "_apply_prices", fake_prices)
+
+    # the schedule may never outgrow the automatic allowance: the fifth call is
+    # the one a person needs when a catalogue is visibly wrong
+    assert len(jasani.config.JASANI_SCHEDULE) <= jasani.config.SUPPLIER_AUTO_BUDGET
+    assert [w for _, w in jasani.config.JASANI_SCHEDULE].count("price") == 1
 
     # 09:00 in Riyadh: midnight products and the 08:00 stock slot are both due
     base = _time.mktime(_time.strptime("2026-05-10 06:00:00", "%Y-%m-%d %H:%M:%S")) - _time.timezone
@@ -1233,15 +1248,17 @@ def test_scheduled_slots_run_once_each_and_cost_one_call(tmp_path, monkeypatch):
     ran = asyncio.run(jasani.run_due_slots())
     assert ran == ["ksa:00:products"]              # one slot per tick, in order
     ran += asyncio.run(jasani.run_due_slots())
+    assert ran[-1] == "ksa:01:price"
+    ran += asyncio.run(jasani.run_due_slots())
     assert ran[-1] == "ksa:08:stock"
-    assert asyncio.run(jasani.run_due_slots()) == []   # 13:00 has not arrived
+    assert asyncio.run(jasani.run_due_slots()) == []   # 18:00 has not arrived
 
-    assert calls == [("products", "ksa"), ("stock", "ksa")]
+    assert calls == [("products", "ksa"), ("price", "ksa"), ("stock", "ksa")]
     used = jasani.budget_status("ksa")["used"]
-    assert used == 2, f"two slots must cost two calls, spent {used}"
+    assert used == 3, f"three slots must cost three calls, spent {used}"
     # UAE has no token, so nothing was scheduled for it at all
     assert not [c for c in calls if c[1] == "uae"]
-    assert jasani.budget_status("ksa")["nextSlot"]["hour"] == 13
+    assert jasani.budget_status("ksa")["nextSlot"]["hour"] == 18
 
 
 def test_jasani_reserves_the_last_call_for_a_manual_sync(tmp_path, monkeypatch):
@@ -1385,3 +1402,275 @@ def test_token_never_in_public_payloads(tmp_path):
         res = client.get(path)
         assert "JASANI" not in res.text or path == "/js/giveaways.js" and "JASANI" not in res.text
         assert "token" not in res.headers.get("set-cookie", "")
+
+
+# ---------------- Price API (docs section 22) ----------------
+# Prices are NOT in the Product API. They have their own primary endpoint, and
+# forgetting that is exactly how a catalogue of 1,778 products ends up with
+# zero prices no matter how often it is synced.
+
+def _price_stub(monkeypatch, jasani, *, products=None, prices=None, stock=None,
+                fail=()):
+    """Fake the one transport function, so every URL the client builds is
+    observable and the daily budget is still spent the way it really is."""
+    seen = []
+
+    async def fake_fetch(url, expected_host, market, primary=True, manual=False):
+        seen.append(url)
+        kind = ("products" if "/products/all/" in url
+                else "price" if "/products/price/" in url
+                else "stock")
+        if primary and not jasani._budget_ok(market, manual):
+            raise jasani.SupplierUnavailable("daily supplier budget exhausted")
+        if kind in fail:
+            raise jasani.SupplierUnavailable(f"upstream 500 ({kind})")
+        payload = {"products": products, "price": prices, "stock": stock}[kind]
+        return json.dumps(payload.get(market, [])).encode(), "application/json"
+
+    monkeypatch.setattr(jasani, "_fetch", fake_fetch)
+    return seen
+
+
+_PRODUCTS = {
+    "ksa": [{"id": 2001, "default_code": "ITGL 1291", "name": "Aluminium Flask",
+             "brand_id": [3, "Santhome"], "website_sequence": 4},
+            {"id": 2002, "default_code": "CTEN 2240", "name": "Cotton Tote",
+             "brand_id": [4, "EcoLine"], "website_sequence": 9}],
+    "uae": [{"id": 3001, "default_code": "ITGL 1291", "name": "Aluminium Flask",
+             "brand_id": [3, "Santhome"], "website_sequence": 4}],
+}
+_PRICES = {
+    "ksa": [{"id": 2001, "default_code": "ITGL 1291", "currency": "SAR",
+             "list_price": 38.5, "retail_price": 62.0},
+            {"id": 2002, "default_code": "CTEN 2240", "currency": "SAR",
+             "list_price": 11.25, "retail_price": 19.0}],
+    "uae": [{"id": 3001, "default_code": "ITGL 1291", "currency": "AED",
+             "list_price": 41.0, "retail_price": 66.0}],
+}
+_STOCK = {
+    "ksa": [{"id": 2001, "net_available_qty": 1840, "blocked_qty": 120, "incoming_qty": 0},
+            {"id": 2002, "net_available_qty": 0, "blocked_qty": 90, "incoming_qty": 1500}],
+    "uae": [{"id": 3001, "net_available_qty": 12, "blocked_qty": 3}],
+}
+
+
+def _price_env(tmp_path, monkeypatch, jasani, **kw):
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "tok-ksa", "uae": "tok-uae"})
+    monkeypatch.setattr(jasani.config, "SUPPLIER_DAILY_BUDGET", 5)
+    monkeypatch.setattr(jasani.config, "SUPPLIER_AUTO_BUDGET", 4)
+    return _price_stub(monkeypatch, jasani, products=_PRODUCTS, prices=_PRICES,
+                       stock=_STOCK, **kw)
+
+
+def test_price_api_url_is_the_documented_one_per_market(tmp_path, monkeypatch):
+    """/products/price/{token} on that market's own host — never the other's."""
+    import asyncio
+
+    from server import jasani
+
+    seen = _price_env(tmp_path, monkeypatch, jasani)
+    asyncio.run(jasani.force_refresh("ksa", "full"))
+    asyncio.run(jasani.force_refresh("uae", "full"))
+    price_urls = [u for u in seen if "/products/price/" in u]
+    assert price_urls == ["https://www.giftsksa.com/products/price/tok-ksa",
+                          "https://www.jasani.ae/products/price/tok-uae"]
+
+
+def test_price_records_parse_into_wholesale_retail_and_currency(tmp_path, monkeypatch):
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    rec = jasani.normalize_price(
+        {"id": 2001, "default_code": "ITGL 1291", "currency": "sar",
+         "list_price": "38.50", "retail_price": 62}, "ksa")
+    assert rec == {"id": "2001", "code": "ITGL 1291", "wholesale": 38.5,
+                   "retail": 62.0, "currency": "SAR"}
+    # a row with no usable price is not a row, and neither is one with no id
+    assert jasani.normalize_price({"id": 9, "list_price": 0, "retail_price": False}, "ksa") is None
+    assert jasani.normalize_price({"list_price": 5}, "ksa") is None
+    # only one side priced is still worth keeping, and the market supplies the
+    # currency when the supplier leaves it out
+    half = jasani.normalize_price({"id": 7, "retail_price": 19.0}, "uae")
+    assert half == {"id": "7", "code": "", "wholesale": None, "retail": 19.0, "currency": "AED"}
+
+
+def test_prices_join_on_product_id_and_report_code_mismatches(tmp_path, monkeypatch):
+    """The id is the key. default_code is reconciliation only — matching on it
+    would let a renamed or duplicated code move a price onto another product."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    products = [{"id": "2001", "code": "ITGL 1291"}, {"id": "2002", "code": "CTEN 2240"},
+                {"id": "2003", "code": "APRL 4417"}]
+    report = jasani._merge_prices(products, [
+        {"id": 2001, "default_code": "ITGL 1291", "list_price": 38.5, "currency": "SAR"},
+        {"id": 2002, "default_code": "RENAMED 0001", "list_price": 11.25, "currency": "SAR"},
+        {"id": 9999, "default_code": "APRL 4417", "list_price": 96.0, "currency": "SAR"},
+    ], "ksa")
+    assert report["matched"] == 2 and report["unmatched"] == 1
+    assert report["codeMismatch"] == 1 and report["currencies"] == ["SAR"]
+    # 2002 took its price despite the code disagreeing; 2003 took none, even
+    # though a price row carried its code
+    assert products[1][jasani._INT_KEY]["wholesale"] == 11.25
+    assert jasani._INT_KEY not in products[2]
+
+
+def test_price_sync_keeps_the_two_markets_apart(tmp_path, monkeypatch):
+    """Separate accounts, separate hosts, separate caches. A KSA price must
+    never reach a UAE product — the two catalogues share codes, not ids."""
+    import asyncio
+
+    from server import jasani
+
+    _price_env(tmp_path, monkeypatch, jasani)
+    asyncio.run(jasani.force_refresh("ksa", "full"))
+    asyncio.run(jasani.force_refresh("uae", "full"))
+    ksa, uae = jasani.internal_map("ksa"), jasani.internal_map("uae")
+    assert ksa["2001"]["wholesale"] == 38.5 and ksa["2001"]["currency"] == "SAR"
+    assert uae["3001"]["wholesale"] == 41.0 and uae["3001"]["currency"] == "AED"
+    assert set(ksa) & set(uae) == set()
+    assert "2001" not in uae and "3001" not in ksa
+
+
+def test_synced_prices_never_ride_on_a_product_or_reach_the_public_api(tmp_path, monkeypatch):
+    import asyncio
+
+    from server import jasani
+
+    _price_env(tmp_path, monkeypatch, jasani)
+    asyncio.run(jasani.force_refresh("ksa", "full"))
+    raw = json.loads((tmp_path / "giveaways-ksa.json").read_text(encoding="utf-8"))
+    for product in raw["products"]:
+        assert jasani._INT_KEY not in product
+        for key in ("wholesale", "retail", "list_price", "retail_price", "blocked_qty"):
+            assert key not in product, key
+    assert raw["internal"]["2001"]["retail"] == 62.0
+
+    public = client.get("/api/giveaways/products?country=ksa")
+    body = public.text
+    for needle in ("38.5", "62.0", "list_price", "retail_price", "wholesale"):
+        assert needle not in body, needle
+
+
+def test_a_stock_refresh_keeps_the_prices_already_synced(tmp_path, monkeypatch):
+    import asyncio
+
+    from server import jasani
+
+    _price_env(tmp_path, monkeypatch, jasani)
+    asyncio.run(jasani.force_refresh("ksa", "full"))
+    priced_at = jasani._read_cache("ksa")["priceAt"]
+    assert priced_at
+
+    asyncio.run(jasani.force_refresh("ksa", "stock"))
+    after = jasani.internal_map("ksa")
+    assert after["2001"]["wholesale"] == 38.5 and after["2001"]["retail"] == 62.0
+    assert after["2001"]["booked"] == 120          # the stock call adds its own field
+    assert jasani._read_cache("ksa")["priceAt"] == priced_at   # not restamped
+
+
+def test_a_product_refresh_keeps_last_known_good_prices(tmp_path, monkeypatch):
+    """Both when the products call runs alone and when a full sync's price leg
+    fails: yesterday's prices are better than none, and nothing else can supply
+    them until the next successful price call."""
+    import asyncio
+
+    from server import jasani
+
+    _price_env(tmp_path, monkeypatch, jasani)
+    asyncio.run(jasani.force_refresh("ksa", "full"))
+    assert jasani.internal_map("ksa")["2001"]["wholesale"] == 38.5
+
+    asyncio.run(jasani.force_refresh("ksa", "products"))
+    assert jasani.internal_map("ksa")["2001"]["wholesale"] == 38.5
+
+    # the next day, with a full sync whose price leg fails upstream
+    (tmp_path / "supplier-budget.json").unlink(missing_ok=True)
+    _price_stub(monkeypatch, jasani, products=_PRODUCTS, prices=_PRICES, stock=_STOCK,
+                fail=("price",))
+    result = asyncio.run(jasani.force_refresh("ksa", "full"))
+    assert result["pricesApplied"] is False and result["stockApplied"] is True
+    assert jasani.internal_map("ksa")["2001"]["wholesale"] == 38.5
+    assert jasani.cache_status("ksa")["withWholesale"] == 2
+
+
+def test_full_sync_calls_products_price_and_stock(tmp_path, monkeypatch):
+    import asyncio
+
+    from server import jasani
+
+    seen = _price_env(tmp_path, monkeypatch, jasani)
+    result = asyncio.run(jasani.force_refresh("ksa", "full"))
+    assert [u.rsplit("/", 2)[1] for u in seen] == ["all", "price", "stock"]
+    assert result == {"refreshed": "full", "products": 2, "priced": 2,
+                      "pricesApplied": True, "stockApplied": True}
+    assert jasani.budget_status("ksa")["used"] == 3
+    status = jasani.cache_status("ksa")
+    assert (status["withWholesale"], status["withRetail"]) == (2, 2)
+    assert status["priceAt"] and status["pricesFresh"] is True
+    assert status["currencies"] == ["SAR"]
+
+
+def test_full_sync_checks_the_budget_before_spending_any_of_it(tmp_path, monkeypatch):
+    """Three calls or none. Spending one on products and then running dry
+    leaves a fresh catalogue joined to yesterday's prices and no way to finish."""
+    import asyncio
+
+    from server import jasani
+
+    seen = _price_env(tmp_path, monkeypatch, jasani)
+    for _ in range(3):                      # 2 automatic calls left, full needs 3
+        jasani._budget_ok("ksa", manual=True)
+    seen.clear()
+
+    with pytest.raises(jasani.SupplierUnavailable) as exc:
+        asyncio.run(jasani.force_refresh("ksa", "full", manual=False))
+    assert "budget" in str(exc.value) and "needs 3" in str(exc.value)
+    assert seen == []                       # nothing left for the supplier at all
+    assert jasani.budget_status("ksa")["used"] == 3
+
+    # the reserve makes the difference: an owner/admin sync still has 2 of 5,
+    # which is still short of three, and a single-call target goes through
+    with pytest.raises(jasani.SupplierUnavailable):
+        asyncio.run(jasani.force_refresh("ksa", "full", manual=True))
+    assert seen == []
+
+
+def test_the_reserved_fifth_call_stays_out_of_automatic_reach(tmp_path, monkeypatch):
+    """Automatic work stops at four; only a manual sync — which the API grants
+    to owner and admin alone — may spend the fifth."""
+    import asyncio
+
+    from server import jasani
+
+    _price_env(tmp_path, monkeypatch, jasani)
+    asyncio.run(jasani.force_refresh("ksa", "full"))       # 3 of 5
+    asyncio.run(jasani.force_refresh("ksa", "prices"))     # 4 of 5
+    assert jasani.budget_status("ksa") == {**jasani.budget_status("ksa"),
+                                           "used": 4, "autoRemaining": 0, "remaining": 1}
+    with pytest.raises(jasani.SupplierUnavailable):
+        asyncio.run(jasani.force_refresh("ksa", "prices", manual=False))
+    assert jasani.budget_status("ksa")["used"] == 4        # the failed try spent nothing
+    asyncio.run(jasani.force_refresh("ksa", "prices", manual=True))
+    assert jasani.budget_status("ksa")["used"] == 5
+
+
+def test_startup_warm_up_spends_one_call_and_hands_over_to_the_schedule(tmp_path, monkeypatch):
+    """A cold market gets its catalogue at boot, but not by doing the day's
+    products slot twice: the warm-up marks that slot as its own."""
+    import asyncio
+
+    from server import jasani
+
+    seen = _price_env(tmp_path, monkeypatch, jasani)
+    monkeypatch.setattr(jasani.config, "JASANI_TOKENS", {"ksa": "tok-ksa", "uae": ""})
+    asyncio.run(jasani.warm_catalogues())
+    assert [u.rsplit("/", 2)[1] for u in seen] == ["all"]     # one call, products
+    assert jasani.budget_status("ksa")["used"] == 1
+    assert 0 in jasani.budget_status("ksa")["slotsDone"]
+
+    # a warm cache is left alone entirely
+    seen.clear()
+    asyncio.run(jasani.warm_catalogues())
+    assert seen == []

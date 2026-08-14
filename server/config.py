@@ -36,9 +36,13 @@ JASANI_TOKENS = {"ksa": JASANI_API_TOKEN.strip(), "uae": JASANI_API_TOKEN_UAE.st
 JASANI_HOSTS = {"ksa": "www.giftsksa.com", "uae": "www.jasani.ae"}
 # the supplier day rolls over in local time, and the two markets are an hour apart
 JASANI_UTC_OFFSET = {"ksa": 3, "uae": 4}
-# automatic sync times in each market's own local time: one products refresh at
-# midnight, then stock through the trading day. Four calls, leaving the fifth.
-JASANI_SCHEDULE = ((0, "products"), (8, "stock"), (13, "stock"), (18, "stock"))
+# Automatic sync times in each market's own local time. Prices live behind
+# their own primary endpoint (Price API, docs section 22), so they cost a call
+# of their own: products at midnight, prices an hour later against that fresh
+# product list, then stock at the start and end of the trading day. Four calls,
+# which is SUPPLIER_AUTO_BUDGET — the fifth stays reserved for a person.
+# Adding a slot here without raising EM_SUPPLIER_AUTO_BUDGET spends the reserve.
+JASANI_SCHEDULE = ((0, "products"), (1, "price"), (8, "stock"), (18, "stock"))
 # The UAE products feed is ~4 MB and was measured from the production VPS at
 # 24.2s to the last byte, 24.17s of it before the first — a 20s read timeout
 # aborts a response that was on its way.
@@ -59,8 +63,10 @@ LOW_STOCK_THRESHOLD = int(os.environ.get("EM_LOW_STOCK_THRESHOLD", "20"))
 SUPPLIER_AUTO_BUDGET = max(0, min(
     SUPPLIER_DAILY_BUDGET,
     int(os.environ.get("EM_SUPPLIER_AUTO_BUDGET", str(max(0, SUPPLIER_DAILY_BUDGET - 1))))))
-# refresh cadence sized to the documented budget: products daily, stock twice daily
+# refresh cadence sized to the documented budget: products and prices daily,
+# stock twice daily
 PRODUCT_REFRESH_HOURS = float(os.environ.get("EM_PRODUCT_REFRESH_HOURS", "22"))
+PRICE_REFRESH_HOURS = float(os.environ.get("EM_PRICE_REFRESH_HOURS", "22"))
 STOCK_REFRESH_HOURS = float(os.environ.get("EM_STOCK_REFRESH_HOURS", "11"))
 BRANDING_CACHE_HOURS = 24
 BRANDING_CACHE_MAX_ENTRIES = 500

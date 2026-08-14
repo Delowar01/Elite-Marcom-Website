@@ -113,6 +113,18 @@ def _budget_ok(market: str, manual: bool = False) -> bool:
         return True
 
 
+def _budget_left(market: str, manual: bool = False) -> int:
+    """Calls still available to this caller today, without spending one.
+
+    A multi-call sync checks this before it starts: spending one call and then
+    failing on the next leaves a half-updated snapshot and a burnt allowance."""
+    ceiling = config.SUPPLIER_DAILY_BUDGET if manual else config.SUPPLIER_AUTO_BUDGET
+    with _lock:
+        budget = _read_budget(market)
+    used = budget["count"] if budget["day"] == _market_day(market) else 0
+    return max(0, ceiling - used)
+
+
 def _budget_refund(market: str) -> None:
     """Give back a call that never reached Jasani.
 
@@ -391,11 +403,29 @@ def _money(rec: dict, *keys: str) -> float | None:
     return value if value > 0 else None
 
 
-def _internal_from_product(rec: dict) -> dict:
-    currency = _s(rec, "currency")[:8] or " ".join(_rel_names(rec.get("currency_id")))[:8]
-    return {"wholesale": _money(rec, "list_price", "listprice"),
-            "retail": _money(rec, "retail_price", "retailprice"),
-            "currency": currency.strip().upper()}
+def normalize_price(rec: dict, market: str) -> dict | None:
+    """One Price API record → the internal-only price entry, or None.
+
+    Documented fields (reference section 22.2): id, default_code, currency,
+    list_price, retail_price. Both prices exclude VAT. `id` is the join key —
+    the same supplier variant id the Product API returns — and default_code is
+    kept only so a mismatch can be reported, never to match on: two markets
+    share product codes but never share ids, so matching on the code is how a
+    KSA price would land on a UAE product."""
+    rec = _normalize_keys(rec)
+    pid = _s(rec, "id", "product_id", "variant_id", "productid")
+    if not pid:
+        return None
+    wholesale = _money(rec, "list_price", "listprice")
+    retail = _money(rec, "retail_price", "retailprice")
+    if wholesale is None and retail is None:
+        return None                      # a row with no usable price is no row
+    currency = _s(rec, "currency", "currency_code")[:8].strip().upper()
+    if not currency:
+        currency = " ".join(_rel_names(rec.get("currency_id")))[:8].strip().upper()
+    return {"id": pid, "code": _s(rec, "default_code", "code", "sku")[:60],
+            "wholesale": wholesale, "retail": retail,
+            "currency": currency or CURRENCY_BY_MARKET.get(market, "")}
 
 
 def _clean_description(raw: str) -> str:
@@ -721,7 +751,6 @@ def normalize_product(rec: dict, market: str) -> dict | None:
                 "incoming": incoming,
                 "incomingDate": _s(rec, "incoming_date", "expected_date")[:30] or None,
             },
-            _INT_KEY: _internal_from_product(rec),
         }
     except Exception:
         # malformed records are untrusted input — skip safely
@@ -758,6 +787,41 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> int:
             p.setdefault(_INT_KEY, {})["booked"] = max(
                 0, _i(rec, "blocked_qty", "blockedqty", "reserved_qty"))
     return matched
+
+
+def _merge_prices(products: list[dict], price_records: list[dict], market: str) -> dict:
+    """Merge one Price API snapshot onto the products, strictly by product id.
+
+    Returns a reconciliation report. Nothing here is public: the entries land
+    under _INT_KEY, which _write_cache lifts off the products into the sibling
+    internal map before anything is persisted or served."""
+    by_id: dict[str, dict] = {}
+    rows = 0
+    for raw in price_records:
+        entry = normalize_price(raw, market)
+        if not entry:
+            continue
+        rows += 1
+        by_id.setdefault(entry["id"], entry)     # first row for an id wins
+    matched = code_mismatch = 0
+    currencies: set[str] = set()
+    for p in products:
+        entry = by_id.get(str(p.get("id")))
+        if not entry:
+            continue
+        matched += 1
+        if entry["code"] and p.get("code") and entry["code"] != p["code"]:
+            # reported, never acted on: the id is the key, so a code that
+            # disagrees is a supplier data question, not a reason to re-match
+            code_mismatch += 1
+        priced = {k: v for k, v in (("wholesale", entry["wholesale"]),
+                                    ("retail", entry["retail"])) if v is not None}
+        if entry["currency"]:
+            priced["currency"] = entry["currency"]
+            currencies.add(entry["currency"])
+        p.setdefault(_INT_KEY, {}).update(priced)
+    return {"rows": rows, "matched": matched, "unmatched": len(products) - matched,
+            "codeMismatch": code_mismatch, "currencies": sorted(currencies)}
 
 
 # ---------------- cache ----------------
@@ -878,13 +942,32 @@ def internal_map(market: str) -> dict:
     return (_read_cache(market) or {}).get("internal") or {}
 
 
-def _write_cache(market: str, products: list[dict], fetched_at: float, stock_at: float) -> None:
+def price_status(market: str) -> dict:
+    """When prices were last synced and how many products carry one."""
+    cached = _read_cache(market) or {}
+    internal = cached.get("internal") or {}
+    wholesale = sum(1 for rec in internal.values() if rec.get("wholesale") is not None)
+    retail = sum(1 for rec in internal.values() if rec.get("retail") is not None)
+    currencies = sorted({rec.get("currency") for rec in internal.values() if rec.get("currency")})
+    price_at = cached.get("priceAt") or 0
+    return {"priceAt": price_at or None, "withWholesale": wholesale, "withRetail": retail,
+            "pricesFresh": bool(price_at) and time.time() - price_at < config.PRICE_REFRESH_HOURS * 3600,
+            "currencies": currencies}
+
+
+def _write_cache(market: str, products: list[dict], fetched_at: float, stock_at: float,
+                 price_at: float | None = None) -> None:
     # explicit UTF-8: Windows' locale default (cp1252) cannot encode many
     # supplier product names, and a failed cache write must not fail the request
+    previous = _read_cache(market) or {}
+    # price_at=None means "this write did not touch prices": carry the stamp
+    # forward rather than resetting it, the way the entries themselves are kept
+    stamp = previous.get("priceAt", 0) if price_at is None else price_at
     internal = _lift_internal(market, products)
     try:
         f = _cache_file(market)
         f.write_text(json.dumps({"fetchedAt": int(fetched_at), "stockAt": int(stock_at),
+                                 "priceAt": int(stamp or 0),
                                  "products": products, "internal": internal},
                                 ensure_ascii=False), encoding="utf-8")
     except (OSError, ValueError):
@@ -936,6 +1019,26 @@ async def _fetch_products(market: str, manual: bool = False) -> list[dict]:
     return products
 
 
+async def _apply_prices(market: str, products: list[dict], manual: bool = False) -> dict:
+    """One primary Price API call merged onto products. Raises SupplierUnavailable.
+
+    Prices are not in the Product API — they have their own documented endpoint
+    (reference section 22) — which is why a products-only sync leaves every
+    wholesale and retail figure empty."""
+    host = _host(market)
+    raw, ctype = await _fetch(f"https://{host}/products/price/{_token(market)}", host,
+                              market, manual=manual)
+    records = _parse_records(raw, ctype)[: config.SUPPLIER_MAX_RECORDS]
+    report = _merge_prices(products, records, market)
+    if not report["matched"]:
+        raise SupplierUnavailable(
+            f"price feed matched no products ({report['rows']} priced rows of {len(records)})")
+    print(f"[jasani] {market}: {report['rows']} price rows, {report['matched']} matched, "
+          f"{report['unmatched']} unpriced, {report['codeMismatch']} code mismatches, "
+          f"currencies {','.join(report['currencies']) or '-'}", flush=True)
+    return report
+
+
 async def _apply_stock(market: str, products: list[dict], manual: bool = False) -> None:
     """One primary Stock API call merged onto products. Raises SupplierUnavailable."""
     host = _host(market)
@@ -951,55 +1054,6 @@ async def _apply_stock(market: str, products: list[dict], manual: bool = False) 
         # field names (or supplier-side zeros) are visible in the console
         print(f"[jasani] {market} raw stock sample: "
               f"{json.dumps(stock_records[0], ensure_ascii=False, default=str)[:400]}", flush=True)
-
-
-async def _refresh_in_background(market: str) -> None:
-    """Bring a due snapshot up to date without anyone waiting for it."""
-    lock = _refresh_lock(market)
-    if lock.locked():
-        return
-    async with lock:
-        cached = _read_cache(market)
-        now = time.time()
-        products_due = not cached or now - cached.get("fetchedAt", 0) >= config.PRODUCT_REFRESH_HOURS * 3600
-        stock_due = not cached or now - cached.get("stockAt", cached.get("fetchedAt", 0)) >= config.STOCK_REFRESH_HOURS * 3600
-        try:
-            if products_due:
-                products = await _fetch_products(market)
-                stock_at = 0.0
-                try:
-                    await _apply_stock(market, products)
-                    stock_at = now
-                except SupplierUnavailable as exc:
-                    record_attempt(market, "stock", False, str(exc))
-                _write_cache(market, products, fetched_at=now, stock_at=stock_at)
-                if stock_at:
-                    record_attempt(market, "products", True, f"{len(products)} products with stock")
-            elif stock_due and cached:
-                products = cached["products"]
-                await _apply_stock(market, products)
-                _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
-                record_attempt(market, "stock", True, f"{len(products)} products")
-        except SupplierUnavailable as exc:
-            record_attempt(market, "products" if products_due else "stock", False, str(exc))
-        except Exception as exc:  # never let a background task escape
-            print(f"[jasani] {market}: background refresh error {exc.__class__.__name__}", flush=True)
-
-
-def _schedule_refresh(market: str) -> None:
-    """Kick off a refresh and forget about it. Nothing awaits this: a visitor
-    must never wait on the supplier."""
-    if _refresh_lock(market).locked():
-        return
-    try:
-        task = asyncio.get_running_loop().create_task(_refresh_in_background(market))
-        _background.add(task)
-        task.add_done_callback(_background.discard)
-    except RuntimeError:
-        pass  # no running loop (tests, scripts) — the next request will try again
-
-
-_background: set = set()
 
 
 async def get_catalog(market: str) -> tuple[list[dict], str]:
@@ -1068,6 +1122,23 @@ async def _refresh_products_only(market: str) -> None:
     record_attempt(market, "products", True, f"{len(products)} products (scheduled)")
 
 
+async def _refresh_prices_only(market: str, manual: bool = False) -> dict:
+    """One price call against the cached product list, keeping everything else.
+
+    The products are only the join target — nothing about them changes — so the
+    products and stock timestamps are carried through untouched."""
+    cached = _read_cache(market)
+    if not cached or not cached.get("products"):
+        raise SupplierUnavailable("no cached products — sync products before prices")
+    products = cached["products"]
+    report = await _apply_prices(market, products, manual=manual)
+    _write_cache(market, products, fetched_at=cached.get("fetchedAt", 0),
+                 stock_at=cached.get("stockAt", 0), price_at=time.time())
+    record_attempt(market, "price", True,
+                   f"{report['matched']} of {len(products)} products priced")
+    return report
+
+
 async def run_due_slots() -> list[str]:
     """Run any automatic sync whose hour has arrived in that market's local
     time and which has not run yet today. One call per slot, never more."""
@@ -1084,20 +1155,21 @@ async def run_due_slots() -> list[str]:
                 break
             async with lock:
                 try:
-                    if what == "products":
+                    cached = _read_cache(market)
+                    if what == "products" or not (cached and cached.get("products")):
+                        # a price or stock slot has nothing to join against on a
+                        # cold cache; spend the call on the catalogue instead
                         await _refresh_products_only(market)
+                    elif what == "price":
+                        await _refresh_prices_only(market)
                     else:
-                        cached = _read_cache(market)
-                        if not cached or not cached.get("products"):
-                            await _refresh_products_only(market)
-                        else:
-                            products = cached["products"]
-                            await _apply_stock(market, products)
-                            _write_cache(market, products,
-                                         fetched_at=cached.get("fetchedAt", time.time()),
-                                         stock_at=time.time())
-                            record_attempt(market, "stock", True,
-                                           f"{len(products)} products (scheduled)")
+                        products = cached["products"]
+                        await _apply_stock(market, products)
+                        _write_cache(market, products,
+                                     fetched_at=cached.get("fetchedAt", time.time()),
+                                     stock_at=time.time())
+                        record_attempt(market, "stock", True,
+                                       f"{len(products)} products (scheduled)")
                 except SupplierUnavailable as exc:
                     record_attempt(market, what, False, str(exc))
                 except Exception as exc:
@@ -1111,16 +1183,33 @@ async def run_due_slots() -> list[str]:
 
 
 async def warm_catalogues() -> None:
-    """Startup warm-up so the first visitor of the day meets a filled cache
-    rather than a supplier call. Uses the automatic allowance only."""
+    """Startup warm-up for a market with no snapshot at all.
+
+    Exactly one products call, and only when there is nothing cached: the four
+    scheduled slots own the automatic allowance, and a warm-up that also
+    fetched stock would spend two of the four on work the schedule is about to
+    do again — which is how the day runs out before the price slot arrives."""
     for market in config.JASANI_HOSTS:
         cached = _read_cache(market)
-        now = time.time()
-        due = (not cached or not cached.get("products")
-               or now - cached.get("fetchedAt", 0) >= config.PRODUCT_REFRESH_HOURS * 3600
-               or now - cached.get("stockAt", cached.get("fetchedAt", 0)) >= config.STOCK_REFRESH_HOURS * 3600)
-        if due:
-            await _refresh_in_background(market)
+        if cached and cached.get("products"):
+            continue
+        if not config.JASANI_TOKENS.get(market):
+            continue
+        try:
+            await _refresh_products_only(market)
+        except SupplierUnavailable as exc:
+            record_attempt(market, "products", False, str(exc))
+            continue
+        except Exception as exc:          # a warm-up must never break startup
+            print(f"[jasani] {market} warm-up: {exc.__class__.__name__}", flush=True)
+            continue
+        # this WAS today's products call: mark the slot so the scheduler does
+        # not immediately fetch the same catalogue again on its own budget
+        day, _hour = _market_local(market)
+        for slot_hour, what in config.JASANI_SCHEDULE:
+            if what == "products":
+                _mark_slot(market, day, slot_hour)
+                break
 
 
 # ---------------- admin console (Phase 1) ----------------
@@ -1174,8 +1263,10 @@ def cache_status(market: str) -> dict:
     attempt = last_attempt(market)
     if not cached:
         return {"market": market, "cached": False, "products": 0, "inStock": 0,
-                "fetchedAt": None, "stockAt": None, "productsFresh": False,
-                "stockFresh": False, "lastAttempt": attempt}
+                "fetchedAt": None, "stockAt": None, "priceAt": None,
+                "productsFresh": False, "stockFresh": False, "pricesFresh": False,
+                "withWholesale": 0, "withRetail": 0, "currencies": [],
+                "lastAttempt": attempt}
     now = time.time()
     products = cached.get("products", [])
     fetched_at = cached.get("fetchedAt", 0)
@@ -1186,6 +1277,10 @@ def cache_status(market: str) -> dict:
         "fetchedAt": fetched_at or None, "stockAt": stock_at or None,
         "productsFresh": now - fetched_at < config.PRODUCT_REFRESH_HOURS * 3600,
         "stockFresh": now - stock_at < config.STOCK_REFRESH_HOURS * 3600,
+        # prices are their own primary call, so they have their own age and
+        # their own coverage count — "1,778 products, 0 priced" is the state
+        # this page has to be able to show
+        **price_status(market),
         "lastAttempt": attempt,
     }
 
@@ -1226,49 +1321,93 @@ def _refresh_lock(market: str) -> asyncio.Lock:
     return lock
 
 
+REFRESH_COST = {"products": 1, "prices": 1, "stock": 1, "full": 3}
+
+
 async def force_refresh(market: str, what: str, manual: bool = True) -> dict:
-    """Admin-triggered refresh. what='products' does a full products+stock
-    refetch (2 primary calls); what='stock' refreshes stock onto the cached
-    products (1 primary call). Raises SupplierUnavailable when the budget is
-    exhausted or upstream fails — the cached snapshot is left untouched."""
+    """Admin-triggered refresh, one target per press.
+
+    Each of products / prices / stock is exactly one primary call; 'full' is
+    all three. Raises SupplierUnavailable when the budget cannot cover the
+    whole job or upstream fails — the cached snapshot is left untouched."""
+    cost = REFRESH_COST.get(what)
+    if cost is None:
+        raise ValueError("unknown refresh target")
     lock = _refresh_lock(market)
     if lock.locked():
         raise SupplierUnavailable("a sync for this market is already running")
     async with lock:
+        # checked before the first request goes out: a full sync that spends a
+        # call on products and then runs dry leaves a snapshot with a fresh
+        # catalogue, yesterday's prices and no way to finish until tomorrow
+        left = _budget_left(market, manual)
+        if left < cost:
+            raise SupplierUnavailable(
+                f"not enough supplier budget for {'a full sync' if what == 'full' else what}: "
+                f"it needs {cost} call{'s' if cost > 1 else ''} and "
+                f"{left} of today's allowance remain{'s' if left == 1 else ''} for this market")
         now = time.time()
-        if what == "products":
+        cached = _read_cache(market)
+
+        if what in ("products", "full"):
             try:
                 products = await _fetch_products(market, manual=manual)
             except SupplierUnavailable as exc:
                 record_attempt(market, "products", False, str(exc))
                 raise
-            stock_at = 0.0
+            # a products refresh replaces the catalogue, not the figures joined
+            # onto it: carry yesterday's stock so nothing reads as out of stock
+            # between this call and the next stock one
+            previous = {p["id"]: p.get("stock") for p in (cached or {}).get("products", [])
+                        if p.get("id")}
+            for product in products:
+                carried = previous.get(product["id"])
+                if carried and not (product.get("stock") or {}).get("available"):
+                    product["stock"] = carried
+            stock_at = (cached or {}).get("stockAt", 0) or 0
+            price_at = None                       # None → keep the stored stamp
+            priced = 0
+            if what == "full":
+                try:
+                    report = await _apply_prices(market, products, manual=manual)
+                    price_at, priced = now, report["matched"]
+                except SupplierUnavailable as exc:
+                    # last-known-good prices survive: _lift_internal merges this
+                    # write into the stored map rather than replacing it
+                    record_attempt(market, "price", False, str(exc))
+                try:
+                    await _apply_stock(market, products, manual=manual)
+                    stock_at = now
+                except SupplierUnavailable as exc:
+                    record_attempt(market, "stock", False, str(exc))
+            _write_cache(market, products, fetched_at=now, stock_at=stock_at, price_at=price_at)
+            record_attempt(market, "products", True, f"{len(products)} products")
+            return {"refreshed": what, "products": len(products),
+                    "priced": priced, "pricesApplied": price_at is not None,
+                    "stockApplied": stock_at == now}
+
+        if not cached or not cached.get("products"):
+            raise SupplierUnavailable("no cached products — run a product refresh first")
+        products = cached["products"]
+
+        if what == "prices":
             try:
-                await _apply_stock(market, products, manual=manual)
-                stock_at = now
+                report = await _refresh_prices_only(market, manual=manual)
             except SupplierUnavailable as exc:
-                print(f"[jasani] {market}: stock feed unavailable ({exc})", flush=True)
-                record_attempt(market, "stock", False, str(exc))
-            _write_cache(market, products, fetched_at=now, stock_at=stock_at)
-            if stock_at:
-                record_attempt(market, "products", True,
-                               f"{len(products)} products with stock")
-            return {"refreshed": "products", "products": len(products),
-                    "stockApplied": stock_at > 0}
-        if what == "stock":
-            cached = _read_cache(market)
-            if not cached or not cached.get("products"):
-                raise SupplierUnavailable("no cached products — run a full product refresh first")
-            products = cached["products"]
-            try:
-                await _apply_stock(market, products, manual=manual)
-            except SupplierUnavailable as exc:
-                record_attempt(market, "stock", False, str(exc))
+                record_attempt(market, "price", False, str(exc))
                 raise
-            _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
-            record_attempt(market, "stock", True, f"{len(products)} products")
-            return {"refreshed": "stock", "products": len(products), "stockApplied": True}
-        raise ValueError("unknown refresh target")
+            return {"refreshed": "prices", "products": len(products),
+                    "priced": report["matched"], "pricesApplied": True,
+                    "unmatched": report["unmatched"], "codeMismatch": report["codeMismatch"]}
+
+        try:
+            await _apply_stock(market, products, manual=manual)
+        except SupplierUnavailable as exc:
+            record_attempt(market, "stock", False, str(exc))
+            raise
+        _write_cache(market, products, fetched_at=cached.get("fetchedAt", now), stock_at=now)
+        record_attempt(market, "stock", True, f"{len(products)} products")
+        return {"refreshed": "stock", "products": len(products), "stockApplied": True}
 
 
 # ---------------- the admin item list ----------------

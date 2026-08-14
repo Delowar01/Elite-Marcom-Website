@@ -662,14 +662,16 @@ async def admin_jasani(request: Request):
             "markets": {m: jasani.cache_status(m) for m in config.JASANI_HOSTS},
             "manuals": jasani.manuals_status(),
             "refreshHours": {"products": config.PRODUCT_REFRESH_HOURS,
+                             "prices": config.PRICE_REFRESH_HOURS,
                              "stock": config.STOCK_REFRESH_HOURS},
+            "refreshCost": jasani.REFRESH_COST,
             "tokensConfigured": {m: bool(tok) for m, tok in config.JASANI_TOKENS.items()}}
 
 
 class JasaniRefreshBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     market: str = Field(max_length=10)
-    what: str = Field(max_length=20)  # "products" (2 calls) or "stock" (1 call)
+    what: str = Field(max_length=20)  # products | prices | stock (1 call) or full (3)
 
 
 @router.post("/api/admin/jasani/refresh")
@@ -681,8 +683,9 @@ async def admin_jasani_refresh(request: Request, body: JasaniRefreshBody,
 
     if body.market not in config.JASANI_HOSTS:
         raise HTTPException(status_code=400, detail="Unknown market.")
-    if body.what not in ("products", "stock"):
-        raise HTTPException(status_code=400, detail="Refresh either products or stock.")
+    if body.what not in jasani.REFRESH_COST:
+        raise HTTPException(status_code=400,
+                            detail="Refresh products, prices, stock or run a full sync.")
     # The reserved call exists so a person can always force a sync; only an
     # owner or admin may reach into it. Other roles with jasani.refresh keep
     # working against the automatic allowance.
