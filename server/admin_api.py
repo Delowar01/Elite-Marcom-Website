@@ -717,7 +717,7 @@ async def admin_jasani_items(request: Request,
                              visibility: str = "", hideZero: bool = False,
                              priceField: str = "wholesale",
                              priceMin: str = "", priceMax: str = "",
-                             sort: str = "name", page: int = 1, perPage: int = 25):
+                             sort: str = "featured", page: int = 1, perPage: int = 25):
     """The Jasani items table. Reads the cached snapshot only — opening this
     page never spends one of the market's five daily supplier calls."""
     session = require_perm(request, "jasani.view")
@@ -756,7 +756,7 @@ async def admin_jasani_items_export(request: Request, format: str = "csv",
                                     visibility: str = "", hideZero: bool = False,
                                     priceField: str = "wholesale",
                                     priceMin: str = "", priceMax: str = "",
-                                    sort: str = "name", scope: str = "filtered"):
+                                    sort: str = "featured", scope: str = "filtered"):
     """The item list as CSV, Excel or a branded PDF table."""
     session = require_perm(request, "jasani.view")
     from . import exports, jasani

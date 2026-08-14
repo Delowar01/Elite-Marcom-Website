@@ -94,7 +94,10 @@ html[data-theme="light"] .admin-body {
 .login-hint { font-size: 0.83rem; color: var(--text-muted); margin: 0 0 14px; }
 
 /* ---------- shell ---------- */
-.admin-shell { display: grid; grid-template-columns: 264px 1fr; min-height: 100vh; }
+/* minmax(0, 1fr), not 1fr: a grid item's automatic minimum is its content,
+   so a wide table pushed the whole shell past the viewport and the body
+   clipped what stuck out — the left-hand columns became unreachable */
+.admin-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr); min-height: 100vh; }
 .admin-side {
   display: flex; flex-direction: column; gap: 20px;
   padding: 24px 16px 20px; border-right: 1px solid var(--adm-line);
@@ -653,7 +656,7 @@ html[data-theme="light"] .admin-body {
 
 /* ---------- responsive ---------- */
 @media (max-width: 1024px) {
-  .admin-shell { grid-template-columns: 1fr; }
+  .admin-shell { grid-template-columns: minmax(0, 1fr); }
   .admin-side {
     position: fixed; inset: 0 auto 0 0; z-index: 700; width: min(280px, 84vw);
     height: 100vh; transform: translateX(-100%); transition: transform 0.22s var(--ease-out);
@@ -923,11 +926,30 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 .jz-name b { font-weight: 600; display: block; }
 .jz-name .jz-cat { color: var(--text-muted); font-size: 0.77rem; }
 .jz-name .jz-meta { display: none; }
+/* a tile that is always drawn, with the photo inside it — a supplier URL that
+   fails to load then leaves the placeholder rather than a broken-image glyph */
 .jz-img {
-  width: 40px; height: 40px; border-radius: 9px; object-fit: cover;
+  width: 40px; height: 40px; border-radius: 9px; overflow: hidden;
   border: 1px solid var(--adm-line); background: var(--adm-inset); display: block;
 }
-.jz-cell-img { width: 52px; }
+.jz-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* SN and the photo stay pinned to the left edge: the table is wider than the
+   screen, and scrolling right to read prices used to carry them out of view */
+.jz-table th:nth-child(1), .jz-table td.jz-sn {
+  position: sticky; left: 0; z-index: 3; background: var(--adm-card);
+  width: 46px; min-width: 46px; max-width: 46px; box-sizing: border-box;
+}
+.jz-table th:nth-child(2), .jz-table td.jz-cell-img {
+  position: sticky; left: 46px; z-index: 3; background: var(--adm-card);
+  width: 56px; min-width: 56px; max-width: 56px; box-sizing: border-box;
+  box-shadow: 12px 0 12px -12px rgba(0, 0, 0, 0.55);
+}
+.jz-table thead th:nth-child(2), .jz-table tbody td.jz-cell-img {
+  padding-left: 8px; padding-right: 8px;
+}
+.jz-table thead th:nth-child(1), .jz-table thead th:nth-child(2) { z-index: 4; }
+.jz-table tbody tr:hover td.jz-sn,
+.jz-table tbody tr:hover td.jz-cell-img { background: var(--adm-card-hover); }
 /* the stock column carries a severity stripe so out-of-stock reads before the digits do */
 .jz-stock { position: relative; padding-left: 18px !important; }
 .jz-stock::before {
@@ -963,6 +985,12 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 }
 .jz-vis--off { color: var(--text-muted); }
 .jz-vis svg { width: 14px; height: 14px; }
+.jz-pending {
+  margin: 0 0 2px; padding: 12px 16px; font-size: 0.82rem; line-height: 1.6;
+  color: var(--text-muted); background: var(--adm-inset);
+  border-bottom: 1px solid var(--adm-line);
+}
+.jz-pending b { color: var(--text); font-weight: 650; }
 .jz-empty { padding: 40px 12px; text-align: center; color: var(--text-muted); }
 .jz-foot {
   display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
@@ -1154,4 +1182,80 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--text-muted);
   border: 1px dashed var(--adm-line-strong); border-radius: 7px; padding: 1px 7px; margin-left: 6px;
   vertical-align: middle; letter-spacing: 0.02em;
+}
+
+/* below the table breakpoint every row becomes a card: thirteen columns cannot
+   be read side by side on a phone, and the pinned SN/photo/actions columns have
+   nothing to pin against once the row stops being a row */
+@media (max-width: 900px) {
+  .jz-table thead { display: none; }
+  .jz-table, .jz-table tbody, .jz-table tr, .jz-table td { display: block; width: 100%; }
+  .jz-table tbody tr {
+    position: relative; padding: 13px 13px 13px 66px; margin-bottom: 10px;
+    border: 1px solid var(--adm-line); border-radius: 13px; background: var(--adm-inset);
+  }
+  .jz-table tbody td { border: 0; padding: 0; }
+  .jz-table tbody tr:hover td { background: none; }
+  /* td-qualified so the sticky-column rules above cannot out-specify these */
+  .jz-table td.jz-cell-img {
+    position: absolute; top: 13px; left: 13px; z-index: 1;
+    width: auto; min-width: 0; max-width: none; box-shadow: none;
+  }
+  .jz-table tbody td.jz-cell-img { padding: 0; }
+  .jz-table td.jz-cell-img .jz-img { width: 44px; height: 44px; }
+  .jz-table td.jz-sn {
+    /* left: auto — the pinned-column rule sets left: 0, and left and right
+       together would stretch this auto-width cell across the whole card */
+    position: absolute; top: 13px; left: auto; right: 52px; z-index: 1;
+    font-size: 0.72rem; width: auto; min-width: 0; max-width: none; background: none;
+  }
+  .jz-table tbody tr:hover td.jz-sn, .jz-table tbody tr:hover td.jz-cell-img { background: none; }
+  .jz-table td.jz-sn::before { content: "#"; }
+  .jz-table .jz-sku { font-size: 0.76rem; color: var(--text-muted); letter-spacing: 0.04em; }
+  .jz-table .jz-name { min-width: 0; }
+  .jz-table .jz-name .jz-cat { display: none; }
+  .jz-table .jz-name .jz-meta {
+    display: block; font-size: 0.79rem; color: var(--text-muted); margin-top: 1px;
+  }
+  .jz-table .jz-brand, .jz-table .jz-colour { display: none; }  /* both are in the meta line */
+  /* the stock and price figures share labelled rows; they follow a block
+     element, so they start a fresh line rather than trailing the meta text */
+  .jz-table .jz-num {
+    display: inline-block; width: 33%; text-align: left; margin-top: 12px;
+    padding-left: 11px !important; position: relative; vertical-align: top;
+  }
+  .jz-table .jz-price { width: 50%; }
+  .jz-table .jz-price b { font-weight: 650; }
+  .jz-table .jz-note-internal.jz-card-only { display: inline-flex; margin-left: 5px; }
+  .jz-table .jz-num::before {
+    content: attr(data-l); display: block; white-space: nowrap;
+    font-size: 0.6rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--text-muted); margin-bottom: 3px;
+  }
+  /* this cell's ::before is already the severity stripe, so its label is a
+     real element rather than a second pseudo the stripe would overwrite */
+  .jz-table .jz-stock::before {
+    content: ""; position: absolute; left: 0; top: 15px; bottom: 2px; width: 3px;
+  }
+  .jz-table .jz-stock .jz-stock-label {
+    display: block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 3px;
+  }
+  .jz-table .jz-cell-vis { clear: both; padding-top: 13px !important; }
+  /* td.jz-cell-actions, not .jz-cell-actions: the sticky column rule above
+     carries a type selector and would otherwise out-specify this one */
+  .jz-table td.jz-cell-actions {
+    position: absolute; top: 11px; right: 11px; width: auto;
+    background: none; box-shadow: none; z-index: 1;
+  }
+  .jz-table tbody tr:hover td.jz-cell-actions { background: none; }
+  .jz-pdp { grid-template-columns: 1fr; gap: 22px; }
+  .jz-pdp__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jz-lightbox { grid-template-columns: 44px 1fr 44px; }
+  .jz-head, .jz-filters { gap: 8px; }
+  .jz-seg { flex: 1 1 auto; }
+  .jz-seg button { padding: 8px 12px; flex: 1 1 0; justify-content: center; }
+  .jz-search { padding: 7px 8px; }
+  .jz-search input { flex: 1 1 100%; order: -1; }
+  .jz-filters select, .jz-toggle { flex: 1 1 46%; }
 }

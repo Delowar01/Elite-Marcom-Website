@@ -361,6 +361,15 @@ def _i(rec: dict, *keys: str) -> int:
     return int(m.group()) if m else 0
 
 
+def _present(rec: dict, *keys: str) -> bool:
+    """True when the payload actually carries one of these fields.
+
+    A stock row that simply omits incoming_qty must not overwrite the quantity
+    the products feed already gave us with a zero — absent and zero are
+    different answers, and only one of them is the supplier's."""
+    return any(k in rec or k.replace("_", "") in rec for k in keys)
+
+
 # ---------------- internal-only supplier fields ----------------
 # blocked_qty, list_price and retail_price are documented as internal: they may
 # inform quoting and margin work but must never reach a public product response
@@ -739,7 +748,9 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> int:
             p["stock"]["available"] = max(0, _i(rec, "net_available_qty", "net_stock", "available_stock",
                                                 "stock", "net_available", "qty_available", "free_qty",
                                                 "available_qty", "quantity_available"))
-            p["stock"]["incoming"] = max(0, _i(rec, "incoming_qty", "incoming_stock", "incoming", "expected_stock"))
+            if _present(rec, "incoming_qty", "incoming_stock", "incoming", "expected_stock"):
+                p["stock"]["incoming"] = max(0, _i(rec, "incoming_qty", "incoming_stock",
+                                                   "incoming", "expected_stock"))
             inc = _s(rec, "incoming_date", "expected_date")[:30]
             if inc:
                 p["stock"]["incomingDate"] = inc
@@ -1277,6 +1288,9 @@ def _row(p: dict, internal: dict, hidden: set[str], drop_zero: bool,
         "brand": p.get("brand", ""), "color": p.get("color", ""),
         "category": cats[0] if cats else "",
         "image": p.get("image", ""),
+        # the supplier's own website position, used by the Featured sort and
+        # dropped again before the row is serialized
+        "_seq": int(p.get("sequence") or 0),
         "available": available,
         "incoming": int(stock.get("incoming", 0) or 0),
         "incomingDate": stock.get("incomingDate") or "",
@@ -1310,7 +1324,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
               stock: str = "", brand: str = "", colour: str = "", category: str = "",
               visibility: str = "", hide_zero: bool = False,
               price_field: str = "wholesale", price_min: float | None = None,
-              price_max: float | None = None, sort: str = "name",
+              price_max: float | None = None, sort: str = "featured",
               with_prices: bool = False) -> dict:
     """Search, filter and sort the cached snapshot. Never calls the supplier."""
     products = all_products(market)
@@ -1388,6 +1402,9 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
         return v if v is not None else 0.0
 
     sorters = {
+        # Featured mirrors the website (public/js/giveaways.js): the supplier's
+        # own website_sequence, lowest first, with unsequenced items last
+        "featured": lambda r: (r["_seq"] or 1_000_000_000, r["name"].lower()),
         "name": lambda r: r["name"].lower(),
         "sku": lambda r: r["code"].lower(),
         "brand": lambda r: (r["brand"].lower(), r["name"].lower()),
@@ -1396,12 +1413,16 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
         "priceAsc": price_key,
         "priceDesc": lambda r: -price_key(r),
     }
-    kept.sort(key=sorters.get(sort, sorters["name"]))
+    kept.sort(key=sorters.get(sort, sorters["featured"]))
     for r in kept:
         r.pop("_cats", None)
+        r.pop("_seq", None)
     return {"rows": kept, "totals": totals, "facets": facets,
             "lowThreshold": low, "hideZeroStock": drop_zero,
-            "currency": CURRENCY_BY_MARKET.get(market, "")}
+            "currency": CURRENCY_BY_MARKET.get(market, ""),
+            # a snapshot written before the internal store existed carries no
+            # prices; say so rather than showing a table of dashes
+            "pricesPending": bool(with_prices and products and not internal)}
 
 
 def item_detail(market: str, product_id: str, with_prices: bool = False) -> dict | None:
@@ -1413,6 +1434,7 @@ def item_detail(market: str, product_id: str, with_prices: bool = False) -> dict
             row = _row(p, internal_map(market) if with_prices else {}, hidden,
                        hide_zero_stock(market), with_prices)
             row.pop("_cats", None)
+            row.pop("_seq", None)
             row.update({
                 "description": p.get("description", ""),
                 "images": p.get("images") or ([p["image"]] if p.get("image") else []),

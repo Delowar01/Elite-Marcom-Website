@@ -3345,7 +3345,7 @@
 
   var jzState = {
     market: "ksa", terms: [], field: "all", stock: "", brand: "", colour: "",
-    category: "", visibility: "", sort: "name", hideZero: false,
+    category: "", visibility: "", sort: "featured", hideZero: false,
     priceField: "wholesale", priceMin: "", priceMax: "",
     page: 1, perPage: 25, listScroll: 0, gallery: 0, data: null
   };
@@ -3534,7 +3534,8 @@
           "results match any of them. Paste a column of SKUs and each line becomes its own term.</p>" +
           '<div class="jz-filters">' +
             sel("jz-sort", "Sort", jzState.sort,
-                [["name", "Name A–Z"], ["sku", "SKU A–Z"], ["stockDesc", "Stock high → low"],
+                [["featured", "Featured (website order)"], ["name", "Name A–Z"],
+                 ["sku", "SKU A–Z"], ["stockDesc", "Stock high → low"],
                  ["stockAsc", "Stock low → high"]].concat(prices
                    ? [["priceAsc", "Price low → high"], ["priceDesc", "Price high → low"]] : [])
                  .concat([["brand", "Brand"]])) +
@@ -3576,6 +3577,16 @@
           "Available is the supplier's guaranteed-sellable quantity; incoming dates are estimates." +
           (prices ? " Prices and booked stock are internal — they never reach the website." : "") +
           "</span></div>" +
+          // the snapshot on disk predates the internal store: prices and booked
+          // stock exist only in the supplier's payload, so they arrive with the
+          // next sync rather than being invented here
+          (d.pricesPending
+            ? '<div class="jz-pending"><b>Prices and booked stock arrive with the next sync.</b> ' +
+              "The cached snapshot was taken before this page existed, so it carries no " +
+              "wholesale, retail or booked figures. The scheduled products call fills the " +
+              "prices and the next stock call fills booked — or run a products sync now from " +
+              "the Jasani console.</div>"
+            : "") +
           '<div class="table-scroll"><table class="jz-table"><thead><tr>' +
             "<th>SN</th><th></th><th>SKU</th><th>Name</th><th>Brand</th><th>Colour</th>" +
             (prices ? '<th class="jz-num">Wholesale Price</th><th class="jz-num">Retail Price</th>' : "") +
@@ -3587,9 +3598,9 @@
                 : (it.available <= d.lowThreshold ? " jz-stock--low" : "");
               return '<tr' + (it.live ? "" : ' class="is-hidden"') + ' data-jzid="' + esc(it.id) + '">' +
                 '<td class="jz-sn">' + ((d.page - 1) * d.perPage + i + 1) + "</td>" +
-                '<td class="jz-cell-img">' + (it.image
-                  ? '<img class="jz-img" src="' + esc(it.image) + '" alt="" loading="lazy">'
-                  : '<span class="jz-img"></span>') + "</td>" +
+                '<td class="jz-cell-img"><span class="jz-img">' + (it.image
+                  ? '<img src="' + esc(it.image) + '" alt="" loading="lazy">' : "") +
+                  "</span></td>" +
                 '<td class="jz-sku">' + esc(it.code) + "</td>" +
                 '<td class="jz-name"><b>' + esc(it.name) + '</b><span class="jz-cat">' +
                   esc(it.category) + '</span><span class="jz-meta">' +

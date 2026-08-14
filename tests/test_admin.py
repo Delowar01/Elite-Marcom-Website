@@ -450,18 +450,20 @@ def _seed_items_cache(cache_dir, market="ksa"):
     from server import jasani
 
     rows = [
+        # the last column is website_sequence — the supplier's own website order
         ("2001", "ITGL 1291", "Aluminium Flask", "Santhome", "Black", "Drinkware",
-         1840, 0, 120, 38.50, 62.00),
+         1840, 0, 120, 38.50, 62.00, 30),
         ("2002", "CTEN 2240", "Cotton Tote Bag", "EcoLine", "Natural", "Bags",
-         0, 1500, 90, 11.25, 19.00),
+         0, 1500, 90, 11.25, 19.00, 10),
         ("2003", "APRL 4417", "Zip Hoodie", "Elite Collection", "Orange", "Apparel",
-         12, 0, 8, 96.00, 165.00),
+         12, 0, 8, 96.00, 165.00, 20),
     ]
     products = []
-    for pid, code, name, brand, colour, cat, avail, inc, booked, whl, rtl in rows:
+    for pid, code, name, brand, colour, cat, avail, inc, booked, whl, rtl, seq in rows:
         products.append({
             "id": pid, "code": code, "name": name, "brand": brand, "color": colour,
             "categories": [cat], "market": market, "image": "", "images": [],
+            "sequence": seq,
             "description": f"{name} description.", "hsCode": "9617.00",
             "unitsPerCarton": 50, "cartonDimensions": "600 x 400 x 300 mm",
             "stock": {"available": avail, "incoming": inc,
@@ -535,6 +537,65 @@ def test_items_list_searches_filters_and_gates_prices(tmp_path, monkeypatch):
     assert all("wholesale" not in i and "retail" not in i and "booked" not in i
                for i in lean["items"])
     assert cat.get("/api/admin/jasani/items?market=ksa&priceMin=30").json()["matched"] == 3
+
+
+def test_items_default_to_the_website_order(tmp_path, monkeypatch):
+    """Featured is the list's default, and it means what it means on the site:
+    the supplier's website_sequence, lowest first, unsequenced items last."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    d = client.get("/api/admin/jasani/items?market=ksa").json()
+    assert [i["code"] for i in d["items"]] == ["CTEN 2240", "APRL 4417", "ITGL 1291"]
+    assert d["items"] == client.get(
+        "/api/admin/jasani/items?market=ksa&sort=featured").json()["items"]
+    # the ordering key is not something the browser needs to be told
+    assert all("_seq" not in i and "sequence" not in i for i in d["items"])
+
+    # an item the supplier never sequenced sorts last, not first
+    products = jasani.all_products("ksa")
+    products.append({**products[0], "id": "2004", "code": "ZZZ 0001",
+                     "name": "Unsequenced Item", "sequence": 0})
+    jasani._write_cache("ksa", products, fetched_at=time.time(), stock_at=time.time())
+    order = [i["code"] for i in client.get("/api/admin/jasani/items?market=ksa").json()["items"]]
+    assert order[-1] == "ZZZ 0001"
+
+
+def test_a_stock_row_without_incoming_keeps_the_quantity_we_already_had(tmp_path, monkeypatch):
+    """Absent and zero are different answers. A stock row that simply omits
+    incoming_qty must not wipe the figure the products feed gave us."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    products = jasani.all_products("ksa")
+    jasani._merge_stock(products, [{"id": "2002", "net_available_qty": 4}])
+    tote = next(p for p in products if p["id"] == "2002")
+    assert tote["stock"]["available"] == 4 and tote["stock"]["incoming"] == 1500
+    # a row that does carry the field still wins
+    jasani._merge_stock(products, [{"id": "2002", "net_available_qty": 4, "incoming_qty": 0}])
+    assert tote["stock"]["incoming"] == 0
+
+
+def test_a_snapshot_without_prices_says_so(tmp_path, monkeypatch):
+    """A snapshot written before the internal store existed carries no prices.
+    The page says they arrive with the next sync rather than showing dashes
+    with no explanation."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    assert client.get("/api/admin/jasani/items?market=ksa").json()["pricesPending"] is False
+
+    raw = json.loads((tmp_path / "giveaways-ksa.json").read_text(encoding="utf-8"))
+    raw["internal"] = {}
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(raw), encoding="utf-8")
+    d = client.get("/api/admin/jasani/items?market=ksa").json()
+    assert d["pricesPending"] is True and d["items"][0]["wholesale"] is None
+    # a role that may not see prices is never told about a price gap
+    cat, _ = _catalog_client()
+    assert cat.get("/api/admin/jasani/items?market=ksa").json()["pricesPending"] is False
 
 
 def test_hidden_items_and_zero_stock_rule_reach_the_public_catalogue(tmp_path, monkeypatch):
