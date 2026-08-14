@@ -39,7 +39,8 @@ def create() -> tuple[bytes, dict]:
         "version": BACKUP_VERSION,
         "createdAt": int(time.time()),
         "createdAtHuman": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "contains": ["content", "designs", "pages", "settings", "rentals", "media"],
+        "contains": ["content", "designs", "pages", "settings", "rentals", "media",
+                     "jasaniHidden"],
     }
     payload = {
         "content": _rows("content", "page, key, lang, value, updated_at, updated_by"),
@@ -48,6 +49,9 @@ def create() -> tuple[bytes, dict]:
         # the pages themselves away, not just their text
         "customPages": _rows("custom_pages",
                              "slug, label, title, description, nav, created_at, created_by"),
+        # which supplier items an admin has taken off the website by hand
+        "jasaniHidden": _rows("jasani_hidden",
+                              "market, product_id, code, name, hidden_at, hidden_by"),
         "settings": _rows("settings", "key, value, updated_at"),
         "media": _rows("media", "file, name, mime, bytes, width, height, alt, created_at, created_by"),
         "rentals": content.rentals_load()[0],
@@ -118,6 +122,12 @@ def restore(blob: bytes, by: str) -> dict:
         for r in data.get("designs", []):
             conn.execute("INSERT INTO designs (page, doc, updated_at, updated_by) VALUES (?,?,?,?)",
                          (r["page"], r["doc"], now, by[:200]))
+        conn.execute("DELETE FROM jasani_hidden")
+        for r in data.get("jasaniHidden", []):
+            conn.execute("INSERT INTO jasani_hidden (market, product_id, code, name,"
+                         " hidden_at, hidden_by) VALUES (?,?,?,?,?,?)",
+                         (r["market"], r["product_id"], r.get("code", ""), r.get("name", ""),
+                          r.get("hidden_at", now), r.get("hidden_by", "")))
         conn.execute("DELETE FROM custom_pages")
         for r in data.get("customPages", []):
             conn.execute("INSERT INTO custom_pages (slug, label, title, description, nav,"

@@ -127,6 +127,33 @@ Footer **social links** are set in Settings, one https:// address per network.
 Empty fields render no icon at all, and the row reaches the live site at the
 next publish.
 
+### Jasani items
+
+**Jasani items** lists everything in the cached supplier snapshot for a market —
+SKU, name, brand, colour, wholesale and retail price, available, incoming and
+booked stock, and whether the item is on the website. Opening it never calls
+Jasani, so it costs none of the market's five daily calls. Search takes several
+terms at once (press Enter or type a comma; a pasted column of SKUs becomes one
+term per line) and matches any of them; filters cover stock status, brand,
+colour, category, website state and a price band on either price. Every list can
+be exported as PDF, Excel or CSV, either as filtered or as the whole snapshot.
+
+Clicking a row opens the item's own page: image gallery with slide and zoom,
+stock and price facts, description and full specifications. **Export as PDF**
+there produces a branded one-page product sheet for a customer — deliberately
+without any price, because supplier prices are internal.
+
+Supplier prices and booked stock (`list_price`, `retail_price`, `blocked_qty`)
+are internal by supplier policy. They are stored beside the catalogue rather
+than on it, are visible only to roles with `jasani.prices` (owner and admin),
+and never appear in a public response or a customer document.
+
+**Jasani console → What the website shows** decides what the public Corporate
+Gifts pages sell: a per-market rule that hides items with no available stock
+(off by default — turning it on also removes the page customers use to ask for a
+back-in-stock notification), and a search to hide or restore one item by hand.
+Both need the `jasani.visibility` permission.
+
 ## Tests
 
 ```bash

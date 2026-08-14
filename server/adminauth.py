@@ -35,6 +35,9 @@ PERMISSIONS = (
     "users.manage", "settings.manage", "audit.view",
     "content.edit", "media.manage", "brand.edit", "seo.edit",
     "rentals.manage", "jasani.view", "jasani.refresh",
+    # supplier prices and booked stock are internal, and changing what the
+    # public site sells is a bigger decision than reading the catalogue
+    "jasani.prices", "jasani.visibility",
     "requests.view", "requests.manage", "insights.view",
 )
 
@@ -140,6 +143,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         by TEXT NOT NULL,
         pages INTEGER NOT NULL,
         snapshot TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS jasani_hidden (
+        market TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        code TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '',
+        hidden_at INTEGER NOT NULL,
+        hidden_by TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (market, product_id)
     );
     CREATE TABLE IF NOT EXISTS custom_pages (
         slug TEXT PRIMARY KEY,

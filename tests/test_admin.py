@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 import time
 
 import pytest
@@ -430,6 +431,211 @@ def _seed_jasani_cache(cache_dir, market="ksa"):
         {"fetchedAt": int(time.time()), "stockAt": int(time.time()), "products": products}),
         encoding="utf-8")
     return products
+
+
+def _catalog_client():
+    """A catalogue-role client: jasani.view but no prices and no visibility."""
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/users",
+                json={"email": "catalog@elitemarcom.com", "name": "Catalogue Manager",
+                      "password": "catalog-long-pass", "role": "catalog"},
+                headers={"X-CSRF": me["csrf"]})
+    c = TestClient(app)
+    return c, sign_in(c, "catalog@elitemarcom.com", "catalog-long-pass")
+
+
+def _seed_items_cache(cache_dir, market="ksa"):
+    """A snapshot with the internal fields still attached, so _write_cache is
+    the thing under test as well as the reader."""
+    from server import jasani
+
+    rows = [
+        ("2001", "ITGL 1291", "Aluminium Flask", "Santhome", "Black", "Drinkware",
+         1840, 0, 120, 38.50, 62.00),
+        ("2002", "CTEN 2240", "Cotton Tote Bag", "EcoLine", "Natural", "Bags",
+         0, 1500, 90, 11.25, 19.00),
+        ("2003", "APRL 4417", "Zip Hoodie", "Elite Collection", "Orange", "Apparel",
+         12, 0, 8, 96.00, 165.00),
+    ]
+    products = []
+    for pid, code, name, brand, colour, cat, avail, inc, booked, whl, rtl in rows:
+        products.append({
+            "id": pid, "code": code, "name": name, "brand": brand, "color": colour,
+            "categories": [cat], "market": market, "image": "", "images": [],
+            "description": f"{name} description.", "hsCode": "9617.00",
+            "unitsPerCarton": 50, "cartonDimensions": "600 x 400 x 300 mm",
+            "stock": {"available": avail, "incoming": inc,
+                      "incomingDate": "12 Mar 2026" if inc else None},
+            jasani._INT_KEY: {"wholesale": whl, "retail": rtl, "currency": "SAR",
+                              "booked": booked},
+        })
+    jasani._write_cache(market, products, fetched_at=time.time(), stock_at=time.time())
+    return products
+
+
+def test_internal_supplier_fields_never_ride_on_a_product(tmp_path, monkeypatch):
+    """blocked_qty and the two prices are internal by supplier policy. They are
+    stored beside the catalogue, not on it, so a caller that hands the product
+    list to a public response cannot leak what the list never holds."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    raw = json.loads((tmp_path / "giveaways-ksa.json").read_text(encoding="utf-8"))
+    assert all(jasani._INT_KEY not in p for p in raw["products"])
+    for key in ("wholesale", "retail", "booked", "list_price", "blocked_qty"):
+        assert all(key not in p for p in raw["products"]), key
+    assert raw["internal"]["2001"] == {"wholesale": 38.5, "retail": 62.0,
+                                       "currency": "SAR", "booked": 120}
+    # a stock-only refresh carries no prices; the stored ones must survive it
+    products = jasani.all_products("ksa")
+    jasani._merge_stock(products, [{"id": "2001", "net_available_qty": 7, "blocked_qty": 3}])
+    jasani._write_cache("ksa", products, fetched_at=time.time(), stock_at=time.time())
+    after = jasani.internal_map("ksa")["2001"]
+    assert after["wholesale"] == 38.5 and after["booked"] == 3
+
+
+def test_items_list_searches_filters_and_gates_prices(tmp_path, monkeypatch):
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    res = client.get("/api/admin/jasani/items?market=ksa")
+    assert res.status_code == 200, res.text
+    d = res.json()
+    assert d["totals"] == {"all": 3, "in": 2, "low": 1, "out": 1, "hidden": 0}
+    assert d["facets"]["brands"] == ["EcoLine", "Elite Collection", "Santhome"]
+    assert d["canSeePrices"] is True and d["currency"] == "SAR"
+    assert d["items"][0]["wholesale"] is not None
+
+    # Enter and comma both split, and results match any term
+    two = client.get("/api/admin/jasani/items?market=ksa&q=hoodie,CTEN").json()
+    assert {i["code"] for i in two["items"]} == {"APRL 4417", "CTEN 2240"}
+    # a pasted column arrives with newlines
+    pasted = client.get("/api/admin/jasani/items?market=ksa&q=" + quote("ITGL 1291\nAPRL 4417")).json()
+    assert {i["code"] for i in pasted["items"]} == {"ITGL 1291", "APRL 4417"}
+
+    band = client.get("/api/admin/jasani/items?market=ksa&priceMin=30&priceMax=70").json()
+    assert {i["code"] for i in band["items"]} == {"ITGL 1291"}
+    retail = client.get("/api/admin/jasani/items?market=ksa&priceField=retail"
+                        "&priceMin=30&priceMax=70").json()
+    assert {i["code"] for i in retail["items"]} == {"ITGL 1291"}
+
+    assert [i["code"] for i in client.get(
+        "/api/admin/jasani/items?market=ksa&sort=priceDesc").json()["items"]][0] == "APRL 4417"
+    assert {i["code"] for i in client.get(
+        "/api/admin/jasani/items?market=ksa&stock=out").json()["items"]} == {"CTEN 2240"}
+    assert {i["code"] for i in client.get(
+        "/api/admin/jasani/items?market=ksa&hideZero=true").json()["items"]} == {"ITGL 1291", "APRL 4417"}
+
+    # a role without jasani.prices gets a payload with no price in it at all
+    cat, _ = _catalog_client()
+    lean = cat.get("/api/admin/jasani/items?market=ksa").json()
+    assert lean["canSeePrices"] is False
+    assert all("wholesale" not in i and "retail" not in i and "booked" not in i
+               for i in lean["items"])
+    assert cat.get("/api/admin/jasani/items?market=ksa&priceMin=30").json()["matched"] == 3
+
+
+def test_hidden_items_and_zero_stock_rule_reach_the_public_catalogue(tmp_path, monkeypatch):
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    me = client.get("/api/admin/me").json()
+    public = lambda: {p["code"] for p in
+                      client.get("/api/giveaways/products?country=ksa").json()["products"]}
+    assert public() == {"ITGL 1291", "CTEN 2240", "APRL 4417"}
+
+    hide = client.post("/api/admin/jasani/visibility",
+                       json={"market": "ksa", "productId": "2003", "hidden": True},
+                       headers={"X-CSRF": me["csrf"]})
+    assert hide.status_code == 200, hide.text
+    assert public() == {"ITGL 1291", "CTEN 2240"}
+    assert client.get("/api/admin/jasani/items?market=ksa").json()["totals"]["hidden"] == 1
+
+    rule = client.post("/api/admin/jasani/zero-stock-rule", json={"market": "ksa", "on": True},
+                       headers={"X-CSRF": me["csrf"]})
+    assert rule.status_code == 200
+    assert public() == {"ITGL 1291"}          # the out-of-stock tote goes too
+    rows = {i["code"]: i for i in client.get("/api/admin/jasani/items?market=ksa").json()["items"]}
+    assert rows["CTEN 2240"]["hiddenByRule"] is True and rows["CTEN 2240"]["hidden"] is False
+    assert rows["APRL 4417"]["hidden"] is True
+    assert rows["ITGL 1291"]["live"] is True
+    # the admin's own list still shows everything
+    assert len(rows) == 3
+
+    state = client.get("/api/admin/jasani/visibility?market=ksa").json()
+    assert state["hideZeroStock"] is True and state["zeroStockCount"] == 1
+    assert [h["product_id"] for h in state["hiddenItems"]] == ["2003"]
+
+    # changing what the public site sells needs more than jasani.view
+    cat, cat_me = _catalog_client()
+    denied = cat.post("/api/admin/jasani/visibility",
+                      json={"market": "ksa", "productId": "2001", "hidden": True},
+                      headers={"X-CSRF": cat_me["csrf"]})
+    assert denied.status_code == 403
+
+    client.post("/api/admin/jasani/zero-stock-rule", json={"market": "ksa", "on": False},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/jasani/visibility",
+                json={"market": "ksa", "productId": "2003", "hidden": False},
+                headers={"X-CSRF": me["csrf"]})
+    assert public() == {"ITGL 1291", "CTEN 2240", "APRL 4417"}
+
+
+def test_item_detail_and_exports(tmp_path, monkeypatch):
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    detail = client.get("/api/admin/jasani/items/ksa/2001")
+    assert detail.status_code == 200, detail.text
+    item = detail.json()["item"]
+    assert item["code"] == "ITGL 1291" and item["description"]
+    assert item["wholesale"] == 38.5 and item["booked"] == 120
+    assert client.get("/api/admin/jasani/items/ksa/nope").status_code == 404
+
+    csv = client.get("/api/admin/jasani/items-export?format=csv&market=ksa")
+    assert csv.status_code == 200
+    body = csv.content.decode("utf-8-sig")
+    assert body.splitlines()[0].startswith("SN,SKU,Name,Brand,Colour,Category,Wholesale price (SAR)")
+    assert "ITGL 1291" in body
+    xlsx = client.get("/api/admin/jasani/items-export?format=xlsx&market=ksa")
+    assert xlsx.content[:2] == b"PK"
+    pdf = client.get("/api/admin/jasani/items-export?format=pdf&market=ksa")
+    assert pdf.content.startswith(b"%PDF-")
+
+    # a filtered export carries only what is on screen; scope=all ignores filters
+    one = client.get("/api/admin/jasani/items-export?format=csv&market=ksa&q=hoodie")
+    assert len(one.content.decode("utf-8-sig").strip().splitlines()) == 2
+    every = client.get("/api/admin/jasani/items-export?format=csv&market=ksa&q=hoodie&scope=all")
+    assert len(every.content.decode("utf-8-sig").strip().splitlines()) == 4
+
+    # an export must not become the way a price leaves the panel
+    cat, _ = _catalog_client()
+    lean = cat.get("/api/admin/jasani/items-export?format=csv&market=ksa")
+    header = lean.content.decode("utf-8-sig").splitlines()[0]
+    assert "Wholesale" not in header and "Retail" not in header and "Booked" not in header
+    assert "38.5" not in lean.content.decode("utf-8-sig")
+
+
+def test_product_sheet_pdf_carries_no_price(tmp_path, monkeypatch):
+    """The sheet is a customer document, and supplier prices may not travel in
+    one — not for an owner either."""
+    from server import jasani
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    _seed_items_cache(tmp_path)
+    res = client.get("/api/admin/jasani/items/ksa/2001/sheet")
+    assert res.status_code == 200
+    assert res.content.startswith(b"%PDF-")
+    assert res.headers["cache-control"] == "no-store"
+    assert "ITGL-1291" in res.headers["content-disposition"]
+    body = res.content.decode("latin-1")
+    for forbidden in ("38.5", "62.0", "Wholesale", "Retail price", "Margin", "SAR"):
+        assert forbidden not in body, forbidden
+    assert client.get("/api/admin/jasani/items/ksa/nope/sheet").status_code == 404
 
 
 def test_jasani_console_status_and_search(tmp_path, monkeypatch):

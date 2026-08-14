@@ -53,6 +53,9 @@ SUPPLIER_MAX_RECORDS = 5000
 SUPPLIER_DAILY_BUDGET = int(os.environ.get("EM_SUPPLIER_DAILY_BUDGET", "5"))
 # The last call of the day is held back for a person: background refreshes stop
 # at this many so an owner/admin can always force a sync when something is wrong.
+# The admin item list marks low stock at the same figure the public catalogue
+# uses (public/js/giveaways.js) — two thresholds would disagree in public.
+LOW_STOCK_THRESHOLD = int(os.environ.get("EM_LOW_STOCK_THRESHOLD", "20"))
 SUPPLIER_AUTO_BUDGET = max(0, min(
     SUPPLIER_DAILY_BUDGET,
     int(os.environ.get("EM_SUPPLIER_AUTO_BUDGET", str(max(0, SUPPLIER_DAILY_BUDGET - 1))))))

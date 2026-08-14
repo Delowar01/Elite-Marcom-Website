@@ -820,11 +820,139 @@
           '<div class="admin-panel"><h2>Printing manuals cache</h2><p class="admin-inline-note">' +
           esc(d.manuals.cachedPdfs) + " PDF(s) cached (" + (d.manuals.bytes / (1024 * 1024)).toFixed(1) + " MB) · " +
           esc(d.manuals.validVerdicts) + " valid · " + esc(d.manuals.failedVerdicts) + " marked unavailable</p></div>" +
-          '<div class="admin-panel"><h2>Search the cached catalog</h2><div class="req-filters">' +
+          '<div class="admin-panel" id="jz-visibility"><p class="admin-inline-note">Loading…</p></div>' +
+          '<div class="admin-panel"><h2>Search the cached catalog</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:10px;">A quick look-up. The full table, ' +
+          'with filters, prices and exports, is on <a href="#items">Jasani items</a>.</p>' +
+          '<div class="req-filters">' +
           '<select id="jz-market"><option value="ksa">Saudi Arabia</option><option value="uae">UAE</option></select>' +
           '<input id="jz-q" placeholder="Name, SKU or id" maxlength="80">' +
           '<button class="btn btn--ghost btn--small" id="jz-search">Search</button></div>' +
           '<div id="jz-results"></div></div>';
+
+        /* what the public Corporate Gifts pages are allowed to show */
+        var visMarket = "ksa", visSearch = "";
+        function loadVisibility() {
+          var box = document.getElementById("jz-visibility");
+          if (!box) return;
+          api("/api/admin/jasani/visibility?market=" + visMarket).then(function (rv) {
+            if (!rv.ok) { box.innerHTML = '<p class="admin-inline-note">Could not load.</p>'; return; }
+            var v = rv.data, canVis = can("jasani.visibility");
+            var needle = visSearch.trim().toLowerCase();
+            box.innerHTML =
+              '<div class="panel-head"><h2>What the website shows</h2>' +
+              '<span class="admin-inline-note">Applies to the public Corporate Gifts pages</span></div>' +
+              '<div class="jz-head" style="margin-bottom:14px;"><span class="jz-head__spacer"></span>' +
+              '<div class="jz-seg" role="group" aria-label="Market">' +
+              ["ksa", "uae"].map(function (m) {
+                return '<button type="button" data-vismarket="' + m + '" aria-pressed="' +
+                  (visMarket === m) + '">' + (m === "ksa" ? "Saudi Arabia" : "UAE") + "</button>";
+              }).join("") + "</div></div>" +
+              '<label class="jz-rule-card" style="margin-bottom:14px;">' +
+                '<input type="checkbox" id="jz-zero-rule"' + (v.hideZeroStock ? " checked" : "") +
+                (canVis ? "" : " disabled") + ">" +
+                "<span><b>Hide items with no available stock</b><span>Applies to " +
+                esc(visMarket.toUpperCase()) + ", where " + v.zeroStockCount + " item" +
+                (v.zeroStockCount === 1 ? " has" : "s have") + " zero available stock right now. " +
+                "With this on they leave the catalogue and search, and they come back on their own " +
+                "at the next stock sync — nobody has to remember to switch them back." +
+                (canVis ? "" : " Only an owner or admin can change this.") + "</span></span></label>" +
+              '<h3 style="font-size:0.95rem;margin:18px 0 8px;">Hide one item</h3>' +
+              '<div class="req-filters"><input id="jz-hide-q" placeholder="Search a SKU, name or brand" ' +
+                'maxlength="80" value="' + esc(visSearch) + '"></div>' +
+              '<div id="jz-hide-results"></div>' +
+              '<h3 style="font-size:0.95rem;margin:22px 0 8px;">Hidden right now</h3>' +
+              ((v.hiddenItems || []).length
+                ? '<div class="jz-hidden-list">' + v.hiddenItems.map(function (h) {
+                    return '<div class="jz-hidden-item"><b>' + esc(h.code || h.product_id) + "</b>" +
+                      "<span>" + esc(h.name) + "</span>" +
+                      '<span class="jz-hidden-item__spacer"></span>' +
+                      '<span class="jz-hidden-why">hidden by hand · ' + esc(when(h.hidden_at)) + "</span>" +
+                      (canVis ? '<button class="btn btn--ghost btn--small" data-unhide="' +
+                        esc(h.product_id) + '">Show on website</button>' : "") + "</div>";
+                  }).join("") + "</div>"
+                : '<p class="admin-inline-note">Nothing is hidden by hand in ' +
+                  esc(visMarket.toUpperCase()) + ".</p>") +
+              '<p class="admin-inline-note" style="margin-top:10px;">Only items switched off by hand ' +
+              "are listed here. Items the zero-stock rule is holding back are not — they return by " +
+              'themselves, and you can see which ones on <a href="#items">Jasani items</a> under ' +
+              "Website → Not on the website.</p>";
+
+            box.querySelectorAll("[data-vismarket]").forEach(function (b) {
+              b.addEventListener("click", function () {
+                visMarket = b.getAttribute("data-vismarket");
+                visSearch = "";
+                loadVisibility();
+              });
+            });
+            var rule = document.getElementById("jz-zero-rule");
+            if (rule && canVis) rule.addEventListener("change", function () {
+              api("/api/admin/jasani/zero-stock-rule", { market: visMarket, on: rule.checked })
+                .then(function (r2) {
+                  if (!r2.ok) return apiErr(r2);
+                  toast(rule.checked ? "Zero-stock items are now hidden from the website."
+                                     : "Zero-stock items are shown on the website again.");
+                  loadVisibility();
+                });
+            });
+            var hq = document.getElementById("jz-hide-q");
+            var hTimer = null;
+            hq.addEventListener("input", function () {
+              visSearch = hq.value;
+              clearTimeout(hTimer);
+              hTimer = setTimeout(searchToHide, 300);
+            });
+            if (needle) searchToHide();
+            box.querySelectorAll("[data-unhide]").forEach(function (b) {
+              b.addEventListener("click", function () {
+                api("/api/admin/jasani/visibility",
+                    { market: visMarket, productId: b.getAttribute("data-unhide"), hidden: false })
+                  .then(function (r2) {
+                    r2.ok ? (toast("Shown on the website again."), loadVisibility()) : apiErr(r2);
+                  });
+              });
+            });
+          });
+        }
+        function searchToHide() {
+          var out = document.getElementById("jz-hide-results");
+          if (!out) return;
+          var term = (document.getElementById("jz-hide-q") || {}).value || "";
+          if (!term.trim()) { out.innerHTML = ""; return; }
+          api("/api/admin/jasani/items?market=" + visMarket + "&q=" +
+              encodeURIComponent(term) + "&perPage=10").then(function (r2) {
+            if (!r2.ok) return apiErr(r2);
+            var rows = r2.data.items || [];
+            var canVis = can("jasani.visibility");
+            out.innerHTML = rows.length
+              ? '<div class="jz-hidden-list">' + rows.map(function (it) {
+                  return '<div class="jz-hidden-item">' +
+                    (it.image ? '<img class="jz-img" style="width:30px;height:30px;" src="' +
+                      esc(it.image) + '" alt="">' : "") +
+                    "<b>" + esc(it.code) + "</b><span>" + esc(it.name) + "</span>" +
+                    '<span class="jz-hidden-item__spacer"></span>' +
+                    '<span class="jz-hidden-why">' + jzNum(it.available) + " available</span>" +
+                    (canVis ? '<button class="btn btn--ghost btn--small" data-hidetoggle="' +
+                      esc(it.id) + '" data-on="' + (it.hidden ? "1" : "0") + '">' +
+                      (it.hidden ? "Show on website" : "Hide from website") + "</button>" : "") +
+                    "</div>";
+                }).join("") + "</div>"
+              : '<p class="admin-inline-note">Nothing matches “' + esc(term) + "”.</p>";
+            out.querySelectorAll("[data-hidetoggle]").forEach(function (b) {
+              b.addEventListener("click", function () {
+                api("/api/admin/jasani/visibility", {
+                  market: visMarket, productId: b.getAttribute("data-hidetoggle"),
+                  hidden: b.getAttribute("data-on") !== "1"
+                }).then(function (r3) {
+                  if (!r3.ok) return apiErr(r3);
+                  toast("Saved.");
+                  loadVisibility();
+                });
+              });
+            });
+          });
+        }
+        loadVisibility();
 
         main.querySelectorAll("[data-refresh]").forEach(function (btn) {
           btn.addEventListener("click", function () {
@@ -3212,6 +3340,659 @@
       });
     }
   };
+
+  /* ---------------- Jasani items ---------------- */
+
+  var jzState = {
+    market: "ksa", terms: [], field: "all", stock: "", brand: "", colour: "",
+    category: "", visibility: "", sort: "name", hideZero: false,
+    priceField: "wholesale", priceMin: "", priceMax: "",
+    page: 1, perPage: 25, listScroll: 0, gallery: 0, data: null
+  };
+
+  function jzQuery(extra) {
+    var s = jzState;
+    var q = {
+      market: s.market, q: s.terms.join(","), field: s.field, stock: s.stock,
+      brand: s.brand, colour: s.colour, category: s.category,
+      visibility: s.visibility, hideZero: s.hideZero ? "true" : "false",
+      priceField: s.priceField, priceMin: s.priceMin, priceMax: s.priceMax,
+      sort: s.sort, page: s.page, perPage: s.perPage
+    };
+    Object.keys(extra || {}).forEach(function (k) { q[k] = extra[k]; });
+    return Object.keys(q).filter(function (k) { return q[k] !== "" && q[k] != null; })
+      .map(function (k) { return k + "=" + encodeURIComponent(q[k]); }).join("&");
+  }
+
+  function jzMoney(v) {
+    return v == null ? "—" : Number(v).toLocaleString("en-GB",
+      { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function jzNum(v) { return Number(v || 0).toLocaleString("en-GB"); }
+  /* the chip has room for an age, not a full timestamp */
+  function jzAgo(ts) {
+    if (!ts) return "never";
+    var mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+    if (mins < 2) return "just now";
+    if (mins < 60) return mins + " min ago";
+    var hours = Math.round(mins / 60);
+    if (hours < 24) return hours + (hours === 1 ? " hour ago" : " hours ago");
+    var days = Math.round(hours / 24);
+    return days + (days === 1 ? " day ago" : " days ago");
+  }
+
+  var JZ_EYE_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z"/><circle cx="12" cy="12" r="2.6"/></svg>';
+  var JZ_EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18"/><path d="M10.6 5.1A9.7 9.7 0 0112 5c5 0 9 4.5 9 7a11 11 0 01-2.2 3.2M6.2 6.7C3.9 8.2 3 10.4 3 12c0 2.5 4 7 9 7a9.6 9.6 0 004.3-1"/></svg>';
+
+  function jzVisBadge(it) {
+    var live = it.live;
+    var label = it.hidden ? "Hidden" : (it.hiddenByRule ? "Hidden by rule" : "Live");
+    var why = it.hidden ? "hidden by hand"
+      : it.hiddenByRule ? "no available stock" : "shown on the website";
+    return '<span class="jz-vis' + (live ? "" : " jz-vis--off") + '" title="' + esc(why) + '">' +
+      (live ? JZ_EYE_ON : JZ_EYE_OFF) + esc(label) + "</span>";
+  }
+
+  function jzExportChildren(scope) {
+    return ["pdf", "xlsx", "csv"].map(function (fmt) {
+      var names = { pdf: "PDF (branded)", xlsx: "Excel (.xlsx)", csv: "CSV (spreadsheet)" };
+      return { label: names[fmt], action: function () {
+        location.href = "/api/admin/jasani/items-export?" + jzQuery({ format: fmt, scope: scope });
+      } };
+    });
+  }
+
+  function jzSetHidden(it, hidden, after) {
+    api("/api/admin/jasani/visibility",
+        { market: jzState.market, productId: it.id, hidden: hidden }).then(function (r) {
+      if (!r.ok) return apiErr(r);
+      toast(hidden ? it.code + " hidden from the website."
+                   : it.code + " is shown on the website again.");
+      after && after();
+    });
+  }
+
+  function jzRowMenu(btn, it, canVis, after) {
+    var entries = [
+      { label: "View details", action: function () { location.hash = "#items/" + jzState.market + "/" + encodeURIComponent(it.id); } },
+      { label: "Open on the website", disabled: !it.live,
+        title: "This item is not on the website right now",
+        action: function () { window.open("/product.html?country=" + jzState.market + "&id=" + encodeURIComponent(it.id), "_blank", "noopener"); } },
+      { label: "Download printing manual",
+        action: function () { location.href = "/api/giveaways/manual?country=" + jzState.market + "&product_id=" + encodeURIComponent(it.id); } },
+      { label: "Copy SKU", action: function () { jzCopy(it.code); } },
+      { label: "Copy supplier product id", action: function () { jzCopy(it.id); } }
+    ];
+    if (canVis) {
+      entries.push({ label: it.hidden ? "Show on website" : "Hide from website",
+                     danger: !it.hidden,
+                     action: function () { jzSetHidden(it, !it.hidden, after); } });
+    }
+    entries.push({ label: "Export as PDF", action: function () {
+      location.href = "/api/admin/jasani/items/" + jzState.market + "/" +
+        encodeURIComponent(it.id) + "/sheet";
+    } });
+    showMenu(btn, entries);
+  }
+
+  function jzCopy(text) {
+    try {
+      navigator.clipboard.writeText(text);
+      toast("Copied " + text + ".");
+    } catch (e) {
+      toast("Could not copy — " + text, true);
+    }
+  }
+
+  views.items = function (param) {
+    if (param) {
+      var bits = param.split("/");
+      return jzDetail(bits[0], decodeURIComponent(bits.slice(1).join("/")));
+    }
+    api("/api/admin/jasani/items?" + jzQuery()).then(function (r) {
+      if (!r.ok) return apiErr(r);
+      var d = jzState.data = r.data;
+      var prices = d.canSeePrices, canVis = d.canChangeVisibility;
+      var cur = d.currency;
+      var t = d.totals;
+
+      function sel(id, label, value, options) {
+        return '<select id="' + id + '" aria-label="' + esc(label) + '">' +
+          '<option value="">' + esc(label) + "</option>" +
+          options.map(function (o) {
+            var v = Array.isArray(o) ? o[0] : o, txt = Array.isArray(o) ? o[1] : o;
+            return '<option value="' + esc(v) + '"' + (value === v ? " selected" : "") + ">" +
+              esc(txt) + "</option>";
+          }).join("") + "</select>";
+      }
+      var STOCK_LABEL = { in: "In stock", low: "Low stock", out: "Out of stock",
+                          incoming: "Incoming expected", booked: "Has booked stock" };
+      var chips = [];
+      if (jzState.stock) chips.push(["stock", "Stock: " + STOCK_LABEL[jzState.stock]]);
+      if (jzState.brand) chips.push(["brand", "Brand: " + jzState.brand]);
+      if (jzState.colour) chips.push(["colour", "Colour: " + jzState.colour]);
+      if (jzState.category) chips.push(["category", "Category: " + jzState.category]);
+      if (jzState.visibility) chips.push(["visibility", "Website: " +
+        ({ visible: "Live", hidden: "Not live", byhand: "Hidden by hand" }[jzState.visibility])]);
+      if (jzState.hideZero) chips.push(["hideZero", "Zero stock hidden"]);
+      if (jzState.priceMin !== "" || jzState.priceMax !== "") {
+        chips.push(["price", (jzState.priceField === "retail" ? "Retail " : "Wholesale ") +
+          (jzState.priceMin || "0") + "–" + (jzState.priceMax || "any") + " " + cur]);
+      }
+
+      var cards = [["", jzNum(t.all), "Items in the snapshot", "all"],
+                   ["ok", jzNum(t.in), "In stock", "in"],
+                   ["warn", jzNum(t.low), "Low stock (≤ " + d.lowThreshold + ")", "low"],
+                   ["bad", jzNum(t.out), "Out of stock", "out"],
+                   ["", jzNum(t.hidden), "Hidden from the website", "hidden"]];
+      var snap = d.snapshot || {};
+
+      main.innerHTML =
+        '<div class="jz-head"><div>' +
+          '<h1 class="admin-h1">Jasani items</h1>' +
+          '<p class="admin-sub">Every product in the cached supplier snapshot, per market. ' +
+          "Reading this page never calls Jasani — it costs none of the day's five calls.</p></div>" +
+          '<span class="jz-head__spacer"></span>' +
+          '<div class="jz-head__tools">' +
+            '<span class="jz-snap' + (snap.stockFresh ? "" : " jz-snap--due") + '"><i></i>' +
+            (snap.cached ? "Products " + esc(jzAgo(snap.fetchedAt)) + " · stock " + esc(jzAgo(snap.stockAt))
+                         : "Nothing cached yet") + "</span>" +
+            '<div class="jz-seg" role="group" aria-label="Market">' +
+              ["ksa", "uae"].map(function (m) {
+                var labels = { ksa: "Saudi Arabia", uae: "UAE" };
+                return '<button type="button" data-jzmarket="' + m + '" aria-pressed="' +
+                  (jzState.market === m) + '">' + labels[m] +
+                  ' <span class="jz-seg__n">' + jzNum((d.markets || {})[m] || 0) + "</span></button>";
+              }).join("") + "</div>" +
+          "</div></div>" +
+
+        '<div class="stat-row stat-row--tight">' + cards.map(function (c) {
+          return '<button type="button" class="stat-card stat-card--click' +
+            (c[0] ? " stat-card--" + c[0] : "") + '" data-jzstat="' + c[3] + '"><b>' + c[1] +
+            "</b><span>" + esc(c[2]) + "</span></button>";
+        }).join("") + "</div>" +
+
+        '<div class="admin-panel">' +
+          '<div class="jz-search">' +
+            '<span class="jz-search__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></span>' +
+            jzState.terms.map(function (term, i) {
+              return '<span class="jz-chip">' + esc(term) +
+                '<button type="button" data-jzterm="' + i + '" aria-label="Remove ' + esc(term) + '">✕</button></span>';
+            }).join("") +
+            '<input id="jz-q" autocomplete="off" placeholder="' +
+            (jzState.terms.length ? "Add another term…" : "Search name, SKU, brand, colour or category…") + '">' +
+            '<select id="jz-field" aria-label="Search in">' +
+            [["all", "All fields"], ["name", "Name only"], ["sku", "SKU only"],
+             ["brand", "Brand only"], ["colour", "Colour only"], ["category", "Category only"]]
+              .map(function (o) {
+                return '<option value="' + o[0] + '"' + (jzState.field === o[0] ? " selected" : "") +
+                  ">" + o[1] + "</option>";
+              }).join("") + "</select>" +
+            (jzState.terms.length ? '<button class="btn btn--ghost btn--small" id="jz-clear">Clear all</button>' : "") +
+          "</div>" +
+          '<p class="jz-search__hint">Press <b>Enter</b> or type a <b>comma</b> to add another term — ' +
+          "results match any of them. Paste a column of SKUs and each line becomes its own term.</p>" +
+          '<div class="jz-filters">' +
+            sel("jz-sort", "Sort", jzState.sort,
+                [["name", "Name A–Z"], ["sku", "SKU A–Z"], ["stockDesc", "Stock high → low"],
+                 ["stockAsc", "Stock low → high"]].concat(prices
+                   ? [["priceAsc", "Price low → high"], ["priceDesc", "Price high → low"]] : [])
+                 .concat([["brand", "Brand"]])) +
+            sel("jz-stock", "Stock status", jzState.stock,
+                [["in", "In stock"], ["low", "Low stock (≤ " + d.lowThreshold + ")"],
+                 ["out", "Out of stock"], ["incoming", "Incoming expected"]]
+                .concat(prices ? [["booked", "Has booked stock"]] : [])) +
+            sel("jz-brand", "Brand", jzState.brand, d.facets.brands) +
+            sel("jz-colour", "Colour", jzState.colour, d.facets.colours) +
+            sel("jz-category", "Category", jzState.category, d.facets.categories) +
+            sel("jz-vis", "Website", jzState.visibility,
+                [["visible", "Live on the website"], ["hidden", "Not on the website"],
+                 ["byhand", "Hidden by hand"]]) +
+            '<label class="jz-toggle"><input type="checkbox" id="jz-zero"' +
+              (jzState.hideZero ? " checked" : "") + "> Hide zero-stock items</label>" +
+            (prices ? '<span class="jz-price-filter">' +
+              '<select id="jz-pfield" aria-label="Which price to filter on">' +
+              '<option value="wholesale"' + (jzState.priceField === "wholesale" ? " selected" : "") + ">Wholesale</option>" +
+              '<option value="retail"' + (jzState.priceField === "retail" ? " selected" : "") + ">Retail</option></select>" +
+              '<input id="jz-pmin" type="number" min="0" step="0.01" placeholder="Min" aria-label="Minimum price" value="' + esc(jzState.priceMin) + '">' +
+              '<i aria-hidden="true">–</i>' +
+              '<input id="jz-pmax" type="number" min="0" step="0.01" placeholder="Max" aria-label="Maximum price" value="' + esc(jzState.priceMax) + '">' +
+              "<em>" + esc(cur) + " ex VAT</em></span>" : "") +
+            '<button class="btn btn--primary btn--small jz-export" id="jz-export">Export ▾</button>' +
+          "</div>" +
+          (chips.length ? '<div class="jz-applied"><span class="muted">Filters:</span>' +
+            chips.map(function (c) {
+              return '<span class="jz-chip">' + esc(c[1]) +
+                '<button type="button" data-jzclear="' + c[0] + '" aria-label="Remove filter">✕</button></span>';
+            }).join("") +
+            '<button class="btn btn--ghost btn--small" data-jzclear="all">Reset all</button></div>' : "") +
+        "</div>" +
+
+        '<div class="admin-panel">' +
+          '<div class="panel-head"><h2>' + jzNum(d.matched) + " item" + (d.matched === 1 ? "" : "s") +
+          (d.matched !== t.all ? " of " + jzNum(t.all) : "") + "</h2>" +
+          '<span class="admin-inline-note">' +
+          (prices ? "Prices are " + esc(cur) + ", excluding VAT. " : "") +
+          "Available is the supplier's guaranteed-sellable quantity; incoming dates are estimates." +
+          (prices ? " Prices and booked stock are internal — they never reach the website." : "") +
+          "</span></div>" +
+          '<div class="table-scroll"><table class="jz-table"><thead><tr>' +
+            "<th>SN</th><th></th><th>SKU</th><th>Name</th><th>Brand</th><th>Colour</th>" +
+            (prices ? '<th class="jz-num">Wholesale Price</th><th class="jz-num">Retail Price</th>' : "") +
+            '<th class="jz-num">Available</th><th class="jz-num">Incoming</th>' +
+            (prices ? '<th class="jz-num">Booked</th>' : "") +
+            "<th>Website</th><th></th></tr></thead><tbody>" +
+            (d.items.length ? d.items.map(function (it, i) {
+              var cls = it.available === 0 ? " jz-stock--out"
+                : (it.available <= d.lowThreshold ? " jz-stock--low" : "");
+              return '<tr' + (it.live ? "" : ' class="is-hidden"') + ' data-jzid="' + esc(it.id) + '">' +
+                '<td class="jz-sn">' + ((d.page - 1) * d.perPage + i + 1) + "</td>" +
+                '<td class="jz-cell-img">' + (it.image
+                  ? '<img class="jz-img" src="' + esc(it.image) + '" alt="" loading="lazy">'
+                  : '<span class="jz-img"></span>') + "</td>" +
+                '<td class="jz-sku">' + esc(it.code) + "</td>" +
+                '<td class="jz-name"><b>' + esc(it.name) + '</b><span class="jz-cat">' +
+                  esc(it.category) + '</span><span class="jz-meta">' +
+                  esc([it.brand, it.color, it.category].filter(Boolean).join(" · ")) + "</span></td>" +
+                '<td class="jz-brand">' + esc(it.brand || "—") + "</td>" +
+                '<td class="jz-colour">' + esc(it.color || "—") + "</td>" +
+                (prices ? '<td class="jz-num jz-price jz-price--whl" data-l="Wholesale Price"><b>' +
+                    jzMoney(it.wholesale) + "</b>" + JZ_INT + "</td>" +
+                  '<td class="jz-num jz-price jz-price--rtl" data-l="Retail Price">' +
+                    jzMoney(it.retail) + JZ_INT + "</td>" : "") +
+                '<td class="jz-num jz-stock' + cls + '" data-l="Available">' +
+                  '<span class="jz-stock-label">Available</span><b>' + jzNum(it.available) + "</b>" +
+                  '<span class="jz-sub">' + (it.available === 0 ? "out of stock"
+                    : it.available <= d.lowThreshold ? "low" : "available") + "</span></td>" +
+                '<td class="jz-num" data-l="Incoming">' + (it.incoming
+                  ? "<b>" + jzNum(it.incoming) + "</b>" + (it.incomingDate
+                      ? '<span class="jz-sub">est. ' + esc(it.incomingDate) + "</span>" : "")
+                  : '<span class="muted">—</span>') + "</td>" +
+                (prices ? '<td class="jz-num jz-booked" data-l="Booked">' +
+                  (it.booked ? jzNum(it.booked) : '<span class="muted">—</span>') + JZ_INT + "</td>" : "") +
+                '<td class="jz-cell-vis">' + jzVisBadge(it) + "</td>" +
+                '<td class="jz-cell-actions cell-actions"><button class="dots-btn" data-jzrow="' +
+                  esc(it.id) + '" aria-label="Actions for ' + esc(it.code) + '">⋮</button></td></tr>';
+            }).join("")
+              : '<tr><td colspan="13"><div class="jz-empty"><b>Nothing matches.</b><br>' +
+                '<span class="admin-inline-note">Try removing a filter, or search a different SKU.</span></div></td></tr>') +
+          "</tbody></table></div>" +
+          '<div class="jz-foot"><span>Showing ' +
+            (d.matched ? jzNum((d.page - 1) * d.perPage + 1) + "–" +
+              jzNum(Math.min(d.page * d.perPage, d.matched)) : "0") + " of " + jzNum(d.matched) + "</span>" +
+            '<span class="jz-foot__spacer"></span>' +
+            '<label style="display:flex;gap:7px;align-items:center;">Per page<select id="jz-per">' +
+            [25, 50, 100].map(function (v) {
+              return '<option value="' + v + '"' + (d.perPage === v ? " selected" : "") + ">" + v + "</option>";
+            }).join("") + "</select></label>" +
+            '<span class="jz-pager">' +
+              '<button type="button" data-jzpage="prev"' + (d.page === 1 ? " disabled" : "") + ">‹</button>" +
+              jzPageButtons(d.page, d.pages) +
+              '<button type="button" data-jzpage="next"' + (d.page === d.pages ? " disabled" : "") + ">›</button>" +
+            "</span></div>" +
+        "</div>";
+
+      jzWireList(d);
+      if (jzState.listScroll) {
+        var y = jzState.listScroll;
+        jzState.listScroll = 0;
+        requestAnimationFrame(function () { window.scrollTo(0, y); });
+      }
+    });
+  };
+
+  var JZ_INT = '<span class="jz-note-internal jz-card-only">internal</span>';
+
+  function jzPageButtons(page, pages) {
+    // a long catalogue would otherwise render hundreds of page buttons
+    var out = [], seen = {};
+    [1, 2, page - 1, page, page + 1, pages - 1, pages].forEach(function (n) {
+      if (n >= 1 && n <= pages && !seen[n]) { seen[n] = 1; out.push(n); }
+    });
+    out.sort(function (a, b) { return a - b; });
+    var html = "", last = 0;
+    out.forEach(function (n) {
+      if (last && n > last + 1) html += '<span class="jz-pager__gap">…</span>';
+      html += '<button type="button" data-jzpage="' + n + '" aria-current="' + (n === page) + '">' + n + "</button>";
+      last = n;
+    });
+    return html;
+  }
+
+  function jzReload(resetPage) {
+    if (resetPage !== false) jzState.page = 1;
+    views.items();
+  }
+
+  function jzWireList(d) {
+    main.querySelectorAll("[data-jzmarket]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        jzState.market = b.getAttribute("data-jzmarket");
+        jzState.brand = jzState.colour = jzState.category = "";
+        jzState.priceMin = jzState.priceMax = "";   // the band was another currency
+        jzReload();
+      });
+    });
+    main.querySelectorAll("[data-jzstat]").forEach(function (c) {
+      c.addEventListener("click", function () {
+        var k = c.getAttribute("data-jzstat");
+        if (k === "all") { jzState.stock = ""; jzState.visibility = ""; jzState.hideZero = false; }
+        else if (k === "hidden") { jzState.stock = ""; jzState.visibility = "hidden"; }
+        else { jzState.stock = k; jzState.visibility = ""; }
+        jzReload();
+      });
+    });
+    var q = document.getElementById("jz-q");
+    function addTerms(raw) {
+      var dropped = 0;
+      raw.split(/[,\n\t]/).map(function (t) { return t.trim(); }).filter(Boolean).forEach(function (t) {
+        if (jzState.terms.indexOf(t) !== -1) return;
+        if (jzState.terms.length >= 20) { dropped++; return; }
+        jzState.terms.push(t);
+      });
+      if (dropped) toast("20 search terms is the maximum — " + dropped + " were not added.", true);
+      jzReload();
+      var again = document.getElementById("jz-q");
+      if (again) again.focus();
+    }
+    q.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && q.value.trim()) { e.preventDefault(); addTerms(q.value); }
+      else if (e.key === "Backspace" && !q.value && jzState.terms.length) {
+        jzState.terms.pop();
+        jzReload();
+        var again = document.getElementById("jz-q");
+        if (again) again.focus();
+      }
+    });
+    q.addEventListener("input", function () { if (q.value.indexOf(",") !== -1) addTerms(q.value); });
+    q.addEventListener("paste", function (e) {
+      var text = (e.clipboardData || window.clipboardData).getData("text");
+      if (/[,\n\t]/.test(text)) { e.preventDefault(); addTerms(text); }
+    });
+    main.querySelectorAll("[data-jzterm]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        jzState.terms.splice(parseInt(b.getAttribute("data-jzterm"), 10), 1);
+        jzReload();
+      });
+    });
+    var clear = document.getElementById("jz-clear");
+    if (clear) clear.addEventListener("click", function () { jzState.terms = []; jzReload(); });
+
+    var binds = { "jz-field": "field", "jz-sort": "sort", "jz-stock": "stock",
+                  "jz-brand": "brand", "jz-colour": "colour", "jz-category": "category",
+                  "jz-vis": "visibility", "jz-pfield": "priceField" };
+    Object.keys(binds).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener("change", function () {
+        jzState[binds[id]] = this.value;
+        jzReload();
+      });
+    });
+    document.getElementById("jz-zero").addEventListener("change", function () {
+      jzState.hideZero = this.checked;
+      jzReload();
+    });
+    ["jz-pmin", "jz-pmax"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var key = id === "jz-pmin" ? "priceMin" : "priceMax", timer = null;
+      el.addEventListener("input", function () {
+        clearTimeout(timer);
+        var v = el.value;
+        timer = setTimeout(function () {
+          jzState[key] = v;
+          jzReload();
+          var again = document.getElementById(id);
+          if (again) again.focus();
+        }, 400);
+      });
+    });
+    main.querySelectorAll("[data-jzclear]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var k = b.getAttribute("data-jzclear");
+        if (k === "all") {
+          jzState.stock = jzState.brand = jzState.colour = jzState.category = jzState.visibility = "";
+          jzState.hideZero = false;
+          jzState.priceMin = jzState.priceMax = "";
+        } else if (k === "hideZero") jzState.hideZero = false;
+        else if (k === "price") jzState.priceMin = jzState.priceMax = "";
+        else jzState[k] = "";
+        jzReload();
+      });
+    });
+    document.getElementById("jz-per").addEventListener("change", function () {
+      jzState.perPage = parseInt(this.value, 10);
+      jzReload();
+    });
+    main.querySelectorAll("[data-jzpage]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var v = b.getAttribute("data-jzpage");
+        jzState.page = v === "prev" ? Math.max(1, d.page - 1)
+          : v === "next" ? Math.min(d.pages, d.page + 1) : parseInt(v, 10);
+        jzReload(false);
+      });
+    });
+    document.getElementById("jz-export").addEventListener("click", function (e) {
+      e.stopPropagation();
+      showMenu(this, [
+        { heading: "Export" },
+        { label: "These " + jzNum(d.matched) + " item" + (d.matched === 1 ? "" : "s"),
+          children: jzExportChildren("filtered") },
+        { label: "Whole " + jzState.market.toUpperCase() + " snapshot (" + jzNum(d.totals.all) + ")",
+          children: jzExportChildren("all") }
+      ]);
+    });
+    var byId = {};
+    d.items.forEach(function (it) { byId[it.id] = it; });
+    main.querySelectorAll("[data-jzrow]").forEach(function (b) {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        jzRowMenu(b, byId[b.getAttribute("data-jzrow")], d.canChangeVisibility,
+                  function () { jzReload(false); });
+      });
+    });
+    main.querySelectorAll("tbody tr[data-jzid]").forEach(function (tr) {
+      tr.addEventListener("click", function (e) {
+        if (e.target.closest(".dots-btn")) return;
+        jzState.listScroll = window.scrollY;
+        location.hash = "#items/" + jzState.market + "/" +
+          encodeURIComponent(tr.getAttribute("data-jzid"));
+      });
+    });
+  }
+
+  /* ---------------- one item, on its own page ---------------- */
+
+  function jzDetail(market, productId) {
+    api("/api/admin/jasani/items/" + encodeURIComponent(market) + "/" +
+        encodeURIComponent(productId)).then(function (r) {
+      if (!r.ok) return apiErr(r);
+      var it = r.data.item, low = r.data.lowThreshold, cur = r.data.currency;
+      var prices = it.wholesale !== undefined;
+      var images = (it.images && it.images.length) ? it.images : (it.image ? [it.image] : []);
+      if (jzState.gallery >= images.length) jzState.gallery = 0;
+      var cls = it.available === 0 ? "bad" : (it.available <= low ? "warn" : "ok");
+      var label = it.available === 0 ? "Out of stock" : (it.available <= low ? "Low stock" : "In stock");
+
+      var specs = [
+        ["Supplier code", it.code], ["Supplier product id", it.id],
+        ["Brand", it.brand], ["Colour", it.color],
+        ["Category", (it.categories || []).join(", ")],
+        ["Options", (it.options || []).join(", ")],
+        ["Barcode", it.barcode], ["HS code", it.hsCode],
+        ["Units per carton", it.unitsPerCarton],
+        ["Carton size", it.cartonDimensions],
+        ["Carton weight", it.cartonWeight ? it.cartonWeight + " kg" : ""],
+        ["Carton volume", it.cartonVolume ? it.cartonVolume + " m³" : ""],
+        ["Tags", (it.tags || []).join(", ")]
+      ].filter(function (s) { return s[1] !== "" && s[1] != null; });
+
+      function fact(label2, value, sub) {
+        return "<div><dt>" + esc(label2) + "</dt><dd>" + value +
+          (sub ? "<span>" + esc(sub) + "</span>" : "") + "</dd></div>";
+      }
+
+      main.innerHTML =
+        '<button class="jz-back" id="jz-back">← All Jasani items</button>' +
+        '<div class="jz-pdp">' +
+          '<div class="jz-pdp__media">' +
+            (images.length ? '<div class="jz-gal">' +
+              '<button class="jz-pdp__main" id="jz-zoom" aria-label="Open the image full size">' +
+                '<img src="' + esc(images[jzState.gallery]) + '" alt="' + esc(it.name) + '">' +
+                '<span class="jz-zoom-hint">Click to zoom</span></button>' +
+              (images.length > 1
+                ? '<button class="jz-gal__btn jz-gal__btn--prev" data-jzslide="-1" aria-label="Previous image">‹</button>' +
+                  '<button class="jz-gal__btn jz-gal__btn--next" data-jzslide="1" aria-label="Next image">›</button>' +
+                  '<div class="jz-gal__dots">' + images.map(function (_, i) {
+                    return '<button class="jz-gal__dot' + (i === jzState.gallery ? " is-on" : "") +
+                      '" data-jzg="' + i + '" aria-label="Image ' + (i + 1) + '"' +
+                      (i === jzState.gallery ? ' aria-current="true"' : "") + "></button>";
+                  }).join("") + "</div>" +
+                  '<span class="jz-gal__count">' + (jzState.gallery + 1) + " / " + images.length + "</span>"
+                : "") +
+            "</div>" : '<div class="jz-pdp__main jz-pdp__main--empty">No image in the snapshot</div>') +
+            (images.length > 1 ? '<div class="jz-pdp__thumbs" role="group" aria-label="Product images">' +
+              images.map(function (g, i) {
+                return '<button class="jz-thumb-btn' + (i === jzState.gallery ? " is-on" : "") +
+                  '" data-jzg="' + i + '" aria-label="Image ' + (i + 1) + '"><img src="' +
+                  esc(g) + '" alt="" loading="lazy"></button>';
+              }).join("") + "</div>" : "") +
+          "</div>" +
+          '<div class="jz-pdp__info">' +
+            '<p class="jz-pdp__eyebrow">' +
+              esc([it.brand, (it.categories || [])[0]].filter(Boolean).join(" · ")) + "</p>" +
+            "<h1>" + esc(it.name) + "</h1>" +
+            '<p class="jz-pdp__sku">' + esc(it.code) + '<span class="jz-pdp__market">' +
+              esc(market.toUpperCase()) + "</span></p>" +
+            '<div class="jz-pdp__pills"><span class="status-pill status-pill--' + cls + '">' +
+              label + "</span>" + jzVisBadge(it) + "</div>" +
+            '<dl class="jz-pdp__facts">' +
+              fact("Available", jzNum(it.available)) +
+              fact("Incoming", it.incoming ? jzNum(it.incoming) : "—",
+                   it.incoming && it.incomingDate ? "est. " + it.incomingDate : "") +
+              (prices ? fact("Booked", it.booked ? jzNum(it.booked) : "—") : "") +
+              (prices ? fact("Wholesale Price", jzMoney(it.wholesale), cur + " ex VAT") : "") +
+              (prices ? fact("Retail Price", jzMoney(it.retail), cur + " ex VAT") : "") +
+              (prices && it.wholesale != null && it.retail
+                ? fact("Margin", jzMoney(it.retail - it.wholesale),
+                       Math.round(((it.retail - it.wholesale) / it.retail) * 100) + "% of retail") : "") +
+            "</dl>" +
+            (prices ? '<p class="admin-inline-note">Prices and booked stock are internal — they are ' +
+              "never shown on the website, in a public API response or in a customer document.</p>" : "") +
+            '<div class="jz-pdp__actions">' +
+              '<button class="btn btn--primary btn--small" id="jz-sheet">Export as PDF</button>' +
+              '<button class="btn btn--ghost btn--small" id="jz-manual">Download printing manual</button>' +
+              (r.data.canChangeVisibility
+                ? '<button class="btn btn--ghost btn--small" id="jz-hide">' +
+                  (it.hidden ? "Show on website" : "Hide from website") + "</button>" : "") +
+            "</div>" +
+          "</div>" +
+        "</div>" +
+        (it.description ? '<div class="admin-panel"><h2>Description</h2><p class="jz-prose">' +
+          esc(it.description) + "</p></div>" : "") +
+        (specs.length ? '<div class="admin-panel"><h2>Specifications</h2><dl class="jz-specs">' +
+          specs.map(function (s) {
+            return "<div><dt>" + esc(s[0]) + "</dt><dd>" + esc(s[1]) + "</dd></div>";
+          }).join("") + "</dl></div>" : "");
+
+      document.getElementById("jz-back").addEventListener("click", function () {
+        location.hash = "#items";
+      });
+      main.querySelectorAll("[data-jzg]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          jzState.gallery = parseInt(b.getAttribute("data-jzg"), 10);
+          jzDetail(market, productId);
+        });
+      });
+      main.querySelectorAll("[data-jzslide]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var step = parseInt(b.getAttribute("data-jzslide"), 10);
+          jzState.gallery = (jzState.gallery + step + images.length) % images.length;
+          jzDetail(market, productId);
+          setTimeout(function () {
+            var again = document.querySelector('[data-jzslide="' + step + '"]');
+            if (again) again.focus();
+          }, 30);
+        });
+      });
+      var gal = document.querySelector(".jz-gal");
+      if (gal) gal.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        jzState.gallery = (jzState.gallery + (e.key === "ArrowRight" ? 1 : -1) + images.length) % images.length;
+        jzDetail(market, productId);
+      });
+      var zoom = document.getElementById("jz-zoom");
+      if (zoom) zoom.addEventListener("click", function () { jzLightbox(it, images); });
+      document.getElementById("jz-sheet").addEventListener("click", function () {
+        location.href = "/api/admin/jasani/items/" + encodeURIComponent(market) + "/" +
+          encodeURIComponent(it.id) + "/sheet";
+      });
+      document.getElementById("jz-manual").addEventListener("click", function () {
+        location.href = "/api/giveaways/manual?country=" + encodeURIComponent(market) +
+          "&product_id=" + encodeURIComponent(it.id);
+      });
+      var hide = document.getElementById("jz-hide");
+      if (hide) hide.addEventListener("click", function () {
+        jzSetHidden(it, !it.hidden, function () { jzDetail(market, productId); });
+      });
+      window.scrollTo(0, 0);
+    });
+  }
+
+  /* the site's lightbox behaviour: slide, zoom, dots, keyboard, click-out */
+  function jzLightbox(item, images) {
+    var i = jzState.gallery, zoomed = false;
+    var box = document.createElement("div");
+    box.className = "jz-lightbox";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", item.name + " images");
+    function draw() {
+      box.innerHTML =
+        '<div class="jz-lightbox__bar"><span>' + esc(item.name) + " — " + (i + 1) + " of " +
+          images.length + "</span>" +
+          '<button class="jz-lb-btn" data-lb="zoom">' + (zoomed ? "Fit" : "Zoom") + "</button>" +
+          '<button class="jz-lb-btn" data-lb="close" aria-label="Close">✕</button></div>' +
+        (images.length > 1 ? '<button class="jz-lb-nav jz-lb-nav--prev" data-lb="prev" aria-label="Previous image">‹</button>' : "") +
+        '<div class="jz-lightbox__stage' + (zoomed ? " is-zoomed" : "") + '">' +
+          '<img src="' + esc(images[i]) + '" alt="' + esc(item.name) + '"></div>' +
+        (images.length > 1 ? '<button class="jz-lb-nav jz-lb-nav--next" data-lb="next" aria-label="Next image">›</button>' : "") +
+        '<div class="jz-lightbox__dots">' + images.map(function (_, k) {
+          return '<button class="jz-lb-dot' + (k === i ? " is-on" : "") +
+            '" data-lb="go" data-i="' + k + '" aria-label="Image ' + (k + 1) + '"></button>';
+        }).join("") + "</div>";
+      box.querySelectorAll("[data-lb]").forEach(function (b) {
+        b.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var a = b.getAttribute("data-lb");
+          if (a === "close") return close();
+          if (a === "prev") i = (i - 1 + images.length) % images.length;
+          else if (a === "next") i = (i + 1) % images.length;
+          else if (a === "go") i = parseInt(b.getAttribute("data-i"), 10);
+          else if (a === "zoom") zoomed = !zoomed;
+          draw();
+        });
+      });
+      var x = box.querySelector('[data-lb="close"]');
+      if (x) x.focus();
+    }
+    function close() {
+      box.remove();
+      document.removeEventListener("keydown", key);
+      jzState.gallery = i;
+      var hash = (location.hash || "").slice(1).split("/");
+      if (hash[0] === "items" && hash.length > 2) jzDetail(hash[1], decodeURIComponent(hash.slice(2).join("/")));
+    }
+    function key(e) {
+      if (e.key === "Escape") close();
+      else if (e.key === "ArrowLeft") { i = (i - 1 + images.length) % images.length; draw(); }
+      else if (e.key === "ArrowRight") { i = (i + 1) % images.length; draw(); }
+    }
+    box.addEventListener("click", function (e) { if (e.target === box) close(); });
+    document.addEventListener("keydown", key);
+    draw();
+    document.body.appendChild(box);
+  }
 
   /* ---------- routing ---------- */
   function route() {

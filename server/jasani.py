@@ -361,6 +361,34 @@ def _i(rec: dict, *keys: str) -> int:
     return int(m.group()) if m else 0
 
 
+# ---------------- internal-only supplier fields ----------------
+# blocked_qty, list_price and retail_price are documented as internal: they may
+# inform quoting and margin work but must never reach a public product response
+# or a customer document. They ride on the product dict under this private key
+# only until _write_cache lifts them into a separate map — the single choke
+# point that persists a snapshot, so the public list cannot carry them.
+_INT_KEY = "_int"
+
+
+def _money(rec: dict, *keys: str) -> float | None:
+    raw = _s(rec, *keys).replace(",", "")
+    m = re.search(r"-?\d+(?:\.\d+)?", raw)
+    if not m:
+        return None
+    try:
+        value = round(float(m.group()), 2)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _internal_from_product(rec: dict) -> dict:
+    currency = _s(rec, "currency")[:8] or " ".join(_rel_names(rec.get("currency_id")))[:8]
+    return {"wholesale": _money(rec, "list_price", "listprice"),
+            "retail": _money(rec, "retail_price", "retailprice"),
+            "currency": currency.strip().upper()}
+
+
 def _clean_description(raw: str) -> str:
     """Strip markup and entities from supplier descriptions; keep readable text."""
     import html as _html
@@ -684,6 +712,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
                 "incoming": incoming,
                 "incomingDate": _s(rec, "incoming_date", "expected_date")[:30] or None,
             },
+            _INT_KEY: _internal_from_product(rec),
         }
     except Exception:
         # malformed records are untrusted input — skip safely
@@ -714,6 +743,9 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> int:
             inc = _s(rec, "incoming_date", "expected_date")[:30]
             if inc:
                 p["stock"]["incomingDate"] = inc
+            # never added to available stock — kept only as internal context
+            p.setdefault(_INT_KEY, {})["booked"] = max(
+                0, _i(rec, "blocked_qty", "blockedqty", "reserved_qty"))
     return matched
 
 
@@ -732,13 +764,118 @@ def _read_cache(market: str) -> dict | None:
         return None
 
 
+def _lift_internal(market: str, products: list[dict]) -> dict:
+    """Strip the internal fields off every product and return them as a map.
+
+    In place and on the way to disk, so a caller that goes on to hand the same
+    list to a public response cannot leak what it never holds. A stock-only
+    refresh carries no prices, so previously stored ones are kept."""
+    fresh: dict[str, dict] = {}
+    for p in products:
+        rec = p.pop(_INT_KEY, None)
+        if rec:
+            fresh[str(p.get("id"))] = {k: v for k, v in rec.items() if v not in (None, "")}
+    merged = dict((_read_cache(market) or {}).get("internal") or {})
+    for pid, rec in fresh.items():
+        merged[pid] = {**merged.get(pid, {}), **rec}
+    live = {str(p.get("id")) for p in products}
+    return {pid: rec for pid, rec in merged.items() if pid in live}
+
+
+# ---------------- what the website is allowed to show ----------------
+# Two switches, both owned by the admin: a per-market rule that drops items with
+# no sellable stock, and a list of items taken off by hand. Both are applied in
+# get_catalog, the one function every public path already goes through, so the
+# catalogue, stock feed, product page, request validation and the notify-me flow
+# can never disagree about what is on sale.
+
+def hide_zero_stock(market: str) -> bool:
+    from . import adminauth as aa
+
+    return bool(aa.setting_get(f"jasani.hideZeroStock.{market}", False))
+
+
+def set_hide_zero_stock(market: str, on: bool) -> None:
+    from . import adminauth as aa
+
+    aa.setting_set(f"jasani.hideZeroStock.{market}", bool(on))
+
+
+def hidden_items(market: str) -> list[dict]:
+    from . import adminauth as aa
+
+    rows = aa._connect().execute(
+        "SELECT product_id, code, name, hidden_at, hidden_by FROM jasani_hidden "
+        "WHERE market=? ORDER BY hidden_at DESC", (market,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def hidden_ids(market: str) -> set[str]:
+    from . import adminauth as aa
+
+    return {r["product_id"] for r in aa._connect().execute(
+        "SELECT product_id FROM jasani_hidden WHERE market=?", (market,))}
+
+
+def set_item_hidden(market: str, product_id: str, hidden: bool,
+                    code: str = "", name: str = "", by: str = "") -> None:
+    from . import adminauth as aa
+
+    with aa._lock:
+        conn = aa._connect()
+        if hidden:
+            conn.execute(
+                "INSERT INTO jasani_hidden (market, product_id, code, name, hidden_at, hidden_by) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(market, product_id) DO UPDATE SET "
+                "code=excluded.code, name=excluded.name, hidden_at=excluded.hidden_at, "
+                "hidden_by=excluded.hidden_by",
+                (market, str(product_id), code[:80], name[:200], int(time.time()), by[:200]))
+        else:
+            conn.execute("DELETE FROM jasani_hidden WHERE market=? AND product_id=?",
+                         (market, str(product_id)))
+        conn.commit()
+
+
+def visible_products(market: str, products: list[dict]) -> list[dict]:
+    """The subset of a snapshot the public site may show."""
+    try:
+        hidden = hidden_ids(market)
+        drop_zero = hide_zero_stock(market)
+    except Exception:
+        # the admin database is not the supplier's problem: if it cannot be
+        # read, show the catalogue rather than an empty shop
+        return products
+    if not hidden and not drop_zero:
+        return products
+    out = []
+    for p in products:
+        if str(p.get("id")) in hidden:
+            continue
+        if drop_zero and int((p.get("stock") or {}).get("available", 0)) <= 0:
+            continue
+        out.append(p)
+    return out
+
+
+def all_products(market: str) -> list[dict]:
+    """Every cached product, hidden ones included — the admin's own view."""
+    return (_read_cache(market) or {}).get("products") or []
+
+
+def internal_map(market: str) -> dict:
+    """Admin-only prices and booked stock, keyed by supplier product id."""
+    return (_read_cache(market) or {}).get("internal") or {}
+
+
 def _write_cache(market: str, products: list[dict], fetched_at: float, stock_at: float) -> None:
     # explicit UTF-8: Windows' locale default (cp1252) cannot encode many
     # supplier product names, and a failed cache write must not fail the request
+    internal = _lift_internal(market, products)
     try:
         f = _cache_file(market)
         f.write_text(json.dumps({"fetchedAt": int(fetched_at), "stockAt": int(stock_at),
-                                 "products": products}, ensure_ascii=False), encoding="utf-8")
+                                 "products": products, "internal": internal},
+                                ensure_ascii=False), encoding="utf-8")
     except (OSError, ValueError):
         pass
 
@@ -870,7 +1007,8 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
         # No refresh is triggered from a page load: the four scheduled syncs
         # own the automatic allowance, and a visitor-driven top-up on top of
         # them would push the market past four calls a day.
-        return cached["products"], "cache" if (products_fresh and stock_fresh) else "stale"
+        return (visible_products(market, cached["products"]),
+                "cache" if (products_fresh and stock_fresh) else "stale")
 
     # Nothing cached at all: this is the only path that can wait, and it only
     # happens before the first successful sync of a market.
@@ -880,7 +1018,7 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
     async with lock:
         cached = _read_cache(market)
         if cached and cached.get("products"):
-            return cached["products"], "cache"
+            return visible_products(market, cached["products"]), "cache"
         now = time.time()
         try:
             products = await _fetch_products(market)
@@ -897,7 +1035,7 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
         _write_cache(market, products, fetched_at=now, stock_at=stock_at)
         if stock_at:
             record_attempt(market, "products", True, f"{len(products)} products with stock")
-        return products, "live"
+        return visible_products(market, products), "live"
 
 
 async def _refresh_products_only(market: str) -> None:
@@ -1120,6 +1258,179 @@ async def force_refresh(market: str, what: str, manual: bool = True) -> dict:
             record_attempt(market, "stock", True, f"{len(products)} products")
             return {"refreshed": "stock", "products": len(products), "stockApplied": True}
         raise ValueError("unknown refresh target")
+
+
+# ---------------- the admin item list ----------------
+
+def _row(p: dict, internal: dict, hidden: set[str], drop_zero: bool,
+         with_prices: bool) -> dict:
+    """One admin table row. Prices and booked stock only when the caller is
+    allowed to see them — the payload never carries what the role cannot."""
+    stock = p.get("stock") or {}
+    available = int(stock.get("available", 0) or 0)
+    pid = str(p.get("id"))
+    is_hidden = pid in hidden
+    by_rule = drop_zero and available <= 0 and not is_hidden
+    cats = p.get("categories") or []
+    row = {
+        "id": pid, "code": p.get("code") or pid, "name": p.get("name", ""),
+        "brand": p.get("brand", ""), "color": p.get("color", ""),
+        "category": cats[0] if cats else "",
+        "image": p.get("image", ""),
+        "available": available,
+        "incoming": int(stock.get("incoming", 0) or 0),
+        "incomingDate": stock.get("incomingDate") or "",
+        "hidden": is_hidden, "hiddenByRule": by_rule,
+        "live": not is_hidden and not by_rule,
+    }
+    if with_prices:
+        rec = internal.get(pid) or {}
+        row["wholesale"] = rec.get("wholesale")
+        row["retail"] = rec.get("retail")
+        row["booked"] = rec.get("booked", 0)
+        row["currency"] = rec.get("currency") or CURRENCY_BY_MARKET.get(market_of(p), "")
+    return row
+
+
+CURRENCY_BY_MARKET = {"ksa": "SAR", "uae": "AED"}
+
+
+def market_of(p: dict) -> str:
+    return str(p.get("market") or "")
+
+
+_SEARCH_FIELDS = {
+    "all": ("code", "name", "brand", "color", "category", "barcode"),
+    "name": ("name",), "sku": ("code", "barcode"), "brand": ("brand",),
+    "colour": ("color",), "category": ("category",),
+}
+
+
+def item_list(market: str, *, terms: list[str] | None = None, field: str = "all",
+              stock: str = "", brand: str = "", colour: str = "", category: str = "",
+              visibility: str = "", hide_zero: bool = False,
+              price_field: str = "wholesale", price_min: float | None = None,
+              price_max: float | None = None, sort: str = "name",
+              with_prices: bool = False) -> dict:
+    """Search, filter and sort the cached snapshot. Never calls the supplier."""
+    products = all_products(market)
+    internal = internal_map(market) if with_prices else {}
+    hidden = hidden_ids(market)
+    drop_zero = hide_zero_stock(market)
+    low = config.LOW_STOCK_THRESHOLD
+    rows = [_row(p, internal, hidden, drop_zero, with_prices) for p in products]
+    for row, p in zip(rows, products):
+        row["_cats"] = [str(c).lower() for c in (p.get("categories") or [])]
+
+    totals = {"all": len(rows),
+              "in": sum(1 for r in rows if r["available"] > 0),
+              "low": sum(1 for r in rows if 0 < r["available"] <= low),
+              "out": sum(1 for r in rows if r["available"] <= 0),
+              "hidden": sum(1 for r in rows if r["hidden"])}
+    facets = {
+        "brands": sorted({r["brand"] for r in rows if r["brand"]}),
+        "colours": sorted({r["color"] for r in rows if r["color"]}),
+        "categories": sorted({r["category"] for r in rows if r["category"]}),
+    }
+
+    keys = _SEARCH_FIELDS.get(field, _SEARCH_FIELDS["all"])
+    needles = [t.strip().lower() for t in (terms or []) if t.strip()][:20]
+    # a caller who may not see prices cannot filter by one either: the band is
+    # ignored rather than matching nothing, which would look like a broken page
+    if not with_prices:
+        price_min = price_max = None
+
+    def keep(r: dict) -> bool:
+        if needles:
+            hay = " ".join(str(r.get(k, "")) for k in keys).lower()
+            if field in ("all", "category"):
+                hay += " " + " ".join(r["_cats"])
+            if not any(t in hay for t in needles):
+                return False
+        if hide_zero and r["available"] <= 0:
+            return False
+        if stock == "in" and r["available"] <= 0:
+            return False
+        if stock == "low" and not (0 < r["available"] <= low):
+            return False
+        if stock == "out" and r["available"] > 0:
+            return False
+        if stock == "incoming" and r["incoming"] <= 0:
+            return False
+        if stock == "booked" and not r.get("booked"):
+            return False
+        if brand and r["brand"] != brand:
+            return False
+        if colour and r["color"] != colour:
+            return False
+        if category and category.lower() not in r["_cats"]:
+            return False
+        if visibility == "visible" and not r["live"]:
+            return False
+        if visibility == "hidden" and r["live"]:
+            return False
+        if visibility == "byhand" and not r["hidden"]:
+            return False
+        if price_min is not None or price_max is not None:
+            value = r.get("retail" if price_field == "retail" else "wholesale")
+            if value is None:
+                return False
+            if price_min is not None and value < price_min:
+                return False
+            if price_max is not None and value > price_max:
+                return False
+        return True
+
+    kept = [r for r in rows if keep(r)]
+
+    def price_key(r):
+        v = r.get("retail" if price_field == "retail" else "wholesale")
+        return v if v is not None else 0.0
+
+    sorters = {
+        "name": lambda r: r["name"].lower(),
+        "sku": lambda r: r["code"].lower(),
+        "brand": lambda r: (r["brand"].lower(), r["name"].lower()),
+        "stockDesc": lambda r: -r["available"],
+        "stockAsc": lambda r: r["available"],
+        "priceAsc": price_key,
+        "priceDesc": lambda r: -price_key(r),
+    }
+    kept.sort(key=sorters.get(sort, sorters["name"]))
+    for r in kept:
+        r.pop("_cats", None)
+    return {"rows": kept, "totals": totals, "facets": facets,
+            "lowThreshold": low, "hideZeroStock": drop_zero,
+            "currency": CURRENCY_BY_MARKET.get(market, "")}
+
+
+def item_detail(market: str, product_id: str, with_prices: bool = False) -> dict | None:
+    """One product with everything the detail page shows."""
+    pid = str(product_id)
+    for p in all_products(market):
+        if str(p.get("id")) == pid or str(p.get("code")) == pid:
+            hidden = hidden_ids(market)
+            row = _row(p, internal_map(market) if with_prices else {}, hidden,
+                       hide_zero_stock(market), with_prices)
+            row.pop("_cats", None)
+            row.update({
+                "description": p.get("description", ""),
+                "images": p.get("images") or ([p["image"]] if p.get("image") else []),
+                "videos": p.get("videos") or [],
+                "categories": p.get("categories") or [],
+                "tags": p.get("tags") or [],
+                "options": p.get("options") or [],
+                "barcode": p.get("barcode", ""),
+                "hsCode": p.get("hsCode", ""),
+                "unitsPerCarton": p.get("unitsPerCarton"),
+                "cartonDimensions": p.get("cartonDimensions"),
+                "cartonWeight": p.get("cartonWeight"),
+                "cartonVolume": p.get("cartonVolume"),
+                "colorOptions": p.get("colorOptions") or [],
+                "market": market,
+            })
+            return row
+    return None
 
 
 def search_cached(market: str, q: str, limit: int = 30) -> list[dict]:

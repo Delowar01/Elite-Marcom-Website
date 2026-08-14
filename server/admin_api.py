@@ -12,6 +12,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -697,6 +698,219 @@ async def admin_jasani_refresh(request: Request, body: JasaniRefreshBody,
              {"market": body.market, "what": body.what, "products": result.get("products")},
              _ip_hash(request))
     return {**result, "budgets": jasani.budget_status_all()}
+
+
+def _f(value: str | None) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/api/admin/jasani/items")
+async def admin_jasani_items(request: Request,
+                             market: Literal["ksa", "uae"] = "ksa",
+                             q: str = "", field: str = "all", stock: str = "",
+                             brand: str = "", colour: str = "", category: str = "",
+                             visibility: str = "", hideZero: bool = False,
+                             priceField: str = "wholesale",
+                             priceMin: str = "", priceMax: str = "",
+                             sort: str = "name", page: int = 1, perPage: int = 25):
+    """The Jasani items table. Reads the cached snapshot only — opening this
+    page never spends one of the market's five daily supplier calls."""
+    session = require_perm(request, "jasani.view")
+    from . import jasani
+
+    prices = aa.has_perm(session["role"], "jasani.prices")
+    # Enter and comma both split; a pasted column arrives with newlines
+    terms = [t.strip() for t in re.split(r"[,\n\t]", q or "") if t.strip()][:20]
+    data = jasani.item_list(
+        market, terms=terms, field=field, stock=stock, brand=brand, colour=colour,
+        category=category, visibility=visibility, hide_zero=bool(hideZero),
+        price_field=priceField, price_min=_f(priceMin), price_max=_f(priceMax),
+        sort=sort, with_prices=prices)
+    rows = data.pop("rows")
+    per = max(10, min(200, perPage))
+    pages = max(1, (len(rows) + per - 1) // per)
+    page = max(1, min(pages, page))
+    status = jasani.cache_status(market)
+    return {**data, "market": market, "matched": len(rows), "page": page,
+            "pages": pages, "perPage": per, "canSeePrices": prices,
+            "canChangeVisibility": aa.has_perm(session["role"], "jasani.visibility"),
+            "items": rows[(page - 1) * per: page * per],
+            "snapshot": {"fetchedAt": status.get("fetchedAt"), "stockAt": status.get("stockAt"),
+                         "productsFresh": status.get("productsFresh"),
+                         "stockFresh": status.get("stockFresh"),
+                         "cached": status.get("cached")},
+            "markets": {m: jasani.cache_status(m).get("products", 0)
+                        for m in config.JASANI_HOSTS}}
+
+
+@router.get("/api/admin/jasani/items-export")
+async def admin_jasani_items_export(request: Request, format: str = "csv",
+                                    market: Literal["ksa", "uae"] = "ksa",
+                                    q: str = "", field: str = "all", stock: str = "",
+                                    brand: str = "", colour: str = "", category: str = "",
+                                    visibility: str = "", hideZero: bool = False,
+                                    priceField: str = "wholesale",
+                                    priceMin: str = "", priceMax: str = "",
+                                    sort: str = "name", scope: str = "filtered"):
+    """The item list as CSV, Excel or a branded PDF table."""
+    session = require_perm(request, "jasani.view")
+    from . import exports, jasani
+
+    if format not in ("csv", "xlsx", "pdf"):
+        raise HTTPException(status_code=400, detail="Unknown export format.")
+    prices = aa.has_perm(session["role"], "jasani.prices")
+    everything = scope == "all"
+    terms = [] if everything else [t.strip() for t in re.split(r"[,\n\t]", q or "") if t.strip()][:20]
+    data = jasani.item_list(
+        market,
+        terms=terms, field=field,
+        stock="" if everything else stock,
+        brand="" if everything else brand,
+        colour="" if everything else colour,
+        category="" if everything else category,
+        visibility="" if everything else visibility,
+        hide_zero=False if everything else bool(hideZero),
+        price_field=priceField,
+        price_min=None if everything else _f(priceMin),
+        price_max=None if everything else _f(priceMax),
+        sort=sort, with_prices=prices)
+    items = data["rows"]
+    currency = data["currency"]
+    name = exports.export_filename(format, f"{market}-{scope}", prefix="jasani-items")
+    if format == "pdf":
+        blob = exports.items_to_pdf(items, market=market, with_prices=prices,
+                                    currency=currency,
+                                    note="whole snapshot" if everything else "filtered")
+        media = "application/pdf"
+    else:
+        rows = exports.item_rows(items, prices, currency)
+        blob = (exports.to_csv_rows(rows) if format == "csv"
+                else exports.to_xlsx_rows(rows, sheet=f"Jasani {market.upper()}"))
+        media = ("text/csv; charset=utf-8" if format == "csv"
+                 else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    aa.audit(session, "jasani.items_exported", "jasani",
+             {"market": market, "format": format, "scope": scope, "rows": len(items),
+              "withPrices": prices}, _ip_hash(request))
+    return Response(content=blob, media_type=media, headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store"})
+
+
+def _sheet_specs(item: dict) -> list[tuple[str, str]]:
+    """The specification rows a customer sheet carries — no price among them."""
+    pairs = [
+        ("Supplier code", item.get("code", "")),
+        ("Brand", item.get("brand", "")),
+        ("Colour", item.get("color", "")),
+        ("Category", ", ".join(item.get("categories") or [])),
+        ("Units per carton", item.get("unitsPerCarton")),
+        ("Carton size", item.get("cartonDimensions")),
+        ("Carton weight", f"{item['cartonWeight']} kg" if item.get("cartonWeight") else ""),
+        ("Carton volume", f"{item['cartonVolume']} m³" if item.get("cartonVolume") else ""),
+        ("HS code", item.get("hsCode", "")),
+        ("Barcode", item.get("barcode", "")),
+        ("Options", ", ".join(item.get("options") or [])[:80]),
+    ]
+    return [(k, str(v)) for k, v in pairs if v not in (None, "", [])]
+
+
+@router.get("/api/admin/jasani/items/{market}/{product_id}/sheet")
+async def admin_jasani_item_sheet(request: Request, market: Literal["ksa", "uae"],
+                                  product_id: str):
+    """A branded one-page product sheet, deliberately without any price."""
+    require_perm(request, "jasani.view")
+    from . import exports, jasani
+
+    item = jasani.item_detail(market, product_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="That item is not in the cached catalogue.")
+    photos: list[bytes] = []
+    for url in (item.get("images") or [])[:4]:
+        blob = await jasani._fetch_image_bytes(url)
+        if blob:
+            photos.append(blob)
+    blob = exports.product_sheet_pdf({**item, "specs": _sheet_specs(item)}, photos)
+    code = re.sub(r"[^A-Za-z0-9._-]+", "-", item.get("code") or item["id"]).strip("-")
+    return Response(content=blob, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="elite-marcom-{code or "item"}.pdf"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@router.get("/api/admin/jasani/items/{market}/{product_id}")
+async def admin_jasani_item(request: Request, market: Literal["ksa", "uae"], product_id: str):
+    session = require_perm(request, "jasani.view")
+    from . import jasani
+
+    item = jasani.item_detail(market, product_id,
+                              with_prices=aa.has_perm(session["role"], "jasani.prices"))
+    if item is None:
+        raise HTTPException(status_code=404, detail="That item is not in the cached catalogue.")
+    return {"item": item, "lowThreshold": config.LOW_STOCK_THRESHOLD,
+            "currency": jasani.CURRENCY_BY_MARKET.get(market, ""),
+            "canChangeVisibility": aa.has_perm(session["role"], "jasani.visibility")}
+
+
+class ItemVisibilityBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market: Literal["ksa", "uae"]
+    productId: str = Field(max_length=80)
+    hidden: bool
+
+
+@router.post("/api/admin/jasani/visibility")
+async def admin_jasani_visibility(request: Request, body: ItemVisibilityBody,
+                                  x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "jasani.visibility")
+    require_csrf(request, session, x_csrf)
+    from . import jasani
+
+    item = jasani.item_detail(body.market, body.productId)
+    if item is None:
+        raise HTTPException(status_code=404, detail="That item is not in the cached catalogue.")
+    jasani.set_item_hidden(body.market, item["id"], body.hidden,
+                           code=item["code"], name=item["name"], by=session["email"])
+    aa.audit(session, "jasani.item_hidden" if body.hidden else "jasani.item_shown", "jasani",
+             {"market": body.market, "id": item["id"], "code": item["code"]}, _ip_hash(request))
+    return {"ok": True, "hidden": body.hidden,
+            "hiddenItems": jasani.hidden_items(body.market)}
+
+
+class ZeroStockRuleBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market: Literal["ksa", "uae"]
+    on: bool
+
+
+@router.post("/api/admin/jasani/zero-stock-rule")
+async def admin_jasani_zero_rule(request: Request, body: ZeroStockRuleBody,
+                                 x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "jasani.visibility")
+    require_csrf(request, session, x_csrf)
+    from . import jasani
+
+    jasani.set_hide_zero_stock(body.market, body.on)
+    aa.audit(session, "jasani.zero_stock_rule", "jasani",
+             {"market": body.market, "on": body.on}, _ip_hash(request))
+    return {"ok": True, "on": body.on}
+
+
+@router.get("/api/admin/jasani/visibility")
+async def admin_jasani_visibility_state(request: Request,
+                                        market: Literal["ksa", "uae"] = "ksa"):
+    require_perm(request, "jasani.view")
+    from . import jasani
+
+    products = jasani.all_products(market)
+    zero = sum(1 for p in products
+               if int((p.get("stock") or {}).get("available", 0) or 0) <= 0)
+    return {"market": market, "hideZeroStock": jasani.hide_zero_stock(market),
+            "zeroStockCount": zero, "cached": len(products),
+            "hiddenItems": jasani.hidden_items(market)}
 
 
 @router.get("/api/admin/jasani/products")

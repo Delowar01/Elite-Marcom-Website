@@ -53,6 +53,25 @@ documentation). Non-negotiable rules from it:
   never mix markets.
 - No public prices, no online payment, no automatic supplier orders. The Order API
   needs separate written authorization — do not wire it to the public site.
+- **Internal-only supplier fields.** `blocked_qty`, `list_price` and
+  `retail_price` are captured but never ride on a product: `normalize_product`
+  parks them under `_INT_KEY`, and `_write_cache` — the single choke point that
+  persists a snapshot — lifts them into a sibling `internal` map keyed by
+  product id. A caller that hands the product list to a public response
+  therefore cannot leak what the list never holds. Read them with
+  `internal_map(market)`; they reach the admin only behind `jasani.prices`
+  (owner/admin), and never a customer document — the product-sheet PDF is
+  asserted price-free in the tests.
+- **What the website shows** is decided in `get_catalog`, the one function every
+  public path already goes through, so the catalogue, stock feed, product page,
+  request validation and the notify-me flow can never disagree. Two switches,
+  both behind `jasani.visibility`: a per-market `jasani.hideZeroStock.<market>`
+  setting, and the `jasani_hidden` table for items taken off by hand. The
+  zero-stock rule ships **off** — turning it on removes items from the live site,
+  so it is an explicit decision, and it also removes the page a customer would
+  use to ask for a back-in-stock notification.
+- Low stock is `EM_LOW_STOCK_THRESHOLD` (default 20) — the same figure
+  `public/js/giveaways.js` uses. Two thresholds would disagree in public.
 - Printing manuals: `parent_id` is only a CANDIDATE manual id for the supplier's
   `/preview_product?product_id=...` PDF. Candidates are validated server-side
   (signature, page count, 10 MB cap) and cached 24h — valid and failed verdicts

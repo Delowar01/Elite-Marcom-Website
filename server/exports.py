@@ -84,13 +84,17 @@ def request_row(item: dict) -> list[str]:
     ]
 
 
-def to_csv(rows: list[list[str]]) -> bytes:
+def to_csv_rows(rows: list[list[str]]) -> bytes:
+    """Rows exactly as given, header included — the caller owns the columns."""
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\r\n")
-    writer.writerow(COLUMNS)
     writer.writerows(rows)
     # UTF-8 BOM so Excel opens Arabic/accented names correctly
     return b"\xef\xbb\xbf" + buf.getvalue().encode("utf-8")
+
+
+def to_csv(rows: list[list[str]]) -> bytes:
+    return to_csv_rows([list(COLUMNS)] + rows)
 
 
 # ---------------- minimal XLSX (stdlib only) ----------------
@@ -108,7 +112,7 @@ def _sheet_xml(rows: list[list[str]]) -> str:
     out = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
            "<sheetData>"]
-    for r, row in enumerate([list(COLUMNS)] + rows, start=1):
+    for r, row in enumerate(rows, start=1):
         cells = []
         for cidx, value in enumerate(row):
             text = escape(str(value)).replace("\r", "").replace("\n", "&#10;")
@@ -120,6 +124,11 @@ def _sheet_xml(rows: list[list[str]]) -> str:
 
 
 def to_xlsx(rows: list[list[str]]) -> bytes:
+    return to_xlsx_rows([list(COLUMNS)] + rows, sheet="Requests")
+
+
+def to_xlsx_rows(rows: list[list[str]], sheet: str = "Sheet1") -> bytes:
+    """Rows exactly as given, header included."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml",
@@ -139,7 +148,7 @@ def to_xlsx(rows: list[list[str]]) -> bytes:
                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
                    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-                   '<sheets><sheet name="Requests" sheetId="1" r:id="rId1"/></sheets></workbook>')
+                   f'<sheets><sheet name="{escape(sheet[:28])}" sheetId="1" r:id="rId1"/></sheets></workbook>')
         z.writestr("xl/_rels/workbook.xml.rels",
                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -323,6 +332,244 @@ def to_pdf(items: list[dict]) -> bytes:
             for n in notes:
                 pdf.paragraph(f"{_when(n.get('ts'))} — {n.get('by', '')}: {n.get('text', '')}")
     return pdf.done()
+
+
+# ---------------- Jasani items ----------------
+
+_ITEM_COLUMNS = [("code", "SKU"), ("name", "Name"), ("brand", "Brand"),
+                 ("color", "Colour"), ("category", "Category")]
+_ITEM_STOCK = [("available", "Available"), ("incoming", "Incoming"),
+               ("incomingDate", "Incoming date (estimated)")]
+_ITEM_PRICES = [("wholesale", "Wholesale price"), ("retail", "Retail price"),
+                ("booked", "Booked")]
+
+
+def item_rows(items: list[dict], with_prices: bool, currency: str = "") -> list[list[str]]:
+    """Header + one row per item. Prices only when the caller may see them —
+    an export must not become the way an internal figure leaves the panel."""
+    cols = list(_ITEM_COLUMNS)
+    cols += [(k, f"{lbl} ({currency})" if currency and k != "booked" else lbl)
+             for k, lbl in _ITEM_PRICES] if with_prices else []
+    cols += _ITEM_STOCK + [("websiteState", "On the website")]
+    rows = [["SN"] + [lbl for _, lbl in cols]]
+    for i, it in enumerate(items, start=1):
+        state = ("Hidden by hand" if it.get("hidden")
+                 else "Hidden — no stock" if it.get("hiddenByRule") else "Live")
+        row = [str(i)]
+        for key, _lbl in cols:
+            if key == "websiteState":
+                row.append(state)
+                continue
+            value = it.get(key)
+            row.append("" if value is None else str(value))
+        rows.append(row)
+    return rows
+
+
+def items_to_pdf(items: list[dict], *, market: str, with_prices: bool,
+                 currency: str = "", note: str = "") -> bytes:
+    """The filtered item list as a branded table."""
+    pdf = _Pdf()
+    pdf.header(f"Jasani items — {market.upper()}",
+               f"{len(items)} item(s) · {time.strftime('%d %b %Y %H:%M')}"
+               + (f" · {note}" if note else ""))
+    if with_prices:
+        pdf.paragraph("Prices exclude VAT and are internal to Elite Marcom — "
+                      "they must not be shared with a customer.")
+    cols = [("code", "SKU", 74), ("name", "Name", 150), ("brand", "Brand", 70),
+            ("color", "Colour", 60)]
+    if with_prices:
+        cols += [("wholesale", f"Whlsl {currency}".strip(), 54),
+                 ("retail", f"Retail {currency}".strip(), 54), ("booked", "Bkd", 34)]
+    cols += [("available", "Avail", 42), ("incoming", "Inc", 36)]
+    total = sum(w for _, _, w in cols)
+    scale = (PAGE_W - 2 * M) / total
+    widths = [w * scale for _, _, w in cols]
+
+    def head_row():
+        pdf.c.setFont("Helvetica-Bold", 7)
+        pdf.c.setFillColorRGB(*GREY)
+        x = M
+        for (_, label, _), w in zip(cols, widths):
+            pdf.c.drawString(x, pdf.y, label.upper())
+            x += w
+        pdf.y -= 4
+        pdf.c.setStrokeColorRGB(*LINE)
+        pdf.c.line(M, pdf.y, PAGE_W - M, pdf.y)
+        pdf.y -= 11
+
+    pdf.y -= 6
+    head_row()
+    for it in items:
+        pdf.need(16)
+        if pdf.y > PAGE_H - M - 40 and pdf.page > 1:
+            head_row()
+        pdf.c.setFont("Helvetica", 7.4)
+        pdf.c.setFillColorRGB(*INK)
+        x = M
+        for (key, _label, _), w in zip(cols, widths):
+            value = it.get(key)
+            text = "" if value is None else str(value)
+            if len(text) > 2:
+                while stringWidth(text, "Helvetica", 7.4) > w - 6 and len(text) > 4:
+                    text = text[:-2]
+                if text != str(value):
+                    text += "…"
+            pdf.c.drawString(x, pdf.y, text)
+            x += w
+        pdf.y -= 13
+    return pdf.done()
+
+
+def product_sheet_pdf(item: dict, images: list[bytes], *, currency: str = "") -> bytes:
+    """One A4 product sheet for a customer.
+
+    Carries no price of any kind: supplier list_price and retail_price are
+    internal by supplier policy, and this document is meant to be sent out.
+    """
+    from reportlab.lib.utils import ImageReader
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    y = PAGE_H - M
+
+    try:
+        if _LOGO_PATH.exists():
+            logo = ImageReader(str(_LOGO_PATH))
+            lw, lh = logo.getSize()
+            h = 26.0
+            c.drawImage(logo, M, y - h, width=lw * (h / lh), height=h, mask="auto")
+    except Exception:
+        c.setFont("Helvetica-Bold", 15)
+        c.setFillColorRGB(*ORANGE)
+        c.drawString(M, y - 18, "ELITE MARCOM")
+    c.setFont("Helvetica", 7.6)
+    c.setFillColorRGB(*GREY)
+    c.drawRightString(PAGE_W - M, y - 8, "Corporate gifts · Product sheet")
+    c.drawRightString(PAGE_W - M, y - 19, "Riyadh · Dubai · elitemarcom.com")
+    y -= 40
+    c.setFillColorRGB(*ORANGE)
+    c.rect(M, y, PAGE_W - 2 * M, 2.4, stroke=0, fill=1)
+    y -= 26
+
+    c.setFont("Helvetica-Bold", 17)
+    c.setFillColorRGB(*INK)
+    for line in _wrap(item.get("name", ""), "Helvetica-Bold", 17, PAGE_W - 2 * M)[:2]:
+        c.drawString(M, y, line)
+        y -= 21
+    c.setFont("Helvetica", 9.4)
+    c.setFillColorRGB(*GREY)
+    meta = " · ".join(x for x in (item.get("code"), item.get("brand"), item.get("color")) if x)
+    c.drawString(M, y, meta)
+    y -= 20
+
+    available = int(item.get("available", 0) or 0)
+    chips = ["Currently out of stock" if available <= 0 else "In stock"]
+    if item.get("incoming"):
+        chips.append("More arriving " + str(item.get("incomingDate") or "soon") + " (estimated)")
+    c.setFont("Helvetica", 7.6)
+    x = M
+    for chip in chips:
+        w = stringWidth(chip, "Helvetica", 7.6) + 16
+        c.setStrokeColorRGB(*LINE)
+        c.setFillColorRGB(*GREY)
+        c.roundRect(x, y - 4, w, 15, 7, stroke=1, fill=0)
+        c.drawString(x + 8, y, chip)
+        x += w + 6
+    y -= 22
+
+    # image band: one hero and up to three supporting shots
+    band = 210.0
+    readers = []
+    for raw in images[:4]:
+        reader, nw, nh = _image_box(raw)
+        if reader:
+            readers.append((reader, nw, nh))
+    if readers:
+        hero_w = (PAGE_W - 2 * M) * (0.66 if len(readers) > 1 else 1.0)
+        _draw_contained(c, readers[0], M, y - band, hero_w, band)
+        if len(readers) > 1:
+            side_x = M + hero_w + 8
+            side_w = PAGE_W - M - side_x
+            each = (band - 8 * (len(readers) - 2)) / (len(readers) - 1)
+            sy = y
+            for r in readers[1:]:
+                _draw_contained(c, r, side_x, sy - each, side_w, each)
+                sy -= each + 8
+        y -= band + 22
+
+    col_w = (PAGE_W - 2 * M - 28) / 2
+    left_y = right_y = y
+
+    def heading(text, x, yy):
+        c.setFont("Helvetica-Bold", 7.4)
+        c.setFillColorRGB(*ORANGE)
+        c.drawString(x, yy, text.upper())
+        c.setStrokeColorRGB(*LINE)
+        c.line(x, yy - 5, x + col_w, yy - 5)
+        return yy - 17
+
+    left_y = heading("Description", M, left_y)
+    c.setFont("Helvetica", 8.6)
+    c.setFillColorRGB(*INK)
+    for line in _wrap(item.get("description", ""), "Helvetica", 8.6, col_w)[:16]:
+        c.drawString(M, left_y, line)
+        left_y -= 12
+
+    specs = [s for s in (item.get("specs") or []) if s[1]]
+    if specs:
+        right_y = heading("Specifications", M + col_w + 28, right_y)
+        for label, value in specs[:14]:
+            c.setFont("Helvetica", 8.2)
+            c.setFillColorRGB(*GREY)
+            c.drawString(M + col_w + 28, right_y, str(label))
+            c.setFillColorRGB(*INK)
+            c.drawRightString(PAGE_W - M, right_y, str(value))
+            c.setStrokeColorRGB(*LINE)
+            c.line(M + col_w + 28, right_y - 4, PAGE_W - M, right_y - 4)
+            right_y -= 15
+
+    c.setStrokeColorRGB(*LINE)
+    c.line(M, 46, PAGE_W - M, 46)
+    c.setFont("Helvetica", 7)
+    c.setFillColorRGB(*GREY)
+    c.drawString(M, 34, "Elite Marcom · info@elitemarcom.com · +966 59 925 5995")
+    c.drawRightString(PAGE_W - M, 34, "Stock and lead times on request.")
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _image_box(raw: bytes):
+    from reportlab.lib.utils import ImageReader
+    from PIL import Image
+
+    try:
+        im = Image.open(io.BytesIO(raw))
+        im.load()
+        if im.mode in ("RGBA", "LA", "P"):
+            flat = Image.new("RGB", im.size, (255, 255, 255))
+            rgba = im.convert("RGBA")
+            flat.paste(rgba, mask=rgba.split()[-1])
+            im = flat
+        else:
+            im = im.convert("RGB")
+        out = io.BytesIO()
+        im.save(out, "PNG")
+        out.seek(0)
+        return ImageReader(out), im.width, im.height
+    except Exception:
+        return None, 0, 0
+
+
+def _draw_contained(c, reader_tuple, x, y, box_w, box_h) -> None:
+    reader, nw, nh = reader_tuple
+    if not nw or not nh:
+        return
+    scale = min(box_w / nw, box_h / nh)
+    w, h = nw * scale, nh * scale
+    c.drawImage(reader, x + (box_w - w) / 2, y + (box_h - h) / 2,
+                width=w, height=h, mask="auto")
 
 
 def export_filename(fmt: str, scope: str, prefix: str = "requests") -> str:
