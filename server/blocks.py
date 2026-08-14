@@ -245,10 +245,12 @@ _ICONS = {
                 '-.13-2.44-.13-2.42 0-4.06 1.47-4.06 4.18V9.9H7.5V13h2.7v8h3.3Z"/>',
     "x": '<path d="M17.2 3h3.3l-7.2 8.2L21.8 21h-6.5l-5-6.1L4.4 21H1.1l7.7-8.8L1.5 3H8l4.5 5.6L17.2 3Zm'
          '-1.15 16h1.83L7.05 4.9H5.1l10.95 14.1Z"/>',
-    "youtube": '<path d="M21.6 7.2s-.2-1.4-.8-2c-.75-.8-1.6-.82-2-.86C16 4.2 12 4.2 12 4.2h-.01s-4 0-6.8'
-               '.14c-.4.04-1.24.06-2 .86-.6.6-.8 2-.8 2S2.2 8.85 2.2 10.5v1.55c0 1.65.2 3.3.2 3.3s.2 1.4'
-               '.8 2c.76.8 1.76.78 2.2.86 1.6.15 6.8.2 6.8.2s4 0 6.8-.15c.4-.05 1.25-.06 2-.86.6-.6.8-2'
-               '.8-2s.2-1.65.2-3.3V10.5c0-1.65-.2-3.3-.2-3.3ZM9.9 14.3V8.9l5.2 2.7-5.2 2.7Z"/>',
+    # the play triangle is its own filled path, not a subpath cut out of the
+    # body — as one path it needed an even-odd fill rule to punch through, and
+    # without it the icon rendered as a solid rounded rectangle
+    "youtube": ('<rect x="2.5" y="5.5" width="19" height="13" rx="4" '
+                'fill="none" stroke="currentColor" stroke-width="1.9"/>'
+                '<path d="M10 9l6 3-6 3V9Z" fill="currentColor"/>'),
     "tiktok": '<path d="M16.6 5.82A4.28 4.28 0 0 1 15.54 3h-3.1v12.4a2.59 2.59 0 0 1-2.6 2.5 2.6 2.6 0 0 1 '
               '0-5.2c.27 0 .53.04.78.12v-3.2a5.9 5.9 0 0 0-.78-.05 5.72 5.72 0 1 0 5.72 5.72V9.4a7.35 '
               '7.35 0 0 0 4.28 1.37V7.68a4.29 4.29 0 0 1-3.24-1.86Z"/>',

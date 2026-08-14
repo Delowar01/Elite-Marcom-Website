@@ -1153,6 +1153,22 @@ def test_custom_page_create_edit_publish_and_delete():
     client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
 
 
+def test_youtube_icon_draws_an_outlined_body_and_a_filled_play_triangle():
+    """The body and the triangle are separate shapes on purpose. As one path
+    the triangle was a subpath that needed an even-odd fill rule to punch
+    through, and without it the icon rendered as a solid rounded rectangle."""
+    from server import blocks
+
+    markup = blocks.render_social({"youtube": "https://www.youtube.com/@elitemarcom"})
+    assert '<rect x="2.5" y="5.5" width="19" height="13" rx="4"' in markup
+    assert 'fill="none" stroke="currentColor"' in markup      # body is outlined…
+    assert '<path d="M10 9l6 3-6 3V9Z" fill="currentColor"/>' in markup  # …triangle filled
+    # both shapes take their colour from the icon's own, so hover still works
+    assert "#" not in markup.split("<svg")[1]
+    for other in ("instagram", "linkedin", "facebook", "x"):
+        assert blocks._ICONS[other], other
+
+
 def test_social_links_render_in_the_footer_of_every_page():
     me = client.get("/api/admin/me").json()
     assert "site-social" not in client.get("/admin/preview/about").text
