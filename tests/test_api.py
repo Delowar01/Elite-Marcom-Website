@@ -1227,7 +1227,7 @@ def test_scheduled_slots_run_once_each_and_cost_one_call(tmp_path, monkeypatch):
         calls.append(("price", market))
         jasani._budget_ok(market, manual)
         for p in products:
-            p.setdefault(jasani._INT_KEY, {}).update({"wholesale": 4.0, "currency": "SAR"})
+            p.setdefault(jasani._INT_KEY, {}).update({"price": 4.0, "currency": "SAR"})
         return {"rows": len(products), "matched": len(products), "unmatched": 0,
                 "codeMismatch": 0, "currencies": ["SAR"]}
 
@@ -1477,22 +1477,22 @@ def test_price_api_url_is_the_documented_one_per_market(tmp_path, monkeypatch):
                           "https://www.jasani.ae/products/price/tok-uae"]
 
 
-def test_price_records_parse_into_wholesale_retail_and_currency(tmp_path, monkeypatch):
+def test_price_records_parse_into_one_price_and_a_currency(tmp_path, monkeypatch):
+    """list_price only. retail_price is the supplier's suggested selling price,
+    not ours, and it is deliberately not carried anywhere."""
     from server import jasani
 
     monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
     rec = jasani.normalize_price(
         {"id": 2001, "default_code": "ITGL 1291", "currency": "sar",
          "list_price": "38.50", "retail_price": 62}, "ksa")
-    assert rec == {"id": "2001", "code": "ITGL 1291", "wholesale": 38.5,
-                   "retail": 62.0, "currency": "SAR"}
-    # a row with no usable price is not a row, and neither is one with no id
-    assert jasani.normalize_price({"id": 9, "list_price": 0, "retail_price": False}, "ksa") is None
+    assert rec == {"id": "2001", "code": "ITGL 1291", "price": 38.5, "currency": "SAR"}
+    # a row with no usable list_price is not a row, whatever else it carries
+    assert jasani.normalize_price({"id": 9, "list_price": 0, "retail_price": 62}, "ksa") is None
+    assert jasani.normalize_price({"id": 9, "retail_price": 19.0}, "uae") is None
     assert jasani.normalize_price({"list_price": 5}, "ksa") is None
-    # only one side priced is still worth keeping, and the market supplies the
-    # currency when the supplier leaves it out
-    half = jasani.normalize_price({"id": 7, "retail_price": 19.0}, "uae")
-    assert half == {"id": "7", "code": "", "wholesale": None, "retail": 19.0, "currency": "AED"}
+    # the market supplies the currency when the supplier leaves it out
+    assert jasani.normalize_price({"id": 7, "list_price": 19.0}, "uae")["currency"] == "AED"
 
 
 def test_prices_join_on_product_id_and_report_code_mismatches(tmp_path, monkeypatch):
@@ -1512,7 +1512,7 @@ def test_prices_join_on_product_id_and_report_code_mismatches(tmp_path, monkeypa
     assert report["codeMismatch"] == 1 and report["currencies"] == ["SAR"]
     # 2002 took its price despite the code disagreeing; 2003 took none, even
     # though a price row carried its code
-    assert products[1][jasani._INT_KEY]["wholesale"] == 11.25
+    assert products[1][jasani._INT_KEY]["price"] == 11.25
     assert jasani._INT_KEY not in products[2]
 
 
@@ -1527,8 +1527,8 @@ def test_price_sync_keeps_the_two_markets_apart(tmp_path, monkeypatch):
     asyncio.run(jasani.force_refresh("ksa", "full"))
     asyncio.run(jasani.force_refresh("uae", "full"))
     ksa, uae = jasani.internal_map("ksa"), jasani.internal_map("uae")
-    assert ksa["2001"]["wholesale"] == 38.5 and ksa["2001"]["currency"] == "SAR"
-    assert uae["3001"]["wholesale"] == 41.0 and uae["3001"]["currency"] == "AED"
+    assert ksa["2001"]["price"] == 38.5 and ksa["2001"]["currency"] == "SAR"
+    assert uae["3001"]["price"] == 41.0 and uae["3001"]["currency"] == "AED"
     assert set(ksa) & set(uae) == set()
     assert "2001" not in uae and "3001" not in ksa
 
@@ -1543,13 +1543,15 @@ def test_synced_prices_never_ride_on_a_product_or_reach_the_public_api(tmp_path,
     raw = json.loads((tmp_path / "giveaways-ksa.json").read_text(encoding="utf-8"))
     for product in raw["products"]:
         assert jasani._INT_KEY not in product
-        for key in ("wholesale", "retail", "list_price", "retail_price", "blocked_qty"):
+        for key in ("price", "wholesale", "retail", "list_price", "blocked_qty"):
             assert key not in product, key
-    assert raw["internal"]["2001"]["retail"] == 62.0
+    assert raw["internal"]["2001"]["price"] == 38.5
+    # the supplier's retail price is not stored at all, on the product or beside it
+    assert all("retail" not in rec for rec in raw["internal"].values())
 
     public = client.get("/api/giveaways/products?country=ksa")
     body = public.text
-    for needle in ("38.5", "62.0", "list_price", "retail_price", "wholesale"):
+    for needle in ("38.5", "62.0", "list_price", "retail_price", "price"):
         assert needle not in body, needle
 
 
@@ -1565,7 +1567,7 @@ def test_a_stock_refresh_keeps_the_prices_already_synced(tmp_path, monkeypatch):
 
     asyncio.run(jasani.force_refresh("ksa", "stock"))
     after = jasani.internal_map("ksa")
-    assert after["2001"]["wholesale"] == 38.5 and after["2001"]["retail"] == 62.0
+    assert after["2001"]["price"] == 38.5
     assert after["2001"]["booked"] == 120          # the stock call adds its own field
     assert jasani._read_cache("ksa")["priceAt"] == priced_at   # not restamped
 
@@ -1580,10 +1582,10 @@ def test_a_product_refresh_keeps_last_known_good_prices(tmp_path, monkeypatch):
 
     _price_env(tmp_path, monkeypatch, jasani)
     asyncio.run(jasani.force_refresh("ksa", "full"))
-    assert jasani.internal_map("ksa")["2001"]["wholesale"] == 38.5
+    assert jasani.internal_map("ksa")["2001"]["price"] == 38.5
 
     asyncio.run(jasani.force_refresh("ksa", "products"))
-    assert jasani.internal_map("ksa")["2001"]["wholesale"] == 38.5
+    assert jasani.internal_map("ksa")["2001"]["price"] == 38.5
 
     # the next day, with a full sync whose price leg fails upstream
     (tmp_path / "supplier-budget.json").unlink(missing_ok=True)
@@ -1591,8 +1593,8 @@ def test_a_product_refresh_keeps_last_known_good_prices(tmp_path, monkeypatch):
                 fail=("price",))
     result = asyncio.run(jasani.force_refresh("ksa", "full"))
     assert result["pricesApplied"] is False and result["stockApplied"] is True
-    assert jasani.internal_map("ksa")["2001"]["wholesale"] == 38.5
-    assert jasani.cache_status("ksa")["withWholesale"] == 2
+    assert jasani.internal_map("ksa")["2001"]["price"] == 38.5
+    assert jasani.cache_status("ksa")["withPrice"] == 2
 
 
 def test_full_sync_calls_products_price_and_stock(tmp_path, monkeypatch):
@@ -1607,7 +1609,7 @@ def test_full_sync_calls_products_price_and_stock(tmp_path, monkeypatch):
                       "pricesApplied": True, "stockApplied": True}
     assert jasani.budget_status("ksa")["used"] == 3
     status = jasani.cache_status("ksa")
-    assert (status["withWholesale"], status["withRetail"]) == (2, 2)
+    assert status["withPrice"] == 2
     assert status["priceAt"] and status["pricesFresh"] is True
     assert status["currencies"] == ["SAR"]
 

@@ -33,15 +33,24 @@ documentation). Non-negotiable rules from it:
   without raising that spends the reserved manual call.
   `get_catalog` never triggers a refresh; it serves the snapshot so a page load
   never waits on the supplier.
-- **Prices are their own primary call.** `list_price` and `retail_price` are
-  *not* in the Product API (reference §12 lists no price field); they come from
-  the **Price API**, `GET https://{host}/products/price/{token}` (§22), with
-  `id`, `default_code`, `currency`, `list_price`, `retail_price`. Join on **`id`
-  only** — the two markets share product codes but never share ids, so matching
-  on `default_code` is how a KSA price lands on a UAE product; the code is kept
-  for mismatch reporting and nothing else. Never try to read prices off the
+- **Price is its own primary call.** `list_price` is *not* in the Product API
+  (reference §12 lists no price field); it comes from the **Price API**,
+  `GET https://{host}/products/price/{token}` (§22), with `id`, `default_code`,
+  `currency`, `list_price`, `retail_price`. Join on **`id` only** — the two
+  markets share product codes but never share ids, so matching on
+  `default_code` is how a KSA price lands on a UAE product; the code is kept
+  for mismatch reporting and nothing else. Never try to read the price off the
   products feed again: that is how 1,778 KSA and 2,573 UAE products sat at zero
   prices through any number of syncs.
+- **One price, called Price.** `list_price` — our own supplier price, excluding
+  VAT — is the only price the panel keeps, stored as `internal[id]["price"]`.
+  The supplier's `retail_price` is a *suggested selling* price, not ours, and is
+  deliberately dropped at `normalize_price`: it is not stored, not exported, not
+  shown, and `_lift_internal` strips it (`_DEAD_INTERNAL_KEYS`) from snapshots
+  that still carry it. Do not reintroduce it as a second column — a figure that
+  is not ours sitting beside one that is only invites the wrong number into a
+  quote. `_price_of` reads a pre-rename snapshot's `wholesale` key so a live
+  cache keeps working until its next write.
 - Manual sync targets (`force_refresh`, `REFRESH_COST`): `products`, `prices`,
   `stock` — one call each — and `full` = all three. A multi-call target checks
   `_budget_left` **before the first request**, so a full sync never spends one
@@ -71,9 +80,9 @@ documentation). Non-negotiable rules from it:
   never mix markets.
 - No public prices, no online payment, no automatic supplier orders. The Order API
   needs separate written authorization — do not wire it to the public site.
-- **Internal-only supplier fields.** `blocked_qty`, `list_price` and
-  `retail_price` are captured but never ride on a product: `normalize_product`
-  parks them under `_INT_KEY`, and `_write_cache` — the single choke point that
+- **Internal-only supplier fields.** `blocked_qty` and `list_price` are
+  captured but never ride on a product: the stock and price merges park them
+  under `_INT_KEY`, and `_write_cache` — the single choke point that
   persists a snapshot — lifts them into a sibling `internal` map keyed by
   product id. A caller that hands the product list to a public response
   therefore cannot leak what the list never holds. Read them with

@@ -383,12 +383,27 @@ def _present(rec: dict, *keys: str) -> bool:
 
 
 # ---------------- internal-only supplier fields ----------------
-# blocked_qty, list_price and retail_price are documented as internal: they may
-# inform quoting and margin work but must never reach a public product response
-# or a customer document. They ride on the product dict under this private key
+# blocked_qty and list_price are documented as internal: they may inform quoting
+# and margin work but must never reach a public product response or a customer
+# document. They ride on the product dict under this private key
 # only until _write_cache lifts them into a separate map — the single choke
 # point that persists a snapshot, so the public list cannot carry them.
 _INT_KEY = "_int"
+
+# snapshots written before the catalogue settled on a single price stored it
+# under "wholesale"; read those rather than showing a dash until the next sync
+_PRICE_KEYS = ("price", "wholesale")
+# dropped on the way to disk: the supplier's suggested retail price is not ours
+# and has no reader left
+_DEAD_INTERNAL_KEYS = ("retail",)
+
+
+def _price_of(rec: dict) -> float | None:
+    for key in _PRICE_KEYS:
+        value = rec.get(key)
+        if value is not None:
+            return value
+    return None
 
 
 def _money(rec: dict, *keys: str) -> float | None:
@@ -407,7 +422,10 @@ def normalize_price(rec: dict, market: str) -> dict | None:
     """One Price API record → the internal-only price entry, or None.
 
     Documented fields (reference section 22.2): id, default_code, currency,
-    list_price, retail_price. Both prices exclude VAT. `id` is the join key —
+    list_price, retail_price. We keep one price — list_price, our own supplier
+    price, excluding VAT. retail_price is the supplier's suggested selling
+    price: it is not what anything here costs, and a second figure beside the
+    real one only invites the wrong number into a quote. `id` is the join key —
     the same supplier variant id the Product API returns — and default_code is
     kept only so a mismatch can be reported, never to match on: two markets
     share product codes but never share ids, so matching on the code is how a
@@ -416,15 +434,14 @@ def normalize_price(rec: dict, market: str) -> dict | None:
     pid = _s(rec, "id", "product_id", "variant_id", "productid")
     if not pid:
         return None
-    wholesale = _money(rec, "list_price", "listprice")
-    retail = _money(rec, "retail_price", "retailprice")
-    if wholesale is None and retail is None:
+    price = _money(rec, "list_price", "listprice")
+    if price is None:
         return None                      # a row with no usable price is no row
     currency = _s(rec, "currency", "currency_code")[:8].strip().upper()
     if not currency:
         currency = " ".join(_rel_names(rec.get("currency_id")))[:8].strip().upper()
     return {"id": pid, "code": _s(rec, "default_code", "code", "sku")[:60],
-            "wholesale": wholesale, "retail": retail,
+            "price": price,
             "currency": currency or CURRENCY_BY_MARKET.get(market, "")}
 
 
@@ -814,8 +831,7 @@ def _merge_prices(products: list[dict], price_records: list[dict], market: str) 
             # reported, never acted on: the id is the key, so a code that
             # disagrees is a supplier data question, not a reason to re-match
             code_mismatch += 1
-        priced = {k: v for k, v in (("wholesale", entry["wholesale"]),
-                                    ("retail", entry["retail"])) if v is not None}
+        priced = {"price": entry["price"]}
         if entry["currency"]:
             priced["currency"] = entry["currency"]
             currencies.add(entry["currency"])
@@ -854,7 +870,18 @@ def _lift_internal(market: str, products: list[dict]) -> dict:
     for pid, rec in fresh.items():
         merged[pid] = {**merged.get(pid, {}), **rec}
     live = {str(p.get("id")) for p in products}
-    return {pid: rec for pid, rec in merged.items() if pid in live}
+    out = {}
+    for pid, rec in merged.items():
+        if pid not in live:
+            continue
+        rec = {k: v for k, v in rec.items() if k not in _DEAD_INTERNAL_KEYS}
+        # one price, under one key: an older snapshot's "wholesale" is carried
+        # across on the first write so nothing has to read two names forever
+        if "wholesale" in rec:
+            rec.setdefault("price", rec.pop("wholesale"))
+            rec.pop("wholesale", None)
+        out[pid] = rec
+    return out
 
 
 # ---------------- what the website is allowed to show ----------------
@@ -946,11 +973,10 @@ def price_status(market: str) -> dict:
     """When prices were last synced and how many products carry one."""
     cached = _read_cache(market) or {}
     internal = cached.get("internal") or {}
-    wholesale = sum(1 for rec in internal.values() if rec.get("wholesale") is not None)
-    retail = sum(1 for rec in internal.values() if rec.get("retail") is not None)
+    priced = sum(1 for rec in internal.values() if _price_of(rec) is not None)
     currencies = sorted({rec.get("currency") for rec in internal.values() if rec.get("currency")})
     price_at = cached.get("priceAt") or 0
-    return {"priceAt": price_at or None, "withWholesale": wholesale, "withRetail": retail,
+    return {"priceAt": price_at or None, "withPrice": priced,
             "pricesFresh": bool(price_at) and time.time() - price_at < config.PRICE_REFRESH_HOURS * 3600,
             "currencies": currencies}
 
@@ -1024,7 +1050,7 @@ async def _apply_prices(market: str, products: list[dict], manual: bool = False)
 
     Prices are not in the Product API — they have their own documented endpoint
     (reference section 22) — which is why a products-only sync leaves every
-    wholesale and retail figure empty."""
+    price empty."""
     host = _host(market)
     raw, ctype = await _fetch(f"https://{host}/products/price/{_token(market)}", host,
                               market, manual=manual)
@@ -1265,7 +1291,7 @@ def cache_status(market: str) -> dict:
         return {"market": market, "cached": False, "products": 0, "inStock": 0,
                 "fetchedAt": None, "stockAt": None, "priceAt": None,
                 "productsFresh": False, "stockFresh": False, "pricesFresh": False,
-                "withWholesale": 0, "withRetail": 0, "currencies": [],
+                "withPrice": 0, "currencies": [],
                 "lastAttempt": attempt}
     now = time.time()
     products = cached.get("products", [])
@@ -1438,8 +1464,7 @@ def _row(p: dict, internal: dict, hidden: set[str], drop_zero: bool,
     }
     if with_prices:
         rec = internal.get(pid) or {}
-        row["wholesale"] = rec.get("wholesale")
-        row["retail"] = rec.get("retail")
+        row["price"] = _price_of(rec)
         row["booked"] = rec.get("booked", 0)
         row["currency"] = rec.get("currency") or CURRENCY_BY_MARKET.get(market_of(p), "")
     return row
@@ -1462,7 +1487,7 @@ _SEARCH_FIELDS = {
 def item_list(market: str, *, terms: list[str] | None = None, field: str = "all",
               stock: str = "", brand: str = "", colour: str = "", category: str = "",
               visibility: str = "", hide_zero: bool = False,
-              price_field: str = "wholesale", price_min: float | None = None,
+              price_min: float | None = None,
               price_max: float | None = None, sort: str = "featured",
               with_prices: bool = False) -> dict:
     """Search, filter and sort the cached snapshot. Never calls the supplier."""
@@ -1525,7 +1550,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
         if visibility == "byhand" and not r["hidden"]:
             return False
         if price_min is not None or price_max is not None:
-            value = r.get("retail" if price_field == "retail" else "wholesale")
+            value = r.get("price")
             if value is None:
                 return False
             if price_min is not None and value < price_min:
@@ -1537,7 +1562,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
     kept = [r for r in rows if keep(r)]
 
     def price_key(r):
-        v = r.get("retail" if price_field == "retail" else "wholesale")
+        v = r.get("price")
         return v if v is not None else 0.0
 
     sorters = {

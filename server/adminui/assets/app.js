@@ -789,8 +789,7 @@
               ? '<div class="stat-row stat-row--tight">' +
                 '<div class="stat-card"><b>' + esc(m.products) + "</b><span>Products cached</span></div>" +
                 '<div class="stat-card"><b>' + esc(m.inStock) + "</b><span>In stock</span></div>" +
-                '<div class="stat-card"><b>' + esc(m.withWholesale) + "</b><span>With wholesale price</span></div>" +
-                '<div class="stat-card"><b>' + esc(m.withRetail) + "</b><span>With retail price</span></div></div>" +
+                '<div class="stat-card"><b>' + esc(m.withPrice) + "</b><span>With a price</span></div></div>" +
                 '<p class="admin-inline-note">Products: ' + esc(when(m.fetchedAt)) +
                 (m.productsFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') +
                 "<br>Prices: " + (m.priceAt ? esc(when(m.priceAt)) +
@@ -799,7 +798,7 @@
                   : '<span class="badge-bad">never synced</span>') +
                 "<br>Stock: " + esc(when(m.stockAt)) +
                 (m.stockFresh ? ' <span class="badge-ok">fresh</span>' : ' <span class="badge-bad">due</span>') + "</p>" +
-                (m.withWholesale === 0 && m.products
+                (m.withPrice === 0 && m.products
                   ? '<p class="ins-alert ins-alert--warn">No product carries a price. Prices come from ' +
                     "the supplier's own Price API — a products sync does not fetch them. Run " +
                     "<b>Prices</b> below, or wait for the scheduled price call.</p>" : "")
@@ -3361,7 +3360,7 @@
   var jzState = {
     market: "ksa", terms: [], field: "all", stock: "", brand: "", colour: "",
     category: "", visibility: "", sort: "featured", hideZero: false,
-    priceField: "wholesale", priceMin: "", priceMax: "",
+    priceMin: "", priceMax: "",
     page: 1, perPage: 25, listScroll: 0, gallery: 0, data: null
   };
 
@@ -3371,7 +3370,7 @@
       market: s.market, q: s.terms.join(","), field: s.field, stock: s.stock,
       brand: s.brand, colour: s.colour, category: s.category,
       visibility: s.visibility, hideZero: s.hideZero ? "true" : "false",
-      priceField: s.priceField, priceMin: s.priceMin, priceMax: s.priceMax,
+      priceMin: s.priceMin, priceMax: s.priceMax,
       sort: s.sort, page: s.page, perPage: s.perPage
     };
     Object.keys(extra || {}).forEach(function (k) { q[k] = extra[k]; });
@@ -3491,8 +3490,8 @@
         ({ visible: "Live", hidden: "Not live", byhand: "Hidden by hand" }[jzState.visibility])]);
       if (jzState.hideZero) chips.push(["hideZero", "Zero stock hidden"]);
       if (jzState.priceMin !== "" || jzState.priceMax !== "") {
-        chips.push(["price", (jzState.priceField === "retail" ? "Retail " : "Wholesale ") +
-          (jzState.priceMin || "0") + "–" + (jzState.priceMax || "any") + " " + cur]);
+        chips.push(["price", "Price " + (jzState.priceMin || "0") + "–" +
+          (jzState.priceMax || "any") + " " + cur]);
       }
 
       var cards = [["", jzNum(t.all), "Items in the snapshot", "all"],
@@ -3566,10 +3565,7 @@
                  ["byhand", "Hidden by hand"]]) +
             '<label class="jz-toggle"><input type="checkbox" id="jz-zero"' +
               (jzState.hideZero ? " checked" : "") + "> Hide zero-stock items</label>" +
-            (prices ? '<span class="jz-price-filter">' +
-              '<select id="jz-pfield" aria-label="Which price to filter on">' +
-              '<option value="wholesale"' + (jzState.priceField === "wholesale" ? " selected" : "") + ">Wholesale</option>" +
-              '<option value="retail"' + (jzState.priceField === "retail" ? " selected" : "") + ">Retail</option></select>" +
+            (prices ? '<span class="jz-price-filter"><label for="jz-pmin">Price</label>' +
               '<input id="jz-pmin" type="number" min="0" step="0.01" placeholder="Min" aria-label="Minimum price" value="' + esc(jzState.priceMin) + '">' +
               '<i aria-hidden="true">–</i>' +
               '<input id="jz-pmax" type="number" min="0" step="0.01" placeholder="Max" aria-label="Maximum price" value="' + esc(jzState.priceMax) + '">' +
@@ -3597,7 +3593,7 @@
           // next sync rather than being invented here
           (d.pricesPending
             ? '<div class="jz-pending"><b>No prices in this snapshot yet.</b> ' +
-              "Wholesale and retail come from the supplier's own Price API, which is a call " +
+              "The price comes from the supplier's own Price API, which is a call " +
               "of its own — a products sync does not fetch them. The scheduled price call " +
               "fills them, or press <b>Prices</b> on the " +
               '<a href="#jasani">Jasani console</a> to do it now. Booked stock arrives with ' +
@@ -3605,7 +3601,7 @@
             : "") +
           '<div class="table-scroll"><table class="jz-table"><thead><tr>' +
             "<th>SN</th><th></th><th>SKU</th><th>Name</th><th>Brand</th><th>Colour</th>" +
-            (prices ? '<th class="jz-num">Wholesale Price</th><th class="jz-num">Retail Price</th>' : "") +
+            (prices ? '<th class="jz-num">Price</th>' : "") +
             '<th class="jz-num">Available</th><th class="jz-num">Incoming</th>' +
             (prices ? '<th class="jz-num">Booked</th>' : "") +
             "<th>Website</th><th></th></tr></thead><tbody>" +
@@ -3623,10 +3619,8 @@
                   esc([it.brand, it.color, it.category].filter(Boolean).join(" · ")) + "</span></td>" +
                 '<td class="jz-brand">' + esc(it.brand || "—") + "</td>" +
                 '<td class="jz-colour">' + esc(it.color || "—") + "</td>" +
-                (prices ? '<td class="jz-num jz-price jz-price--whl" data-l="Wholesale Price"><b>' +
-                    jzMoney(it.wholesale) + "</b>" + JZ_INT + "</td>" +
-                  '<td class="jz-num jz-price jz-price--rtl" data-l="Retail Price">' +
-                    jzMoney(it.retail) + JZ_INT + "</td>" : "") +
+                (prices ? '<td class="jz-num jz-price" data-l="Price"><b>' +
+                    jzMoney(it.price) + "</b>" + JZ_INT + "</td>" : "") +
                 '<td class="jz-num jz-stock' + cls + '" data-l="Available">' +
                   '<span class="jz-stock-label">Available</span><b>' + jzNum(it.available) + "</b>" +
                   '<span class="jz-sub">' + (it.available === 0 ? "out of stock"
@@ -3641,7 +3635,7 @@
                 '<td class="jz-cell-actions cell-actions"><button class="dots-btn" data-jzrow="' +
                   esc(it.id) + '" aria-label="Actions for ' + esc(it.code) + '">⋮</button></td></tr>';
             }).join("")
-              : '<tr><td colspan="13"><div class="jz-empty"><b>Nothing matches.</b><br>' +
+              : '<tr><td colspan="12"><div class="jz-empty"><b>Nothing matches.</b><br>' +
                 '<span class="admin-inline-note">Try removing a filter, or search a different SKU.</span></div></td></tr>') +
           "</tbody></table></div>" +
           '<div class="jz-foot"><span>Showing ' +
@@ -3747,7 +3741,7 @@
 
     var binds = { "jz-field": "field", "jz-sort": "sort", "jz-stock": "stock",
                   "jz-brand": "brand", "jz-colour": "colour", "jz-category": "category",
-                  "jz-vis": "visibility", "jz-pfield": "priceField" };
+                  "jz-vis": "visibility" };
     Object.keys(binds).forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener("change", function () {
@@ -3835,7 +3829,7 @@
         encodeURIComponent(productId)).then(function (r) {
       if (!r.ok) return apiErr(r);
       var it = r.data.item, low = r.data.lowThreshold, cur = r.data.currency;
-      var prices = it.wholesale !== undefined;
+      var prices = it.price !== undefined;
       var images = (it.images && it.images.length) ? it.images : (it.image ? [it.image] : []);
       if (jzState.gallery >= images.length) jzState.gallery = 0;
       var cls = it.available === 0 ? "bad" : (it.available <= low ? "warn" : "ok");
@@ -3898,11 +3892,7 @@
               fact("Incoming", it.incoming ? jzNum(it.incoming) : "—",
                    it.incoming && it.incomingDate ? "est. " + it.incomingDate : "") +
               (prices ? fact("Booked", it.booked ? jzNum(it.booked) : "—") : "") +
-              (prices ? fact("Wholesale Price", jzMoney(it.wholesale), cur + " ex VAT") : "") +
-              (prices ? fact("Retail Price", jzMoney(it.retail), cur + " ex VAT") : "") +
-              (prices && it.wholesale != null && it.retail
-                ? fact("Margin", jzMoney(it.retail - it.wholesale),
-                       Math.round(((it.retail - it.wholesale) / it.retail) * 100) + "% of retail") : "") +
+              (prices ? fact("Price", jzMoney(it.price), cur + " ex VAT") : "") +
             "</dl>" +
             (prices ? '<p class="admin-inline-note">Prices and booked stock are internal — they are ' +
               "never shown on the website, in a public API response or in a customer document.</p>" : "") +

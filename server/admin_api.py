@@ -718,7 +718,6 @@ async def admin_jasani_items(request: Request,
                              q: str = "", field: str = "all", stock: str = "",
                              brand: str = "", colour: str = "", category: str = "",
                              visibility: str = "", hideZero: bool = False,
-                             priceField: str = "wholesale",
                              priceMin: str = "", priceMax: str = "",
                              sort: str = "featured", page: int = 1, perPage: int = 25):
     """The Jasani items table. Reads the cached snapshot only — opening this
@@ -732,7 +731,7 @@ async def admin_jasani_items(request: Request,
     data = jasani.item_list(
         market, terms=terms, field=field, stock=stock, brand=brand, colour=colour,
         category=category, visibility=visibility, hide_zero=bool(hideZero),
-        price_field=priceField, price_min=_f(priceMin), price_max=_f(priceMax),
+        price_min=_f(priceMin), price_max=_f(priceMax),
         sort=sort, with_prices=prices)
     rows = data.pop("rows")
     per = max(10, min(200, perPage))
@@ -757,7 +756,6 @@ async def admin_jasani_items_export(request: Request, format: str = "csv",
                                     q: str = "", field: str = "all", stock: str = "",
                                     brand: str = "", colour: str = "", category: str = "",
                                     visibility: str = "", hideZero: bool = False,
-                                    priceField: str = "wholesale",
                                     priceMin: str = "", priceMax: str = "",
                                     sort: str = "featured", scope: str = "filtered"):
     """The item list as CSV, Excel or a branded PDF table."""
@@ -778,7 +776,6 @@ async def admin_jasani_items_export(request: Request, format: str = "csv",
         category="" if everything else category,
         visibility="" if everything else visibility,
         hide_zero=False if everything else bool(hideZero),
-        price_field=priceField,
         price_min=None if everything else _f(priceMin),
         price_max=None if everything else _f(priceMax),
         sort=sort, with_prices=prices)

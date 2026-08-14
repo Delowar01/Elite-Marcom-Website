@@ -340,8 +340,7 @@ _ITEM_COLUMNS = [("code", "SKU"), ("name", "Name"), ("brand", "Brand"),
                  ("color", "Colour"), ("category", "Category")]
 _ITEM_STOCK = [("available", "Available"), ("incoming", "Incoming"),
                ("incomingDate", "Incoming date (estimated)")]
-_ITEM_PRICES = [("wholesale", "Wholesale price"), ("retail", "Retail price"),
-                ("booked", "Booked")]
+_ITEM_PRICES = [("price", "Price"), ("booked", "Booked")]
 
 
 def item_rows(items: list[dict], with_prices: bool, currency: str = "") -> list[list[str]]:
@@ -379,8 +378,7 @@ def items_to_pdf(items: list[dict], *, market: str, with_prices: bool,
     cols = [("code", "SKU", 74), ("name", "Name", 150), ("brand", "Brand", 70),
             ("color", "Colour", 60)]
     if with_prices:
-        cols += [("wholesale", f"Whlsl {currency}".strip(), 54),
-                 ("retail", f"Retail {currency}".strip(), 54), ("booked", "Bkd", 34)]
+        cols += [("price", f"Price {currency}".strip(), 62), ("booked", "Bkd", 34)]
     cols += [("available", "Avail", 42), ("incoming", "Inc", 36)]
     total = sum(w for _, _, w in cols)
     scale = (PAGE_W - 2 * M) / total
@@ -424,8 +422,8 @@ def items_to_pdf(items: list[dict], *, market: str, with_prices: bool,
 def product_sheet_pdf(item: dict, images: list[bytes], *, currency: str = "") -> bytes:
     """One A4 product sheet for a customer.
 
-    Carries no price of any kind: supplier list_price and retail_price are
-    internal by supplier policy, and this document is meant to be sent out.
+    Carries no price of any kind: the supplier's list_price is internal by
+    supplier policy, and this document is meant to be sent out.
     """
     from reportlab.lib.utils import ImageReader
 
