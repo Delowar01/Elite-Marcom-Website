@@ -606,6 +606,28 @@ async def videos_for(market: str, product: dict) -> list[dict]:
         return associate_posters(product, found["videos"], found["imageIds"])
 
 
+def without_posters(images, videos) -> list[str]:
+    """The gallery minus the pictures that are really a video's poster.
+
+    The one place that rule lives on the server, so the admin item page, the
+    product-sheet PDF and anything added later cannot drift from each other —
+    or from the website, which applies the same two tests in the browser. An
+    unidentified poster removes nothing: see associate_posters.
+    """
+    drop_urls = {v.get("supplierPoster") for v in videos or [] if v.get("supplierPoster")}
+    drop_ids = {str(v.get("supplierImageId")) for v in videos or [] if v.get("supplierImageId")}
+    out = []
+    for url in images or []:
+        text = str(url)
+        if text in drop_urls:
+            continue
+        m = _IMG_RE.search(text)
+        if m and m.group(1) in drop_ids:
+            continue
+        out.append(text)
+    return out
+
+
 def cache_status() -> dict:
     """Counts for the admin supplier console — no supplier data, just verdicts."""
     hits = misses = 0

@@ -829,11 +829,15 @@ async def admin_jasani_item_sheet(request: Request, market: Literal["ksa", "uae"
                                   product_id: str):
     """A branded one-page product sheet, deliberately without any price."""
     require_perm(request, "jasani.view")
-    from . import exports, jasani
+    from . import exports, jasani, supplier_video
 
     item = jasani.item_detail(market, product_id)
     if item is None:
         raise HTTPException(status_code=404, detail="That item is not in the cached catalogue.")
+    # a video's poster is not a photograph of the product; it does not belong
+    # in a document that goes to a customer
+    item["images"] = supplier_video.without_posters(
+        item.get("images"), await supplier_video.videos_for(market, item))
     photos: list[bytes] = []
     for url in (item.get("images") or [])[:4]:
         blob = await jasani._fetch_image_bytes(url)
@@ -849,12 +853,17 @@ async def admin_jasani_item_sheet(request: Request, market: Literal["ksa", "uae"
 @router.get("/api/admin/jasani/items/{market}/{product_id}")
 async def admin_jasani_item(request: Request, market: Literal["ksa", "uae"], product_id: str):
     session = require_perm(request, "jasani.view")
-    from . import jasani
+    from . import jasani, supplier_video
 
     item = jasani.item_detail(market, product_id,
                               with_prices=aa.has_perm(session["role"], "jasani.prices"))
     if item is None:
         raise HTTPException(status_code=404, detail="That item is not in the cached catalogue.")
+    # The same public-page lookup the website uses, off the same cache: an
+    # admin looking at an item sees the video the customer sees, and not the
+    # poster sitting in the gallery as a still nobody can play.
+    item["videos"] = await supplier_video.videos_for(market, item)
+    item["images"] = supplier_video.without_posters(item.get("images"), item["videos"])
     return {"item": item, "lowThreshold": config.LOW_STOCK_THRESHOLD,
             "currency": jasani.CURRENCY_BY_MARKET.get(market, ""),
             "canChangeVisibility": aa.has_perm(session["role"], "jasani.visibility")}

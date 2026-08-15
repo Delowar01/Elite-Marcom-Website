@@ -1613,6 +1613,10 @@ def item_detail(market: str, product_id: str, with_prices: bool = False) -> dict
                 "cartonWeight": p.get("cartonWeight"),
                 "cartonVolume": p.get("cartonVolume"),
                 "colorOptions": p.get("colorOptions") or [],
+                # the supplier's public page id — the admin item page resolves
+                # its video through it, exactly as the website does
+                "parentId": p.get("parentId"),
+                "templateId": p.get("templateId"),
                 "market": market,
             })
             return row

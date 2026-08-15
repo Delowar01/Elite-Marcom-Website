@@ -681,6 +681,86 @@ def test_item_detail_and_exports(tmp_path, monkeypatch):
     assert "38.5" not in lean.content.decode("utf-8-sig")
 
 
+ODOO_HOST = "https://www.giftsksa.com"
+ODOO_PHOTOS = [f"{ODOO_HOST}/web/image/product.image/{20036 + i}/image_1024" for i in range(2)]
+ODOO_POSTER = f"{ODOO_HOST}/web/image/product.image/20045/image_1024"
+ODOO_PAGE = (
+    '<div id="product_detail"><div class="carousel slide"><div class="carousel-inner">'
+    '<div class="carousel-item"><img src="/web/image/product.image/20036/image_1024"></div>'
+    '<div class="carousel-item"><img src="/web/image/product.image/20037/image_1024"></div>'
+    '<div class="carousel-item"><iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe></div>'
+    '</div><ul class="carousel-indicators">'
+    '<li data-bs-slide-to="0"><img src="/web/image/product.image/20036/image_128"></li>'
+    '<li data-bs-slide-to="1"><img src="/web/image/product.image/20037/image_128"></li>'
+    '<li data-bs-slide-to="2" class="o_product_video_thumb">'
+    '<img src="/web/image/product.image/20045/image_128"></li>'
+    "</ul></div></div>")
+
+
+def _seed_item_with_video(tmp_path, monkeypatch):
+    from server import jasani, supplier_video
+
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(supplier_video, "_CACHE_DIR", tmp_path / "videos")
+    jasani._write_cache("ksa", [{
+        "id": "2001", "code": "ITGL 1290", "name": "MagCase Phone Cardholder",
+        "brand": "Jasani", "color": "Black", "categories": ["Tech"], "market": "ksa",
+        "image": ODOO_PHOTOS[0], "images": ODOO_PHOTOS + [ODOO_POSTER],
+        "parentId": "29452", "templateId": None, "videos": [],
+        "description": "Magnetic phone cardholder.",
+        "stock": {"available": 5, "incoming": 0, "incomingDate": None},
+    }], fetched_at=time.time(), stock_at=time.time())
+
+    async def fake_page(url):
+        return ODOO_PAGE
+    monkeypatch.setattr(supplier_video, "fetch_page", fake_page)
+    return supplier_video
+
+
+def test_the_admin_item_page_shows_the_video_and_not_its_static_poster(tmp_path, monkeypatch):
+    """The panel and the website read the same public page from the same cache,
+    so an admin checking an item sees exactly what a customer sees — the video,
+    and not the poster sitting in the gallery as a still nobody can play."""
+    _seed_item_with_video(tmp_path, monkeypatch)
+
+    item = client.get("/api/admin/jasani/items/ksa/2001").json()["item"]
+    assert [v["youtubeId"] for v in item["videos"]] == ["lFhAiGLjoMo"]
+    assert item["videos"][0]["supplierImageId"] == "20045"
+    assert item["videos"][0]["supplierPoster"] == ODOO_POSTER
+    assert item["images"] == ODOO_PHOTOS      # the poster is no longer a photograph
+    assert ODOO_POSTER not in item["images"]
+
+
+def test_the_product_sheet_never_prints_a_video_poster(tmp_path, monkeypatch):
+    """A customer document should carry photographs of the product, not a frame
+    of a video that cannot be played on paper."""
+    supplier_video = _seed_item_with_video(tmp_path, monkeypatch)
+    fetched = []
+
+    async def fake_image(url):
+        fetched.append(url)
+        return None
+    from server import jasani
+    monkeypatch.setattr(jasani, "_fetch_image_bytes", fake_image)
+
+    res = client.get("/api/admin/jasani/items/ksa/2001/sheet")
+    assert res.status_code == 200 and res.content.startswith(b"%PDF-")
+    assert fetched == ODOO_PHOTOS
+    assert ODOO_POSTER not in fetched
+    assert supplier_video.without_posters(
+        ODOO_PHOTOS + [ODOO_POSTER],
+        [{"supplierImageId": "20045", "supplierPoster": ""}]) == ODOO_PHOTOS
+
+
+def test_an_unidentified_poster_leaves_the_admin_gallery_alone(tmp_path, monkeypatch):
+    from server import supplier_video
+
+    every = ODOO_PHOTOS + [ODOO_POSTER]
+    assert supplier_video.without_posters(every, []) == every
+    assert supplier_video.without_posters(
+        every, [{"youtubeId": "lFhAiGLjoMo", "supplierImageId": "", "supplierPoster": ""}]) == every
+
+
 def test_product_sheet_pdf_carries_no_price(tmp_path, monkeypatch):
     """The sheet is a customer document, and supplier prices may not travel in
     one — not for an owner either."""

@@ -1075,6 +1075,44 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 }
 .jz-thumb-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .jz-thumb-btn.is-on { border-color: var(--orange-2); box-shadow: 0 0 0 2px var(--adm-ring); }
+/* the product video, playing where its poster was */
+.jz-pdp__main--video { cursor: pointer; }
+.jz-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 62px; height: 62px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 12, 16, 0.62); color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(6px);
+  transition: transform 0.18s ease, background-color 0.18s linear;
+}
+.jz-play svg { width: 26px; height: 26px; margin-left: 3px; }
+.jz-pdp__main--video:hover .jz-play,
+.jz-pdp__main--video:focus-visible .jz-play {
+  transform: translate(-50%, -50%) scale(1.08); background: var(--orange-2);
+}
+.jz-video {
+  width: 100%; aspect-ratio: 4 / 3; border: 1px solid var(--adm-line);
+  border-radius: 16px; display: block; background: #000;
+}
+/* a video thumbnail is marked, so the strip does not read as one more photo */
+.jz-thumb-btn.is-video { position: relative; }
+.jz-thumb-btn.is-video::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(8, 10, 14, 0.5) 0 42%, transparent 43%),
+    none;
+}
+.jz-thumb-btn.is-video::before {
+  content: ""; position: absolute; left: 50%; top: 50%; z-index: 1;
+  transform: translate(-40%, -50%); pointer-events: none;
+  border-style: solid; border-width: 7px 0 7px 11px;
+  border-color: transparent transparent transparent #fff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jz-play { transition: none; }
+  .jz-pdp__main--video:hover .jz-play { transform: translate(-50%, -50%); }
+}
 .jz-pdp__eyebrow {
   font-size: 0.72rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--text-muted); margin: 0 0 8px;

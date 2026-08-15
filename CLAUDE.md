@@ -134,7 +134,10 @@ documentation). Non-negotiable rules from it:
   numbers lining up prove nothing on their own. Anything less certain leaves
   every image in place: `supplierPoster` stays empty and the browser removes
   nothing. Showing one picture twice is a blemish; deleting the wrong one
-  loses a product photo.
+  loses a product photo. `supplier_video.without_posters` is that removal on
+  the server — the admin item page and the product-sheet PDF go through it, so
+  the panel shows the video a customer sees and a customer document never
+  carries a frame of one.
 - **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
   whenever a parser change means a stored answer could be improved on; an
   entry written under a lower number is treated as absent and rediscovered.

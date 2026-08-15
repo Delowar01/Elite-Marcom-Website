@@ -3836,7 +3836,18 @@
       var it = r.data.item, low = r.data.lowThreshold, cur = r.data.currency;
       var prices = it.price !== undefined;
       var images = (it.images && it.images.length) ? it.images : (it.image ? [it.image] : []);
-      if (jzState.gallery >= images.length) jzState.gallery = 0;
+      /* The gallery is photographs followed by videos, the same order and the
+         same contents the customer sees — the server has already taken the
+         video's poster out of images, so nothing appears twice. */
+      var media = images.map(function (u) { return { kind: "img", src: u }; })
+        .concat((it.videos || []).filter(function (v) { return v && v.youtubeId; })
+          .map(function (v) {
+            return { kind: "video", id: v.youtubeId,
+                     src: v.thumbnail || ("https://i.ytimg.com/vi/" +
+                          encodeURIComponent(v.youtubeId) + "/hqdefault.jpg") };
+          }));
+      if (jzState.gallery >= media.length) jzState.gallery = 0;
+      var shown = media[jzState.gallery] || { kind: "img", src: "" };
       var cls = it.available === 0 ? "bad" : (it.available <= low ? "warn" : "ok");
       var label = it.available === 0 ? "Out of stock" : (it.available <= low ? "Low stock" : "In stock");
 
@@ -3862,26 +3873,36 @@
         '<button class="jz-back" id="jz-back">← All Jasani items</button>' +
         '<div class="jz-pdp">' +
           '<div class="jz-pdp__media">' +
-            (images.length ? '<div class="jz-gal">' +
-              '<button class="jz-pdp__main" id="jz-zoom" aria-label="Open the image full size">' +
-                '<img src="' + esc(images[jzState.gallery]) + '" alt="' + esc(it.name) + '">' +
-                '<span class="jz-zoom-hint">Click to zoom</span></button>' +
-              (images.length > 1
+            (media.length ? '<div class="jz-gal">' +
+              (shown.kind === "video"
+                ? '<button class="jz-pdp__main jz-pdp__main--video" id="jz-play" ' +
+                  'data-youtube="' + esc(shown.id) + '" aria-label="Play the product video">' +
+                  '<img src="' + esc(shown.src) + '" alt="' + esc(it.name) + ' — video">' +
+                  '<span class="jz-play"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+                  '<path d="M8 5.5v13l11-6.5z"/></svg></span>' +
+                  '<span class="jz-zoom-hint">Click to play</span></button>'
+                : '<button class="jz-pdp__main" id="jz-zoom" aria-label="Open the image full size">' +
+                  '<img src="' + esc(shown.src) + '" alt="' + esc(it.name) + '">' +
+                  '<span class="jz-zoom-hint">Click to zoom</span></button>') +
+              (media.length > 1
                 ? '<button class="jz-gal__btn jz-gal__btn--prev" data-jzslide="-1" aria-label="Previous image">‹</button>' +
                   '<button class="jz-gal__btn jz-gal__btn--next" data-jzslide="1" aria-label="Next image">›</button>' +
-                  '<div class="jz-gal__dots">' + images.map(function (_, i) {
+                  '<div class="jz-gal__dots">' + media.map(function (m, i) {
                     return '<button class="jz-gal__dot' + (i === jzState.gallery ? " is-on" : "") +
-                      '" data-jzg="' + i + '" aria-label="Image ' + (i + 1) + '"' +
+                      '" data-jzg="' + i + '" aria-label="' +
+                      (m.kind === "video" ? "Video" : "Image " + (i + 1)) + '"' +
                       (i === jzState.gallery ? ' aria-current="true"' : "") + "></button>";
                   }).join("") + "</div>" +
-                  '<span class="jz-gal__count">' + (jzState.gallery + 1) + " / " + images.length + "</span>"
+                  '<span class="jz-gal__count">' + (jzState.gallery + 1) + " / " + media.length + "</span>"
                 : "") +
             "</div>" : '<div class="jz-pdp__main jz-pdp__main--empty">No image in the snapshot</div>') +
-            (images.length > 1 ? '<div class="jz-pdp__thumbs" role="group" aria-label="Product images">' +
-              images.map(function (g, i) {
+            (media.length > 1 ? '<div class="jz-pdp__thumbs" role="group" aria-label="Product images and video">' +
+              media.map(function (m, i) {
                 return '<button class="jz-thumb-btn' + (i === jzState.gallery ? " is-on" : "") +
-                  '" data-jzg="' + i + '" aria-label="Image ' + (i + 1) + '"><img src="' +
-                  esc(g) + '" alt="" loading="lazy"></button>';
+                  (m.kind === "video" ? " is-video" : "") +
+                  '" data-jzg="' + i + '" aria-label="' +
+                  (m.kind === "video" ? "Video" : "Image " + (i + 1)) + '"><img src="' +
+                  esc(m.src) + '" alt="" loading="lazy"></button>';
               }).join("") + "</div>" : "") +
           "</div>" +
           '<div class="jz-pdp__info">' +
@@ -3929,7 +3950,7 @@
       main.querySelectorAll("[data-jzslide]").forEach(function (b) {
         b.addEventListener("click", function () {
           var step = parseInt(b.getAttribute("data-jzslide"), 10);
-          jzState.gallery = (jzState.gallery + step + images.length) % images.length;
+          jzState.gallery = (jzState.gallery + step + media.length) % media.length;
           jzDetail(market, productId);
           setTimeout(function () {
             var again = document.querySelector('[data-jzslide="' + step + '"]');
@@ -3941,11 +3962,28 @@
       if (gal) gal.addEventListener("keydown", function (e) {
         if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
         e.preventDefault();
-        jzState.gallery = (jzState.gallery + (e.key === "ArrowRight" ? 1 : -1) + images.length) % images.length;
+        jzState.gallery = (jzState.gallery + (e.key === "ArrowRight" ? 1 : -1) + media.length) % media.length;
         jzDetail(market, productId);
       });
       var zoom = document.getElementById("jz-zoom");
       if (zoom) zoom.addEventListener("click", function () { jzLightbox(it, images); });
+      var play = document.getElementById("jz-play");
+      if (play) play.addEventListener("click", function () {
+        /* plays where the poster was, on youtube-nocookie, exactly as the
+           website does it — an admin checking an item should see what the
+           customer sees, without leaving the panel */
+        var frame = document.createElement("iframe");
+        frame.className = "jz-video";
+        frame.src = "https://www.youtube-nocookie.com/embed/" +
+          encodeURIComponent(play.getAttribute("data-youtube")) +
+          "?autoplay=1&rel=0&playsinline=1&modestbranding=1";
+        frame.title = "Product video";
+        frame.setAttribute("allow", "accelerometer; autoplay; clipboard-write; encrypted-media; " +
+          "gyroscope; picture-in-picture; fullscreen");
+        frame.setAttribute("allowfullscreen", "");
+        frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+        play.replaceWith(frame);
+      });
       document.getElementById("jz-sheet").addEventListener("click", function () {
         location.href = "/api/admin/jasani/items/" + encodeURIComponent(market) + "/" +
           encodeURIComponent(it.id) + "/sheet";
