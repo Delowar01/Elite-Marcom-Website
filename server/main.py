@@ -954,7 +954,6 @@ async def insights_collect(request: Request, body: InsightBatch):
     user_agent = request.headers.get("user-agent", "")
     visitor = analytics.visitor_hash(ip, user_agent)
     device = analytics.device_class(user_agent)
-    country = (request.headers.get("cf-ipcountry", "") or "")[:2]
     stored = 0
     for event in body.events[:analytics.MAX_BATCH]:
         if event.kind == "vital":
@@ -964,8 +963,7 @@ async def insights_collect(request: Request, body: InsightBatch):
         if analytics.record(event.kind, path=event.path, visitor=visitor,
                             session=event.session,
                             referrer=analytics.referrer_host(event.referrer),
-                            country=country, device=device, meta=event.meta,
-                            value=event.value):
+                            device=device, meta=event.meta, value=event.value):
             stored += 1
     return {"ok": True, "stored": stored}
 
@@ -978,9 +976,7 @@ def track_server_event(request: Request, kind: str, meta: str = "", path: str = 
         user_agent = request.headers.get("user-agent", "")
         analytics.record(kind, path=path or str(request.url.path),
                          visitor=analytics.visitor_hash(security.client_ip(request), user_agent),
-                         device=analytics.device_class(user_agent),
-                         country=(request.headers.get("cf-ipcountry", "") or "")[:2],
-                         meta=meta)
+                         device=analytics.device_class(user_agent), meta=meta)
     except Exception:
         pass  # analytics must never break a customer submission
 

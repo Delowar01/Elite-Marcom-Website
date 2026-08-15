@@ -1766,7 +1766,7 @@ async def admin_rentals_reset(request: Request, x_csrf: str | None = Header(defa
 @router.get("/api/admin/insights")
 async def admin_insights(request: Request, days: int = 30, start: str = "", end: str = ""):
     session = require_perm(request, "insights.view")
-    from . import analytics
+    from . import analytics, ga4
 
     data = analytics.summary(days, start[:10], end[:10])
     data["settings"] = {
@@ -1777,7 +1777,46 @@ async def admin_insights(request: Request, days: int = 30, start: str = "", end:
                              analytics.RETENTION_DAYS_DEFAULT),
     }
     data["canManage"] = aa.has_perm(session["role"], "settings.manage")
+    # the reporting integration's own state, so the settings panel can say
+    # whether Google is connected without making a Google call to find out
+    data["ga4Status"] = ga4.status()
     return data
+
+
+@router.get("/api/admin/insights/ga4")
+async def admin_insights_ga4(request: Request, days: int = 30, start: str = "", end: str = ""):
+    """Everything the dashboard reads from Google, in one request. Loaded
+    separately from the first-party payload so a slow or broken Google leaves
+    the rest of Site Insights on screen and interactive."""
+    require_perm(request, "insights.view")
+    from . import analytics, ga4
+
+    start, end, days = analytics.parse_range(start[:10], end[:10], days)
+    data = await ga4.dashboard(start, end)
+    # the connection state *after* these reports ran: read before them it would
+    # say "never" on the very load that just succeeded
+    return {"days": days, **data, "status": ga4.status()}
+
+
+@router.get("/api/admin/insights/realtime")
+async def admin_insights_realtime(request: Request):
+    require_perm(request, "insights.view")
+    from . import ga4
+
+    return await ga4.realtime()
+
+
+@router.post("/api/admin/insights/ga4-test")
+async def admin_insights_ga4_test(request: Request):
+    """One live report, cache bypassed. Owner/admin only: it is the action
+    that proves a credential works, so it belongs with the settings."""
+    session = require_perm(request, "settings.manage")
+    from . import ga4
+
+    result = await ga4.test_connection()
+    aa.audit(session, "insights.ga4_test", "analytics",
+             {"ok": bool(result.get("ok"))}, _ip_hash(request))
+    return result
 
 
 _INSIGHT_TYPES = {"csv": "text/csv; charset=utf-8",

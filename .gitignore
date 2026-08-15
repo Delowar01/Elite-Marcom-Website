@@ -17,3 +17,9 @@ node_modules/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Google service-account credentials. The real file belongs outside the repo
+# entirely (GOOGLE_APPLICATION_CREDENTIALS points at it); this is a second
+# line of defence against one landing here by accident.
+*service-account*.json
+ga4-*.json

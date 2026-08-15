@@ -265,9 +265,50 @@ documentation). Non-negotiable rules from it:
   **Publish site** once: published snapshots in `runtime/published/site/` are
   served ahead of `public/`, so a stale bake would hide new markup/scripts.
   The Pages screen detects this and says so.
-- Site Insights is first-party and cookieless: no raw IP or user-agent is
-  stored, visitor keys use a salt that rotates daily, and GA4 only loads when
-  an admin sets a measurement id (`analytics.ga4Id`).
+- **Site Insights is hybrid, and the split is deliberate.** First-party
+  measurement (`server/analytics.py`, `public/js/insights.js`) stays cookieless:
+  no raw IP or user-agent is stored and visitor keys use a salt that rotates
+  daily. It owns everything that happens on our own pages — product views,
+  catalogue searches, filters, add-to-request, enquiries, manual downloads,
+  form errors and Web Vitals — and it is the **authoritative** record, because
+  it does not depend on a Google tag being allowed to load.
+  `server/ga4.py` owns the rest: audience, geography, acquisition, engagement,
+  landing pages, devices and realtime, read from the GA4 Data API. Do not
+  duplicate a metric across the two.
+  - **Geography is GA4's, not Cloudflare's.** Nothing reads `CF-IPCountry` any
+    more — the site is not going behind Cloudflare for a two-letter code. The
+    `country` column and its history stay for compatibility; the dashboard does
+    not read it, and a half-full local list beside a complete one from Google
+    would be worse than neither.
+  - **The tag is loaded once, by us.** `insights.js` injects gtag when an admin
+    sets `analytics.ga4Id`, and `gtag("config", …)` sends the one automatic
+    `page_view`. Never add a second snippet to a page and never push a manual
+    `page_view` on top of it — there is a test that counts both.
+  - **Two different Google ids.** `analytics.ga4Id` (`G-DY2NW9HPSJ`) is the
+    *measurement* id and lives in the admin database. `GA4_PROPERTY_ID` is the
+    numeric *property* id and is environment-only, as is
+    `GOOGLE_APPLICATION_CREDENTIALS` — the path to a service-account JSON that
+    lives outside the repository. The key is read by `server/ga4.py` alone and
+    reaches no API response, no log and no browser; `status()` exposes the
+    service-account address on purpose, because an admin has to grant it read
+    access to the property.
+  - **A Google failure is never a panel failure.** Every report returns
+    `{"ok": False, "reason": <one safe sentence>}` rather than raising, so each
+    widget shows its own state while the rest of the screen works. Technical
+    detail is logged server-side at most once a minute, and Google's own
+    wording never reaches an admin.
+  - **Google is not called on every render.** Reports cache for
+    `EM_GA4_CACHE_TTL_S` (12 min) and realtime for `EM_GA4_REALTIME_TTL_S`
+    (45 s), keyed on property + report + window; concurrent callers wait on
+    the first request instead of making a second. Failures are cached briefly
+    too, or a broken credential means one round trip per widget per render.
+    The dashboard polls realtime once a minute and stops when the tab is
+    hidden or the screen is left.
+  - **No invented numbers.** A percentage change against a zero previous
+    period is `None` and renders as "no comparison", never +100%. Product
+    views and add-to-request are both ours so the rate between them is real;
+    per-product *enquiry* attribution is not shown at all, because a request
+    carries a basket rather than one item.
 - Transactional email goes through Resend (`server/mailer.py`). `RESEND_API_KEY`
   is environment-only — never in the admin DB, an API response or browser code.
   Sender addresses are restricted to domains in `EM_MAIL_SENDER_DOMAINS`

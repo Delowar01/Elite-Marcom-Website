@@ -252,6 +252,10 @@ def summary(days: int = 30, start: str = "", end: str = "") -> dict:
         "SELECT referrer AS label, COUNT(*) AS count FROM events"
         " WHERE kind='pageview' AND day BETWEEN ? AND ? AND referrer<>''"
         " GROUP BY referrer ORDER BY count DESC LIMIT 10", (start, end))
+    # Geography is GA4's job now. The column keeps whatever it collected while
+    # the site was behind a proxy that set it, so the history is not lost, but
+    # nothing new is written and the dashboard does not read it — a half-full
+    # country list beside a complete one from Google is worse than neither.
     countries = _rows(
         "SELECT country AS label, COUNT(DISTINCT visitor) AS count FROM events"
         " WHERE kind='pageview' AND day BETWEEN ? AND ? AND country<>''"
@@ -310,6 +314,29 @@ def summary(days: int = 30, start: str = "", end: str = "") -> dict:
         " WHERE metric='LCP' AND day BETWEEN ? AND ? AND path<>''"
         " GROUP BY path HAVING COUNT(*) >= 2 ORDER BY AVG(value) DESC LIMIT 6", (start, end))
 
+    # what a product does after it is looked at — views and add-to-request are
+    # both first-party events on the same page, so the rate between them is
+    # real. An enquiry is not attributed to a product here: the request form
+    # carries a basket, not one item, and inventing a per-product conversion
+    # from that would be a made-up number on a business screen.
+    product_flow = _rows(
+        "SELECT meta AS label,"
+        " SUM(CASE WHEN kind='product_view' THEN 1 ELSE 0 END) AS views,"
+        " SUM(CASE WHEN kind='add_to_request' THEN 1 ELSE 0 END) AS adds"
+        " FROM events WHERE day BETWEEN ? AND ? AND meta<>''"
+        " AND kind IN ('product_view','add_to_request')"
+        " GROUP BY meta HAVING views > 0 ORDER BY views DESC LIMIT 10", (start, end))
+    for row in product_flow:
+        row["rate"] = round(row["adds"] / row["views"] * 100, 1) if row["views"] else 0.0
+    manuals = _rows(
+        "SELECT meta AS label, COUNT(*) AS count FROM events"
+        " WHERE kind='manual_download' AND day BETWEEN ? AND ? AND meta<>''"
+        " GROUP BY meta ORDER BY count DESC LIMIT 8", (start, end))
+    add_to_request = _rows(
+        "SELECT meta AS label, COUNT(*) AS count FROM events"
+        " WHERE kind='add_to_request' AND day BETWEEN ? AND ? AND meta<>''"
+        " GROUP BY meta ORDER BY count DESC LIMIT 8", (start, end))
+
     manual_downloads = funnel_counts.get("manual_download", 0)
     form_errors = _one("SELECT COUNT(*) AS c FROM events WHERE kind='form_error'"
                        " AND day BETWEEN ? AND ?", (start, end)).get("c", 0)
@@ -343,6 +370,7 @@ def summary(days: int = 30, start: str = "", end: str = "") -> dict:
         "countries": countries, "devices": devices,
         "entryPages": entry, "exitPages": exit_pages,
         "products": products, "searches": searches, "filters": filters,
+        "productFlow": product_flow, "manuals": manuals, "addToRequest": add_to_request,
         "funnel": funnel, "manualDownloads": manual_downloads,
         "vitals": vitals, "slowPages": slow_pages, "alerts": alerts,
         "totalEvents": _one("SELECT COUNT(*) AS c FROM events").get("c", 0),

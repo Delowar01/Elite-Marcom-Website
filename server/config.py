@@ -6,6 +6,7 @@ malware scanning or a persistent runtime path abort startup.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import sys
 from pathlib import Path
@@ -17,6 +18,19 @@ ENV = os.environ.get("EM_ENV", "development").strip().lower()
 IS_PROD = ENV == "production"
 
 RUNTIME_DIR = Path(os.environ.get("EM_RUNTIME_DIR", str(BASE_DIR / "runtime"))).resolve()
+
+# ---------------- Google Analytics 4 reporting (read-only, server side) ----------------
+# The website's GA4 *tag* is configured in the admin panel (analytics.ga4Id) and
+# loaded once by public/js/insights.js. These two are for reading reports back
+# out of the Data API and are environment-only: the service-account file lives
+# outside the repository and is never read by anything but server/ga4.py.
+GA4_PROPERTY_ID = re.sub(r"[^0-9]", "", os.environ.get("GA4_PROPERTY_ID", ""))[:16]
+_ga4_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+GOOGLE_APPLICATION_CREDENTIALS = Path(_ga4_creds).expanduser() if _ga4_creds else None
+# a normal report is worth about a quarter of an hour; realtime is not
+GA4_CACHE_TTL_S = float(os.environ.get("EM_GA4_CACHE_TTL_S", "720"))       # 12 minutes
+GA4_REALTIME_TTL_S = float(os.environ.get("EM_GA4_REALTIME_TTL_S", "45"))
+GA4_TIMEOUT_S = float(os.environ.get("EM_GA4_TIMEOUT_S", "20"))
 
 CONSENT_VERSION = "2026-01"
 

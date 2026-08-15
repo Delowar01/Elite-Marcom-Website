@@ -336,6 +336,725 @@
   /* ---------- page editor ---------- */
   var pageLang = "en";
   var edInsightRange = { days: 30, start: '', end: '' };
+  /* ================= Site Insights =================
+     Two sources, one screen, and which is which is never a guess:
+
+       GA4          audience, geography, acquisition, engagement, devices,
+                    landing pages and realtime — who arrived and where from,
+                    which needs a view of the network we do not have.
+       First party  products, searches, filters, add-to-request, enquiries,
+                    manual downloads, form errors and Web Vitals — what
+                    happened on our own pages. Authoritative, and it does not
+                    depend on a Google tag being allowed to load.
+
+     The halves load independently. The first-party half is a local database
+     and lands immediately; the Google half is a network call, so it draws
+     skeletons first and, when Google is unreachable, only its own widgets
+     say so while the rest of the screen keeps working. */
+
+  var insightsToken = 0;
+  var realtimeTimer = null;
+  var realtimeWatch = null;
+
+  function stopRealtime() {
+    clearTimeout(realtimeTimer);
+    realtimeTimer = null;
+    if (realtimeWatch) {
+      document.removeEventListener("visibilitychange", realtimeWatch);
+      realtimeWatch = null;
+    }
+  }
+
+  /* Polls while the screen is open and the tab is visible, and stops the
+     moment either stops being true — an admin who leaves this tab open all
+     afternoon must not keep asking Google for numbers nobody is reading. */
+  function startRealtime(stillCurrent) {
+    stopRealtime();
+    function tick() {
+      if (!stillCurrent() || !document.getElementById("rt-users")) return stopRealtime();
+      if (document.hidden) return;                 // resumes on visibilitychange
+      api("/api/admin/insights/realtime").then(function (r) {
+        if (!stillCurrent()) return stopRealtime();
+        renderRealtime(r.ok ? r.data : { ok: false, reason: "Live data is unavailable." });
+      });
+    }
+    realtimeWatch = function () { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", realtimeWatch);
+    tick();
+    realtimeTimer = setInterval(function () {
+      if (!stillCurrent() || !document.getElementById("rt-users")) return stopRealtime();
+      tick();
+    }, 60000);
+  }
+
+  /* ---- small pieces every widget is built from ---- */
+
+  function skeleton(lines) {
+    var out = '<div class="sk-block" aria-hidden="true">';
+    for (var i = 0; i < (lines || 4); i++) {
+      out += '<span class="sk-line" style="width:' + (94 - i * 11) + '%"></span>';
+    }
+    return out + "</div>";
+  }
+
+  function widgetNote(text, kind) {
+    return '<p class="panel-empty' + (kind ? " panel-empty--" + kind : "") + '">' +
+      esc(text) + "</p>";
+  }
+
+  /* A block that GA4 owns: it can be loading, unavailable, empty or full, and
+     each of those looks different on purpose. */
+  function ga4Block(payload, draw, emptyText) {
+    if (!payload) return skeleton(4);
+    if (payload.ok === false) return widgetNote(payload.reason || "Analytics data is unavailable.", "warn");
+    var rows = payload.rows || [];
+    if (!rows.length) return widgetNote(emptyText || "Not enough data yet.");
+    return draw(rows, payload);
+  }
+
+  function rankRows(rows, valueKey, labelKey) {
+    valueKey = valueKey || "users";
+    var max = rows.reduce(function (m, r) { return Math.max(m, r[valueKey] || 0); }, 0) || 1;
+    return '<ol class="rank-list">' + rows.map(function (r, i) {
+      var label = r[labelKey || "display"] || r.label || "—";
+      return '<li class="rank-row"><span class="rank-n">' + (i + 1) + "</span>" +
+        '<span class="rank-label" title="' + esc(label) + '">' + esc(label) + "</span>" +
+        '<span class="rank-track"><i style="width:' +
+        Math.max(2, Math.round((r[valueKey] || 0) / max * 100)) + '%"></i></span>' +
+        '<span class="rank-value">' + esc(fmtNum(r[valueKey] || 0)) + "</span>" +
+        (r.share !== undefined
+          ? '<span class="rank-share">' + esc(r.share) + "%</span>" : "") + "</li>";
+    }).join("") + "</ol>";
+  }
+
+  function fmtNum(n) {
+    n = Number(n) || 0;
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
+    if (n >= 10000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    return String(Math.round(n));
+  }
+
+  function fmtSeconds(s) {
+    s = Math.round(Number(s) || 0);
+    if (s < 60) return s + "s";
+    var m = Math.floor(s / 60);
+    return m + "m " + String(s % 60).padStart(2, "0") + "s";
+  }
+
+  /* A percentage change is only drawn when there is a previous period to
+     compare against. Against zero it is undefined, and "+100%" on a card an
+     admin acts on is worse than saying nothing. */
+  function kpiDelta(v) {
+    if (v === null || v === undefined) return '<span class="stat-delta stat-delta--flat">no comparison</span>';
+    var cls = v > 0 ? "up" : (v < 0 ? "down" : "flat");
+    return '<span class="stat-delta stat-delta--' + cls + '">' +
+      (v > 0 ? "▲ +" : v < 0 ? "▼ " : "= ") + esc(v) + "%</span>";
+  }
+
+  function sparkline(values, cls) {
+    if (!values || values.length < 2) return "";
+    var max = Math.max.apply(null, values.concat([1]));
+    var w = 100, h = 26;
+    var pts = values.map(function (v, i) {
+      return [(i / (values.length - 1)) * w, h - (v / max) * (h - 3) - 1.5];
+    });
+    var line = pts.map(function (p, i) {
+      return (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1);
+    }).join(" ");
+    return '<svg class="kpi-spark ' + (cls || "") + '" viewBox="0 0 ' + w + " " + h +
+      '" preserveAspectRatio="none" aria-hidden="true">' +
+      '<path d="' + line + " L" + w + " " + h + " L0 " + h + ' Z" fill="currentColor" opacity="0.12"/>' +
+      '<path d="' + line + '" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+      'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>';
+  }
+
+  function kpiCard(label, value, delta, spark, hint) {
+    return '<div class="kpi"><span class="kpi__label">' + esc(label) + "</span>" +
+      '<b class="kpi__value">' + esc(value) + "</b>" +
+      (hint ? '<span class="kpi__hint">' + esc(hint) + "</span>" : "") +
+      (spark || "") + (delta || "") + "</div>";
+  }
+
+  function kpiSkeleton(n) {
+    var out = "";
+    for (var i = 0; i < n; i++) {
+      out += '<div class="kpi kpi--loading"><span class="sk-line" style="width:52%"></span>' +
+        '<span class="sk-line sk-line--big" style="width:64%"></span>' +
+        '<span class="sk-line" style="width:40%"></span></div>';
+    }
+    return out;
+  }
+
+  /* One ring, drawn honestly at zero rather than not drawn at all. */
+  function donut(rows, valueKey) {
+    valueKey = valueKey || "users";
+    var colors = ["var(--orange-2)", "var(--violet-2)", "var(--adm-info)",
+                  "var(--adm-ok)", "var(--text-muted)"];
+    var total = rows.reduce(function (s, r) { return s + (r[valueKey] || 0); }, 0);
+    var C = 2 * Math.PI * 42, at = 0;
+    var ring = rows.map(function (r, i) {
+      var v = r[valueKey] || 0;
+      if (!v || !total) return "";
+      var len = v / total * C;
+      var seg = '<circle cx="60" cy="60" r="42" fill="none" stroke="' + colors[i % colors.length] +
+        '" stroke-width="15" stroke-dasharray="' + len.toFixed(2) + " " + (C - len).toFixed(2) +
+        '" stroke-dashoffset="' + (-at).toFixed(2) + '" transform="rotate(-90 60 60)"><title>' +
+        esc(r.label) + ": " + esc(v) + "</title></circle>";
+      at += len;
+      return seg;
+    }).join("");
+    return '<div class="donut-wrap"><svg class="donut" viewBox="0 0 120 120" role="img" ' +
+      'aria-label="Share by ' + esc(rows.length ? rows[0].label : "category") + '">' +
+      '<circle cx="60" cy="60" r="42" fill="none" stroke="var(--adm-inset)" stroke-width="15"/>' +
+      ring + '<text class="donut-mid" x="60" y="60" text-anchor="middle" ' +
+      'dominant-baseline="central">' + esc(fmtNum(total)) + "</text>" +
+      '<text class="donut-sub" x="60" y="78" text-anchor="middle">users</text></svg>' +
+      '<div class="bar-list" style="flex:1;min-width:170px">' + rows.map(function (r, i) {
+        return '<div class="bar-row"><span class="bar-label">' +
+          '<i class="key" style="background:' + colors[i % colors.length] + '"></i> ' +
+          esc(r.label) + "</span>" +
+          '<span class="bar-track"><i class="bar-fill" style="width:' +
+          (total ? Math.round((r[valueKey] || 0) / total * 100) : 0) + "%;background:" +
+          colors[i % colors.length] + '"></i></span>' +
+          '<span class="bar-num">' + esc(r.share !== undefined ? r.share + "%" : fmtNum(r[valueKey])) +
+          "</span></div>";
+      }).join("") + "</div></div>";
+  }
+
+  /* The trend chart. One widget, three metrics, switched in place rather than
+     three charts stacked down the page. */
+  function trendChart(series, metric) {
+    if (!series || !series.length) return widgetNote("Data will appear as visitors browse the site.");
+    var key = metric || "users";
+    var values = series.map(function (p) { return p[key] || 0; });
+    if (!values.some(function (v) { return v > 0; })) {
+      return widgetNote("No " + (key === "views" ? "page views" : key) +
+                        " recorded in this period yet.");
+    }
+    var w = 720, h = 190, pad = 6;
+    var max = Math.max.apply(null, values.concat([1]));
+    var step = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
+    var pts = values.map(function (v, i) {
+      return (pad + i * step).toFixed(1) + "," + (h - pad - (v / max) * (h - pad * 2 - 10)).toFixed(1);
+    }).join(" ");
+    var area = pts + " " + (pad + (values.length - 1) * step).toFixed(1) + "," + (h - pad) +
+               " " + pad + "," + (h - pad);
+    return '<svg class="chart chart--trend" viewBox="0 0 ' + w + " " + h +
+      '" preserveAspectRatio="none" role="img" aria-label="Daily ' + esc(key) + '">' +
+      '<defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="var(--orange)" stop-opacity="0.42"/>' +
+      '<stop offset="100%" stop-color="var(--orange)" stop-opacity="0.02"/></linearGradient></defs>' +
+      '<polygon points="' + area + '" fill="url(#tg)"></polygon>' +
+      '<polyline points="' + pts + '" fill="none" stroke="var(--orange-2)" stroke-width="2.4" ' +
+      'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></polyline>' +
+      "</svg>" +
+      '<div class="chart-caption"><span>' + esc(when(dayStamp(series[0].day))) + "</span>" +
+      "<span>peak " + esc(fmtNum(max)) + "/day</span>" +
+      "<span>" + esc(when(dayStamp(series[series.length - 1].day))) + "</span></div>";
+  }
+
+  function dayStamp(day) {
+    var parts = String(day || "").split("-");
+    return parts.length === 3
+      ? Date.UTC(+parts[0], +parts[1] - 1, +parts[2]) / 1000 : 0;
+  }
+
+  function table(head, rows) {
+    if (!rows.length) return widgetNote("Not enough data yet.");
+    return '<div class="table-scroll"><table class="admin-table"><thead><tr>' +
+      head.map(function (h) {
+        return "<th" + (h.num ? ' class="num"' : "") + ">" + esc(h.label) + "</th>";
+      }).join("") + "</tr></thead><tbody>" + rows.map(function (cells) {
+        return "<tr>" + cells.map(function (c, i) {
+          return "<td" + (head[i] && head[i].num ? ' class="num"' : "") + ">" + c + "</td>";
+        }).join("") + "</tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+
+  /* ---- the page ---- */
+
+  var INSIGHT_RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"],
+                        [90, "90 days"], [365, "12 months"], [0, "Year to date"]];
+
+  function insightsShell(rng) {
+    function seg() {
+      return INSIGHT_RANGES.map(function (r) {
+        var on = !rng.start && (r[0] === 0 ? rng.ytd : (!rng.ytd && r[0] === rng.days));
+        return '<button type="button" data-days="' + r[0] + '" aria-pressed="' +
+          (on ? "true" : "false") + '">' + esc(r[1]) + "</button>";
+      }).join("");
+    }
+    return '<h1 class="admin-h1">Site Insights</h1>' +
+      '<p class="admin-sub">Audience, acquisition and engagement from Google Analytics; products, ' +
+      'searches, enquiries and page speed from our own first-party measurement. Every panel says ' +
+      "which of the two it came from.</p>" +
+
+      '<div class="ins-toolbar">' +
+      '<span class="jz-seg" role="group" aria-label="Date range">' + seg() + "</span>" +
+      '<span class="date-range"><label for="ins-from">From</label>' +
+      '<input type="date" id="ins-from" value="' + esc(rng.start || "") + '">' +
+      '<label for="ins-to">to</label>' +
+      '<input type="date" id="ins-to" value="' + esc(rng.end || "") + '">' +
+      '<button class="btn btn--primary btn--small" id="ins-apply">Apply</button>' +
+      (rng.start ? '<button class="btn btn--ghost btn--small" id="ins-clear">Clear</button>' : "") +
+      "</span>" +
+      '<span class="ed-spacer"></span>' +
+      '<span class="admin-inline-note" id="ins-window"></span>' +
+      '<button class="btn btn--ghost btn--small" id="ins-export">Download report ▾</button></div>' +
+
+      '<div id="ins-alerts"></div>' +
+
+      /* --- live --- */
+      '<div class="admin-panel ins-live" id="ins-live-panel">' +
+      '<div class="panel-head"><h2><i class="live-dot" aria-hidden="true"></i>Live right now' +
+      '<span class="src-tag src-tag--ga4">Google Analytics</span></h2>' +
+      '<span class="admin-inline-note" id="rt-stamp">Connecting…</span></div>' +
+      '<div class="ins-live__grid">' +
+      '<div class="ins-live__now"><b id="rt-users">—</b><span>active users</span></div>' +
+      '<div><h3 class="ins-h3">Pages</h3><div id="rt-pages">' + skeleton(3) + "</div></div>" +
+      '<div><h3 class="ins-h3">Countries</h3><div id="rt-countries">' + skeleton(3) + "</div></div>" +
+      '<div><h3 class="ins-h3">Cities</h3><div id="rt-cities">' + skeleton(3) + "</div></div>" +
+      '<div><h3 class="ins-h3">Devices</h3><div id="rt-devices">' + skeleton(3) + "</div></div>" +
+      "</div></div>" +
+
+      /* --- executive overview --- */
+      '<h2 class="ins-section">Overview<span class="src-tag src-tag--ga4">Google Analytics</span></h2>' +
+      '<div class="kpi-row" id="ins-kpis">' + kpiSkeleton(8) + "</div>" +
+
+      '<div class="admin-panel"><div class="panel-head"><h2>Traffic trend</h2>' +
+      '<span class="jz-seg jz-seg--mini" role="group" aria-label="Metric">' +
+      '<button type="button" data-trend="users" aria-pressed="true">Users</button>' +
+      '<button type="button" data-trend="sessions" aria-pressed="false">Sessions</button>' +
+      '<button type="button" data-trend="views" aria-pressed="false">Views</button>' +
+      "</span></div><div id=\"ins-trend\">" + skeleton(5) + "</div></div>" +
+
+      /* --- geography --- */
+      '<h2 class="ins-section">Where visitors are<span class="src-tag src-tag--ga4">Google Analytics</span></h2>' +
+      '<div class="ins-grid">' +
+      '<div class="admin-panel"><h2>Top countries</h2><div id="ins-countries">' + skeleton(5) + "</div></div>" +
+      '<div class="admin-panel"><h2>Top cities</h2><div id="ins-cities">' + skeleton(5) + "</div></div>" +
+      '<div class="admin-panel"><h2>Top regions</h2><div id="ins-regions">' + skeleton(5) + "</div></div>" +
+      "</div>" +
+
+      /* --- acquisition --- */
+      '<h2 class="ins-section">How they arrive<span class="src-tag src-tag--ga4">Google Analytics</span></h2>' +
+      '<div class="ins-grid">' +
+      '<div class="admin-panel"><h2>Channels</h2><div id="ins-channels">' + skeleton(5) + "</div></div>" +
+      '<div class="admin-panel"><h2>Sources</h2><div id="ins-sources">' + skeleton(5) + "</div></div>" +
+      '<div class="admin-panel"><h2>Referring sites' +
+      '<span class="src-tag">First party</span></h2><div id="ins-referrers">' + skeleton(4) + "</div></div>" +
+      "</div>" +
+
+      /* --- content --- */
+      '<h2 class="ins-section">What they read<span class="src-tag src-tag--ga4">Google Analytics</span></h2>' +
+      '<div class="ins-grid ins-grid--two">' +
+      '<div class="admin-panel"><h2>Top pages</h2><div id="ins-pages">' + skeleton(6) + "</div></div>" +
+      '<div class="admin-panel"><h2>Landing pages</h2><div id="ins-landing">' + skeleton(6) + "</div></div>" +
+      "</div>" +
+
+      /* --- audience --- */
+      '<h2 class="ins-section">Audience &amp; technology<span class="src-tag src-tag--ga4">Google Analytics</span></h2>' +
+      '<div class="ins-grid">' +
+      '<div class="admin-panel"><h2>Devices</h2><div id="ins-devices">' + skeleton(4) + "</div></div>" +
+      '<div class="admin-panel"><h2>New vs returning</h2><div id="ins-nvr">' + skeleton(4) + "</div></div>" +
+      '<div class="admin-panel"><div class="panel-head"><h2>Technology</h2>' +
+      '<span class="jz-seg jz-seg--mini" role="group" aria-label="Technology">' +
+      '<button type="button" data-tech="browsers" aria-pressed="true">Browser</button>' +
+      '<button type="button" data-tech="systems" aria-pressed="false">System</button>' +
+      '</span></div><div id="ins-tech">' + skeleton(4) + "</div></div>" +
+      "</div>" +
+
+      /* --- corporate gifts, first party --- */
+      '<h2 class="ins-section">Corporate Gifts intelligence<span class="src-tag">First party</span></h2>' +
+      '<div class="admin-panel"><h2>Product performance</h2>' +
+      '<p class="admin-inline-note" style="margin-bottom:12px;">Views and add-to-request are both ' +
+      'measured on our own pages, so the rate between them is real. An enquiry carries a basket ' +
+      'rather than one item, so no per-product enquiry rate is shown — it would be invented.</p>' +
+      '<div id="ins-productflow">' + skeleton(5) + "</div></div>" +
+      '<div class="ins-grid">' +
+      '<div class="admin-panel"><h2>Most viewed products</h2><div id="ins-products">' + skeleton(5) + "</div></div>" +
+      '<div class="admin-panel"><h2>What people searched for</h2><div id="ins-searches">' + skeleton(5) + "</div></div>" +
+      '<div class="admin-panel"><h2>Filters used</h2><div id="ins-filters">' + skeleton(5) + "</div></div>" +
+      "</div>" +
+      '<div class="ins-grid ins-grid--two">' +
+      '<div class="admin-panel"><h2>Added to a request</h2><div id="ins-adds">' + skeleton(4) + "</div></div>" +
+      '<div class="admin-panel"><h2>Printing manuals downloaded</h2><div id="ins-manuals">' + skeleton(4) + "</div></div>" +
+      "</div>" +
+
+      /* --- enquiries --- */
+      '<h2 class="ins-section">Enquiries<span class="src-tag">First party</span></h2>' +
+      '<div class="ins-grid ins-grid--two">' +
+      '<div class="admin-panel"><h2>From browsing to enquiry</h2><div id="ins-funnel">' + skeleton(3) + "</div></div>" +
+      '<div class="admin-panel"><h2>Google key events<span class="src-tag src-tag--ga4">GA4</span></h2>' +
+      '<p class="admin-inline-note" style="margin-bottom:10px;">Google\'s own conversion counts, for ' +
+      "comparison. The inbox is the authoritative record of what was actually received.</p>" +
+      '<div id="ins-keyevents">' + skeleton(3) + "</div></div>" +
+      "</div>" +
+
+      /* --- speed --- */
+      '<h2 class="ins-section">Speed experienced by real visitors<span class="src-tag">First party</span></h2>' +
+      '<div class="admin-panel"><div id="ins-vitals">' + skeleton(3) + "</div></div>" +
+
+      '<div id="ins-settings-box"></div>';
+  }
+
+  function wireInsightsToolbar(rng, rangeQs) {
+    main.querySelectorAll("[data-days]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var n = parseInt(btn.getAttribute("data-days"), 10);
+        if (n === 0) {
+          var now = new Date();
+          edInsightRange = { days: 365, ytd: true, start: now.getFullYear() + "-01-01",
+                             end: now.toISOString().slice(0, 10) };
+        } else {
+          edInsightRange = { days: n, start: "", end: "" };
+        }
+        views.insights();
+      });
+    });
+    var apply = document.getElementById("ins-apply");
+    if (apply) apply.addEventListener("click", function () {
+      var from = document.getElementById("ins-from").value;
+      var to = document.getElementById("ins-to").value;
+      if (!from || !to) { toast("Pick both dates.", true); return; }
+      if (from > to) { var swap = from; from = to; to = swap; }
+      edInsightRange = { days: rng.days, start: from, end: to };
+      views.insights();
+    });
+    var clear = document.getElementById("ins-clear");
+    if (clear) clear.addEventListener("click", function () {
+      edInsightRange = { days: 30, start: "", end: "" };
+      views.insights();
+    });
+    document.getElementById("ins-export").addEventListener("click", function (e) {
+      e.stopPropagation();
+      showMenu(this, [
+        { label: "PDF report (branded)", action: function () {
+          location.href = "/api/admin/insights/export?format=pdf&" + rangeQs(); } },
+        { label: "HTML report (share or print)", action: function () {
+          location.href = "/api/admin/insights/export?format=html&" + rangeQs(); } },
+        { label: "CSV (daily traffic)", action: function () {
+          location.href = "/api/admin/insights/export?format=csv&" + rangeQs(); } }
+      ]);
+    });
+  }
+
+  function fill(id, html) {
+    var box = document.getElementById(id);
+    if (box) box.innerHTML = html;
+  }
+
+  /* ---- the first-party half ---- */
+
+  function renderFirstParty(d, rangeQs) {
+    var s = d.settings || {};
+    lastFirstParty = d;
+    fill("ins-window", d.start + " → " + d.end + " · " + d.days +
+         (d.days === 1 ? " day" : " days"));
+
+    fill("ins-alerts", (d.alerts || []).length
+      ? '<div class="admin-panel">' + d.alerts.map(function (a) {
+          return '<p class="ins-alert ins-alert--' + esc(a.level) + '">' + esc(a.text) + "</p>";
+        }).join("") + "</div>" : "");
+
+    function bars(rows, empty, valueKey) {
+      return rows && rows.length ? rankRows(rows, valueKey || "count", "label")
+                                 : widgetNote(empty);
+    }
+    fill("ins-referrers", bars(d.referrers, "All visits are direct or unreferred so far."));
+    fill("ins-products", bars(d.products, "No product pages viewed yet."));
+    fill("ins-searches", bars(d.searches, "No catalogue searches yet."));
+    fill("ins-filters", bars(d.filters, "No filters used yet."));
+    fill("ins-adds", bars(d.addToRequest, "Nothing added to a request yet."));
+    fill("ins-manuals", bars(d.manuals, "No printing manuals downloaded yet."));
+
+    fill("ins-productflow", (d.productFlow || []).length
+      ? table([{ label: "Product" }, { label: "Views", num: true },
+               { label: "Added to request", num: true }, { label: "View → request", num: true }],
+              d.productFlow.map(function (p) {
+                return [esc(p.label), esc(fmtNum(p.views)), esc(fmtNum(p.adds)),
+                        '<b>' + esc(p.rate) + "%</b>"];
+              }))
+      : widgetNote("No product views in this period yet."));
+
+    fill("ins-funnel", '<div class="funnel">' + (d.funnel || []).map(function (f, i) {
+      var base = (d.funnel[0] || {}).count;
+      var rate = !base ? "—" : (i === 0 ? "starting point" : f.rate + "% of viewers");
+      return '<div class="funnel-step"><b>' + esc(fmtNum(f.count)) + "</b><span>" + esc(f.step) +
+        '</span><span class="funnel-rate">' + esc(rate) + "</span></div>";
+    }).join('<span class="funnel-arrow">→</span>') + "</div>" +
+      '<p class="admin-inline-note" style="margin-top:12px;">' +
+      esc(d.manualDownloads || 0) + " printing manual" + ((d.manualDownloads || 0) === 1 ? "" : "s") +
+      " downloaded in this period.</p>");
+
+    fill("ins-vitals", (d.vitals || []).length
+      ? '<div class="kpi-row kpi-row--vitals">' + d.vitals.map(function (v) {
+          var good = { LCP: 2500, CLS: 0.1, INP: 200, FCP: 1800, TTFB: 800 }[v.metric];
+          var poor = { LCP: 4000, CLS: 0.25, INP: 500, FCP: 3000, TTFB: 1800 }[v.metric];
+          var state = v.p75 <= good ? "ok" : (v.p75 <= poor ? "warn" : "bad");
+          var label = { LCP: "Main content shown", CLS: "Layout stability",
+                        INP: "Response to taps", FCP: "First paint",
+                        TTFB: "Server response" }[v.metric] || v.metric;
+          var value = v.metric === "CLS" ? v.p75 : Math.round(v.p75) + " ms";
+          return '<div class="kpi kpi--' + state + '"><span class="kpi__label">' + esc(v.metric) +
+            "</span><b class=\"kpi__value\">" + esc(value) + "</b>" +
+            '<span class="kpi__hint">' + esc(label) + " · " + esc(v.samples) + " samples</span>" +
+            '<span class="stat-delta stat-delta--' +
+            (state === "ok" ? "up" : state === "warn" ? "flat" : "down") + '">' +
+            (state === "ok" ? "Good" : state === "warn" ? "Needs improvement" : "Poor") +
+            "</span></div>";
+        }).join("") + "</div>" +
+        ((d.slowPages || []).length
+          ? '<h3 class="ins-h3" style="margin-top:18px;">Slowest pages · average LCP in ms</h3>' +
+            rankRows(d.slowPages, "count", "label") : "")
+      : widgetNote("No speed measurements yet — they arrive as real visitors load pages."));
+
+    var sent = (d.funnel || []).filter(function (f) { return /enquiry/i.test(f.step); })[0];
+    setEnquiryKpi(sent ? sent.count : 0);
+
+    if (d.canManage) renderInsightsSettings(d, s);
+  }
+
+  function renderInsightsSettings(d, s) {
+    var g = lastGa4Status || d.ga4Status || {};
+    function line(label, value, state) {
+      return '<div class="svc-row svc-row--' + (state || "ok") + '"><i class="svc-dot"></i>' +
+        "<b>" + esc(label) + "</b><small>" + esc(value) + "</small></div>";
+    }
+    var connected = g.configured && g.lastSuccessAt;
+    fill("ins-settings-box",
+      '<h2 class="ins-section">Measurement &amp; integrations</h2>' +
+      '<div class="ins-grid ins-grid--two">' +
+      '<div class="admin-panel"><h2>Google connection</h2>' +
+      line("GA4 tracking", s.ga4Id ? "Active · " + s.ga4Id : "No measurement id set",
+           s.ga4Id ? "ok" : "warn") +
+      line("Reporting API",
+           !g.configured ? "Not configured"
+             : (connected ? "Connected" : (g.lastError || "Configured, not yet used")),
+           !g.configured ? "warn" : (connected ? "ok" : (g.lastError ? "bad" : "warn"))) +
+      line("Property id", g.propertyId || "Not set on the server", g.propertyId ? "ok" : "warn") +
+      line("Service account", g.serviceAccount ||
+           "No credential file found on the server", g.serviceAccount ? "ok" : "warn") +
+      line("Last successful report", g.lastSuccessAt ? when(g.lastSuccessAt) : "Never",
+           g.lastSuccessAt ? "ok" : "warn") +
+      (g.lastError ? line("Last error", g.lastError + (g.lastErrorAt ? " · " + when(g.lastErrorAt) : ""), "bad") : "") +
+      '<p class="admin-inline-note" style="margin-top:12px;">The property id and the credential ' +
+      'file path are set on the server, not here — the private key never passes through the ' +
+      'panel, an API response or the browser.</p>' +
+      '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ga4-test">' +
+      "Test connection</button>" +
+      '<span class="admin-inline-note" id="ga4-test-out"></span></div></div>' +
+
+      '<div class="admin-panel"><h2>First-party measurement</h2>' +
+      '<form class="admin-form" id="ins-settings">' +
+      '<div><label for="ins-enabled">Measurement</label><select id="ins-enabled">' +
+      '<option value="on"' + (s.enabled ? " selected" : "") + ">On</option>" +
+      '<option value="off"' + (s.enabled ? "" : " selected") + ">Off</option></select></div>" +
+      '<div><label for="ins-ga4">GA4 measurement id</label>' +
+      '<input id="ins-ga4" maxlength="24" placeholder="G-XXXXXXXXXX" value="' +
+      esc(s.ga4Id || "") + '">' +
+      '<span class="field-help">Loads the Google tag once, from our own insights.js. ' +
+      "This is the tracking id, not the reporting property id.</span></div>" +
+      '<div><label for="ins-retention">Keep raw events for</label>' +
+      '<input id="ins-retention" type="number" min="30" max="1100" value="' +
+      esc(s.retentionDays || 400) + '"><span class="field-help">Days. ' +
+      "Aggregates are unaffected; only the raw rows are pruned.</span></div>" +
+      '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">' +
+      "Save measurement settings</button>" +
+      '<span class="admin-inline-note">' + esc(fmtNum(d.totalEvents || 0)) +
+      " events stored · no cookies, no raw IP addresses.</span></div></form></div></div>");
+
+    var test = document.getElementById("ga4-test");
+    if (test) test.addEventListener("click", function () {
+      var out = document.getElementById("ga4-test-out");
+      test.disabled = true;
+      out.textContent = "Asking Google…";
+      api("/api/admin/insights/ga4-test", {}).then(function (r) {
+        test.disabled = false;
+        var res = r.data || {};
+        out.textContent = res.reason || "No answer.";
+        out.className = "admin-inline-note " + (res.ok ? "badge-ok" : "badge-bad");
+        if (res.ok) toast("Google Analytics reporting is connected.");
+      });
+    });
+    var form = document.getElementById("ins-settings");
+    if (form) form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      api("/api/admin/settings", { values: {
+        "analytics.enabled": document.getElementById("ins-enabled").value === "on",
+        "analytics.ga4Id": document.getElementById("ins-ga4").value.trim(),
+        "analytics.retentionDays": parseInt(document.getElementById("ins-retention").value, 10) || 400
+      } }).then(function (r2) {
+        r2.ok ? (toast("Measurement settings saved."), views.insights()) : apiErr(r2);
+      });
+    });
+  }
+
+  /* ---- the Google half ---- */
+
+  var ga4Data = null;
+  var lastFirstParty = null;
+  var lastGa4Status = null;
+  /* the enquiry figure on the KPI row is ours, not Google's: the two halves
+     land independently, so whichever arrives second fills it in */
+  var insightsEnquiries = 0;
+
+  function setEnquiryKpi(n) {
+    insightsEnquiries = n;
+    var card = document.getElementById("kpi-enquiries");
+    if (card) card.querySelector(".kpi__value").textContent = fmtNum(n);
+  }
+
+  function renderGa4(d) {
+    ga4Data = d;
+    if (d.status) {
+      lastGa4Status = d.status;
+      if (document.getElementById("ga4-test")) renderInsightsSettings(lastFirstParty || {},
+                                                                     (lastFirstParty || {}).settings || {});
+    }
+    if (!d.configured) {
+      var note = d.reason || "GA4 reporting is not configured.";
+      ["ins-countries", "ins-cities", "ins-regions", "ins-channels", "ins-sources",
+       "ins-pages", "ins-landing", "ins-devices", "ins-nvr", "ins-tech",
+       "ins-trend", "ins-keyevents"].forEach(function (id) {
+        fill(id, widgetNote(note, "warn"));
+      });
+      fill("ins-kpis", '<div class="admin-panel" style="grid-column:1/-1;margin:0;">' +
+           widgetNote(note, "warn") +
+           '<p class="admin-inline-note" style="text-align:center;">Audience figures come from ' +
+           "Google Analytics. Everything below measured on our own pages is unaffected.</p></div>");
+      var live = document.getElementById("ins-live-panel");
+      if (live) live.hidden = true;
+      return;
+    }
+    renderKpis(d);
+    renderTrend("users");
+    fill("ins-countries", ga4Block(d.countries, function (rows) { return rankRows(rows); },
+                                   "No country data yet."));
+    fill("ins-cities", ga4Block(d.cities, function (rows) { return rankRows(rows); },
+                                "No city data yet."));
+    fill("ins-regions", ga4Block(d.regions, function (rows) { return rankRows(rows); },
+                                 "No region data yet."));
+    fill("ins-channels", ga4Block(d.channels, function (rows) {
+      return rankRows(rows, "sessions", "label");
+    }, "No traffic recorded yet."));
+    fill("ins-sources", ga4Block(d.sources, function (rows) {
+      return rankRows(rows, "sessions", "label");
+    }, "No sources recorded yet."));
+    fill("ins-pages", ga4Block(d.pages, function (rows) {
+      return table([{ label: "Page" }, { label: "Views", num: true },
+                    { label: "Users", num: true }, { label: "Avg. time", num: true }],
+                   rows.map(function (p) {
+                     return ['<span title="' + esc(p.title || p.label) + '">' + esc(p.label) + "</span>",
+                             esc(fmtNum(p.views)), esc(fmtNum(p.users)), esc(fmtSeconds(p.avgSeconds))];
+                   }));
+    }, "No page views yet."));
+    fill("ins-landing", ga4Block(d.landingPages, function (rows) {
+      return table([{ label: "Landing page" }, { label: "Sessions", num: true },
+                    { label: "Users", num: true }, { label: "Engaged", num: true }],
+                   rows.map(function (p) {
+                     return [esc(p.label), esc(fmtNum(p.sessions)), esc(fmtNum(p.users)),
+                             esc(p.engagementRate) + "%"];
+                   }));
+    }, "No sessions yet."));
+    fill("ins-devices", ga4Block(d.devices, function (rows) { return donut(rows); },
+                                 "No device data yet."));
+    fill("ins-nvr", ga4Block(d.newVsReturning, function (rows) { return donut(rows); },
+                             "Not enough visits to tell new from returning yet."));
+    renderTech("browsers");
+    fill("ins-keyevents", ga4Block(d.keyEvents, function (rows) {
+      return rankRows(rows, "count", "label");
+    }, "Google has recorded no key events in this period."));
+
+    main.querySelectorAll("[data-trend]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        main.querySelectorAll("[data-trend]").forEach(function (b) {
+          b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+        });
+        renderTrend(btn.getAttribute("data-trend"));
+      });
+    });
+    main.querySelectorAll("[data-tech]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        main.querySelectorAll("[data-tech]").forEach(function (b) {
+          b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+        });
+        renderTech(btn.getAttribute("data-tech"));
+      });
+    });
+  }
+
+  function renderKpis(d) {
+    var o = d.overview || {};
+    if (o.ok === false) {
+      fill("ins-kpis", '<div class="admin-panel" style="grid-column:1/-1;margin:0;">' +
+           widgetNote(o.reason, "warn") + "</div>");
+      return;
+    }
+    var t = o.totals || {}, c = o.changes || {};
+    var ser = (d.series && d.series.ok) ? (d.series.series || []) : [];
+    function spark(key) { return sparkline(ser.map(function (p) { return p[key] || 0; })); }
+    fill("ins-kpis",
+      kpiCard("Active users", fmtNum(t.activeUsers), kpiDelta(c.activeUsers), spark("users")) +
+      kpiCard("Sessions", fmtNum(t.sessions), kpiDelta(c.sessions), spark("sessions")) +
+      kpiCard("Page views", fmtNum(t.pageViews), kpiDelta(c.pageViews), spark("views")) +
+      kpiCard("New users", fmtNum(t.newUsers), kpiDelta(c.newUsers)) +
+      kpiCard("Returning users", fmtNum(t.returningUsers), kpiDelta(c.returningUsers)) +
+      kpiCard("Engagement rate", (t.engagementRate || 0) + "%", kpiDelta(c.engagementRate), "",
+              fmtNum(t.engagedSessions) + " engaged sessions") +
+      kpiCard("Avg. engagement", fmtSeconds(t.avgEngagementSeconds),
+              kpiDelta(c.avgEngagementSeconds), "", "per session") +
+      '<div class="kpi" id="kpi-enquiries"><span class="kpi__label">Enquiries</span>' +
+      '<b class="kpi__value">' + esc(fmtNum(insightsEnquiries)) + "</b>" +
+      '<span class="kpi__hint">from our own records</span>' +
+      '<span class="stat-delta stat-delta--flat">first party</span></div>');
+    var box = document.getElementById("ins-window");
+    if (box && o.comparedWith) {
+      box.textContent = box.textContent + " · vs " + o.comparedWith.start +
+        " → " + o.comparedWith.end;
+    }
+  }
+
+  function renderTrend(metric) {
+    var d = ga4Data || {};
+    var ser = d.series || {};
+    if (ser.ok === false) return fill("ins-trend", widgetNote(ser.reason, "warn"));
+    fill("ins-trend", trendChart(ser.series || [], metric));
+  }
+
+  function renderTech(which) {
+    var tech = (ga4Data || {}).technology || {};
+    fill("ins-tech", ga4Block(tech[which], function (rows) {
+      return rankRows(rows);
+    }, "Not enough data yet."));
+  }
+
+  function renderRealtime(d) {
+    var stamp = document.getElementById("rt-stamp");
+    if (!document.getElementById("rt-users")) return;
+    var panel = document.getElementById("ins-live-panel");
+    if (panel) panel.classList.toggle("is-offline", !d.ok);
+    if (!d.ok) {
+      if (stamp) stamp.textContent = d.reason || "Live data is unavailable.";
+      fill("rt-users", "—");
+      ["rt-pages", "rt-countries", "rt-cities", "rt-devices"].forEach(function (id) {
+        fill(id, widgetNote("—"));
+      });
+      return;
+    }
+    if (stamp) stamp.textContent = "Updated " + when(d.fetchedAt) + " · refreshes every minute";
+    fill("rt-users", fmtNum(d.activeUsers));
+    function mini(rows, empty) {
+      return rows && rows.length ? rankRows(rows, "users", "label") : widgetNote(empty);
+    }
+    fill("rt-pages", mini(d.pages, "Nobody on a page right now."));
+    fill("rt-countries", mini(d.countries, "No countries right now."));
+    fill("rt-cities", mini(d.cities, "No cities right now."));
+    fill("rt-devices", mini(d.devices, "No devices right now."));
+  }
+
+
+
   var emailForm = "";
 
   function pageEditor(page) {
@@ -3301,190 +4020,52 @@
       });
     },
 
+    /* ---------------- Site Insights ----------------
+       Two sources, one screen, and which is which is never a guess:
+
+         GA4        audience, geography, acquisition, engagement, devices,
+                    landing pages, realtime — everything about who arrived
+                    and where from, which needs a network Google can see and
+                    we cannot.
+         First party  products, searches, filters, add-to-request, enquiries,
+                    manual downloads, form errors, Web Vitals — everything
+                    about what happened on our own pages, which is ours, is
+                    authoritative, and does not depend on a Google tag being
+                    allowed to load.
+
+       The two halves load independently. The first-party half is a local
+       database and arrives immediately; the Google half is a network call
+       and arrives when it arrives, so it draws skeletons and, if Google is
+       unreachable, its own widgets say so while everything else works. */
+
     insights: function () {
       var rng = edInsightRange;
-      var days = rng.days;
+      /* a request that is no longer wanted must not paint over a newer one:
+         the date picker can be clicked faster than Google answers */
+      insightsToken += 1;
+      var token = insightsToken;
+      stopRealtime();
+
       function rangeQs() {
         return rng.start && rng.end
           ? "start=" + encodeURIComponent(rng.start) + "&end=" + encodeURIComponent(rng.end)
           : "days=" + rng.days;
       }
+      function current() { return token === insightsToken; }
+
+      main.innerHTML = insightsShell(rng);
+      wireInsightsToolbar(rng, rangeQs);
+
       api("/api/admin/insights?" + rangeQs()).then(function (r) {
+        if (!current()) return;
         if (!r.ok) return apiErr(r);
-        var d = r.data;
-        var t = d.totals || {};
-        var s = d.settings || {};
-
-        /* the same chip the dashboard uses — this screen used to render a
-           bare badge inside the <b>, so +12% read differently on each */
-        function delta(v) {
-          if (v === null || v === undefined) return "";
-          var cls = v > 0 ? "up" : (v < 0 ? "down" : "flat");
-          return '<span class="stat-delta stat-delta--' + cls + '">' +
-                 (v > 0 ? "▲ +" : v < 0 ? "▼ " : "= ") + esc(v) + "% vs the period before</span>";
-        }
-        function sparkline(series) {
-          if (!series.length) return "";
-          var w = 720, h = 150, pad = 4;
-          var max = Math.max.apply(null, series.map(function (p) { return p.views; })) || 1;
-          var step = series.length > 1 ? (w - pad * 2) / (series.length - 1) : 0;
-          function pts(key) {
-            return series.map(function (p, i) {
-              var x = pad + i * step;
-              var y = h - pad - (p[key] / max) * (h - pad * 2);
-              return x.toFixed(1) + "," + y.toFixed(1);
-            }).join(" ");
-          }
-          var line = pts("views");
-          var area = line + " " + (pad + (series.length - 1) * step).toFixed(1) + "," + (h - pad) +
-                     " " + pad + "," + (h - pad);
-          return '<svg class="chart" viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="none" role="img" aria-label="Daily pageviews">' +
-            '<defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">' +
-            '<stop offset="0%" stop-color="var(--orange)" stop-opacity="0.45"/>' +
-            '<stop offset="100%" stop-color="var(--orange)" stop-opacity="0.02"/></linearGradient></defs>' +
-            '<polygon points="' + area + '" fill="url(#cg)"></polygon>' +
-            '<polyline points="' + line + '" fill="none" stroke="var(--orange-2)" stroke-width="2.5" ' +
-            'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></polyline>' +
-            '<polyline points="' + pts("visitors") + '" fill="none" stroke="var(--violet-2)" ' +
-            'stroke-width="2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></polyline></svg>';
-        }
-        function barList(rows, empty, suffix) {
-          if (!rows || !rows.length) return '<p class="panel-empty">' + esc(empty) + "</p>";
-          var max = Math.max.apply(null, rows.map(function (x) { return x.count; })) || 1;
-          return '<div class="bar-list">' + rows.map(function (x) {
-            return '<div class="bar-row"><span class="bar-label" title="' + esc(x.label) + '">' +
-              esc(x.label) + '</span><span class="bar-track"><span class="bar-fill" style="width:' +
-              Math.max(2, Math.round(x.count / max * 100)) + '%"></span></span>' +
-              '<span class="bar-num">' + esc(x.count) + esc(suffix || "") + "</span></div>";
-          }).join("") + "</div>";
-        }
-
-        main.innerHTML =
-          '<h1 class="admin-h1">Site Insights</h1>' +
-          '<p class="admin-sub">Your own measurement — no cookies, no visitor profiles. Visitor counts use a key that changes every day, so nobody can be followed across days or identified.</p>' +
-          '<div class="ins-toolbar"><span class="jz-seg" role="group" aria-label="Date range">' +
-          [7, 30, 90, 365].map(function (n) {
-            var on = !rng.start && n === days;
-            return '<button type="button" aria-pressed="' + (on ? "true" : "false") +
-              '" data-days="' + n + '">' + (n === 365 ? "12 months" : n + " days") + "</button>";
-          }).join("") + "</span>" +
-          '<span class="date-range"><label for="ins-from">From</label>' +
-          '<input type="date" id="ins-from" value="' + esc(rng.start || d.start) + '" max="' + esc(d.end) + '">' +
-          '<label for="ins-to">to</label>' +
-          '<input type="date" id="ins-to" value="' + esc(rng.end || d.end) + '" max="' + esc(d.end) + '">' +
-          '<button class="btn btn--primary btn--small" id="ins-apply">Apply</button>' +
-          (rng.start ? '<button class="btn btn--ghost btn--small" id="ins-clear">Clear</button>' : "") +
-          "</span>" +
-          '<span class="ed-spacer"></span>' +
-          (s.enabled ? "" : '<span class="badge-bad">measurement is off</span> ') +
-          '<button class="btn btn--ghost btn--small" id="ins-export">Download report ▾</button></div>' +
-          ((d.alerts || []).length
-            ? '<div class="admin-panel">' + d.alerts.map(function (a) {
-                return '<p class="ins-alert ins-alert--' + esc(a.level) + '">' + esc(a.text) + "</p>";
-              }).join("") + "</div>" : "") +
-          '<div class="stat-row">' +
-          '<div class="stat-card"><b>' + esc(t.views || 0) + "</b><span>Pageviews</span>" + delta(t.viewsChange) + "</div>" +
-          '<div class="stat-card"><b>' + esc(t.visitors || 0) + "</b><span>Visitors</span>" + delta(t.visitorsChange) + "</div>" +
-          '<div class="stat-card"><b>' + esc(t.sessions || 0) + "</b><span>Visits</span></div>" +
-          '<div class="stat-card"><b>' + esc((d.funnel && d.funnel[2] ? d.funnel[2].count : 0)) + "</b><span>Enquiries sent</span></div>" +
-          '<div class="stat-card"><b>' + esc(d.manualDownloads || 0) + "</b><span>Manuals downloaded</span></div></div>" +
-          '<div class="admin-panel"><h2>Traffic</h2>' +
-          (t.views ? sparkline(d.series || [])
-            : '<p class="panel-empty">No visits recorded yet — the beacon starts counting as soon as people browse the site.</p>') +
-          '<p class="admin-inline-note"><span class="key key--orange"></span> Pageviews &nbsp; <span class="key key--violet"></span> Visitors &nbsp;·&nbsp; ' +
-          esc(d.start) + " → " + esc(d.end) + "</p></div>" +
-          '<div class="ins-grid">' +
-          '<div class="admin-panel"><h2>Top pages</h2>' + barList(d.topPages, "No pageviews yet.") + "</div>" +
-          '<div class="admin-panel"><h2>Where visitors come from</h2>' + barList(d.referrers, "All visits are direct or unreferred so far.") + "</div>" +
-          '<div class="admin-panel"><h2>Countries</h2>' + barList(d.countries, "Country data appears once the site runs behind Cloudflare.") + "</div>" +
-          '<div class="admin-panel"><h2>Devices</h2>' + barList(d.devices, "No device data yet.") + "</div>" +
-          '<div class="admin-panel"><h2>Landing pages</h2>' + barList(d.entryPages, "No sessions yet.") + "</div>" +
-          '<div class="admin-panel"><h2>Last page seen</h2>' + barList(d.exitPages, "No sessions yet.") + "</div>" +
-          "</div>" +
-          '<div class="admin-panel"><h2>Catalog interest</h2><div class="ins-grid ins-grid--tight">' +
-          "<div><h3 class=\"ins-h3\">Most viewed products</h3>" + barList(d.products, "No product pages viewed yet.") + "</div>" +
-          "<div><h3 class=\"ins-h3\">What people searched for</h3>" + barList(d.searches, "No catalog searches yet.") + "</div>" +
-          "<div><h3 class=\"ins-h3\">Filters used</h3>" + barList(d.filters, "No filters used yet.") + "</div>" +
-          "</div></div>" +
-          '<div class="admin-panel"><h2>From browsing to enquiry</h2><div class="funnel">' +
-          (d.funnel || []).map(function (f, i) {
-            var base = d.funnel[0].count;
-            var rate = !base ? "—" : (i === 0 ? "starting point" : f.rate + "% of viewers");
-            return '<div class="funnel-step"><b>' + esc(f.count) + "</b><span>" + esc(f.step) +
-              '</span><span class="funnel-rate">' + esc(rate) + "</span></div>";
-          }).join('<span class="funnel-arrow">→</span>') + "</div></div>" +
-          '<div class="admin-panel"><h2>Speed experienced by real visitors</h2>' +
-          ((d.vitals || []).length
-            ? '<div class="stat-row">' + d.vitals.map(function (v) {
-                var good = { LCP: 2500, CLS: 0.1, INP: 200, FCP: 1800, TTFB: 800 }[v.metric];
-                var label = { LCP: "Main content shown", CLS: "Layout stability",
-                              INP: "Response to taps", FCP: "First paint", TTFB: "Server response" }[v.metric];
-                var value = v.metric === "CLS" ? v.p75 : Math.round(v.p75) + " ms";
-                return '<div class="stat-card"><b>' + esc(value) +
-                  (v.p75 <= good ? ' <span class="badge-ok" style="font-size:0.7rem;">good</span>'
-                                 : ' <span class="badge-bad" style="font-size:0.7rem;">slow</span>') +
-                  "</b><span>" + esc(label) + " (" + esc(v.metric) + ")</span></div>";
-              }).join("") + "</div>" +
-              (d.slowPages && d.slowPages.length
-                ? "<h3 class=\"ins-h3\">Slowest pages (average main-content time)</h3>" +
-                  barList(d.slowPages, "", " ms") : "")
-            : '<p class="admin-inline-note">Speed data appears after a few real visits.</p>') + "</div>" +
-          (d.canManage
-            ? '<div class="admin-panel"><h2>Measurement settings</h2><form class="admin-form" id="ins-settings">' +
-              '<div><label for="ins-enabled">First-party measurement</label><select id="ins-enabled">' +
-              '<option value="on"' + (s.enabled ? " selected" : "") + ">On</option>" +
-              '<option value="off"' + (s.enabled ? "" : " selected") + ">Off — collect nothing</option></select></div>" +
-              '<div><label for="ins-ga4">Google Analytics 4 measurement id (optional)</label>' +
-              '<input id="ins-ga4" maxlength="24" placeholder="G-XXXXXXXXXX" value="' + esc(s.ga4Id || "") + '"></div>' +
-              '<div><label for="ins-retention">Keep raw events for (days)</label>' +
-              '<input id="ins-retention" type="number" min="30" max="1000" value="' + esc(s.retentionDays || 400) + '"></div>' +
-              '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save settings</button>' +
-              '<span class="admin-inline-note">GA4 only loads for visitors when an id is set. ' +
-              esc(d.totalEvents) + " events stored in total.</span></div></form></div>"
-            : "");
-
-        main.querySelectorAll("[data-days]").forEach(function (btn) {
-          btn.addEventListener("click", function () {
-            edInsightRange = { days: parseInt(btn.getAttribute("data-days"), 10), start: "", end: "" };
-            views.insights();
-          });
-        });
-        document.getElementById("ins-apply").addEventListener("click", function () {
-          var from = document.getElementById("ins-from").value;
-          var to = document.getElementById("ins-to").value;
-          if (!from || !to) { toast("Pick both dates.", true); return; }
-          if (from > to) { var swap = from; from = to; to = swap; }
-          edInsightRange = { days: rng.days, start: from, end: to };
-          views.insights();
-        });
-        var clearBtn = document.getElementById("ins-clear");
-        if (clearBtn) clearBtn.addEventListener("click", function () {
-          edInsightRange = { days: 30, start: "", end: "" };
-          views.insights();
-        });
-        document.getElementById("ins-export").addEventListener("click", function (e) {
-          e.stopPropagation();
-          showMenu(this, [
-            { label: "PDF report (branded)", action: function () {
-              location.href = "/api/admin/insights/export?format=pdf&" + rangeQs(); } },
-            { label: "HTML report (share or print)", action: function () {
-              location.href = "/api/admin/insights/export?format=html&" + rangeQs(); } },
-            { label: "CSV (daily traffic)", action: function () {
-              location.href = "/api/admin/insights/export?format=csv&" + rangeQs(); } }
-          ]);
-        });
-        var form = document.getElementById("ins-settings");
-        if (form) form.addEventListener("submit", function (e) {
-          e.preventDefault();
-          api("/api/admin/settings", { values: {
-            "analytics.enabled": document.getElementById("ins-enabled").value === "on",
-            "analytics.ga4Id": document.getElementById("ins-ga4").value.trim(),
-            "analytics.retentionDays": parseInt(document.getElementById("ins-retention").value, 10) || 400
-          } }).then(function (r2) {
-            r2.ok ? (toast("Measurement settings saved."), views.insights()) : apiErr(r2);
-          });
-        });
+        renderFirstParty(r.data, rangeQs);
       });
+      api("/api/admin/insights/ga4?" + rangeQs()).then(function (r) {
+        if (!current()) return;
+        renderGa4(r.ok ? r.data : { configured: false, reason: "Analytics data is unavailable." });
+      });
+      startRealtime(current);
     },
 
     operations: function () {
