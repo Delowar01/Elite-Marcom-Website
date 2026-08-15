@@ -71,7 +71,15 @@
     while (node && node !== document.body) {
       var tag = node.tagName.toLowerCase();
       if (node.hasAttribute && node.hasAttribute("data-em-sec")) {
-        chain.unshift("[data-em-sec=" + node.getAttribute("data-em-sec") + "]");
+        var sec = "[data-em-sec=" + node.getAttribute("data-em-sec") + "]";
+        /* A placed element is a DESCENDANT of its section — the blank template
+           wraps it in .container > .em-stack. Joining with ">" would produce a
+           path that resolves on the server but matches nothing as a CSS
+           selector, so a style would look saved and do nothing. */
+        if (chain.length && chain[0].indexOf("[data-em-el=") === 0) {
+          return sec + " " + chain.join(">");
+        }
+        chain.unshift(sec);
         return chain.join(">");
       }
       /* An element placed from the library carries its own id. Anchoring on it
@@ -287,7 +295,7 @@
       if (sections.length < 2) return;
       sec.classList.add("em-dragging");
       dropMark = chrome("em-drop");
-      var target = null;
+      var target = null, moved = false;   // "before nothing" is a real target
       function over(move) {
         var y = move.clientY;
         var best = null, bestGap = Infinity, beforeId = null;
@@ -304,7 +312,10 @@
           });
         });
         if (best === null) return;
+        if (Math.abs(move.clientY - down.clientY) < 4 &&
+            Math.abs(move.clientX - down.clientX) < 4) return;   // click jitter
         target = beforeId;
+        moved = true;
         var wide = document.querySelector("main").getBoundingClientRect();
         dropMark.style.left = (wide.left + window.scrollX) + "px";
         dropMark.style.width = wide.width + "px";
@@ -321,7 +332,9 @@
         document.removeEventListener("mouseup", up, true);
         sec.classList.remove("em-dragging");
         if (dropMark) { dropMark.remove(); dropMark = null; }
-        post({ type: "em-sec-action", action: "move", id: id, before: target });
+        // a press with no travel is someone taking hold of the handle, not a
+        // reorder — posting here moved the section to the bottom of the page
+        if (moved) post({ type: "em-sec-action", action: "move", id: id, before: target });
       }
       document.addEventListener("mousemove", over, true);
       document.addEventListener("mouseup", up, true);
@@ -467,13 +480,22 @@
   /* ---------- sections added from the block library ---------- */
   var addedEls = {};    // id -> the element inserted into the preview
   var addedHtml = {};   // id -> the markup it was built from
+  var pendingSelect = null;   // what to re-select after a section is rebuilt
   function syncAdded(added) {
     var wanted = {};
     (added || []).forEach(function (item) {
       wanted[item.id] = true;
       // an element added to or removed from a blank section changes its
       // markup, so a live copy has to be rebuilt rather than left alone
+      var reselect = null;
       if (addedEls[item.id] && addedHtml[item.id] !== item.html) {
+        if (selected && addedEls[item.id].contains(selected)) {
+          // the node about to be removed is the selected one: remember what to
+          // select again, or the toolbar and handles measure a detached
+          // element and land in the page's top-left corner
+          var host = selected.closest("[data-em-el]");
+          reselect = host ? host.getAttribute("data-em-el") : true;
+        }
         addedEls[item.id].remove();
         delete addedEls[item.id];
       }
@@ -486,6 +508,10 @@
       if (!el) return;
       addedHtml[item.id] = item.html;
       el.setAttribute("data-em-sec", item.id);
+      if (reselect) {
+        pendingSelect = reselect === true ? el
+          : el.querySelector('[data-em-el="' + reselect + '"]') || el;
+      }
       // reveal animations only fire on scroll; a block dropped in mid-edit
       // has to be visible straight away or it reads as a failed insert
       el.querySelectorAll(".reveal").forEach(function (n) { n.classList.add("is-visible"); });
@@ -559,7 +585,12 @@
       }
     });
     void anchor; // sections re-appended in order after any leading content
-    secOrder = order.filter(function (id) { return removed.indexOf(id) === -1 || true; });
+    secOrder = order.slice();
+    if (pendingSelect) {
+      var again = pendingSelect;
+      pendingSelect = null;
+      if (again.isConnected) { select(again); return; }
+    }
     decorate();
   }
 

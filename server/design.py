@@ -35,7 +35,7 @@ _COLOR_RE = re.compile(
     r"^(#[0-9a-fA-F]{3,8}|rgba?\(\s*\d{1,3}(\s*,\s*\d{1,3}){2}(\s*,\s*(0|1|0?\.\d+))?\s*\)"
     r"|var\(--[\w-]+\)|transparent|currentColor)$")
 _SHADOW_RE = re.compile(r"^(none|[\d.\spx%,()#a-fA-F-]+|rgba?\([\d.,\s]+\)[\d.\spx-]+)$")
-_URL_RE = re.compile(r"^/(assets|media)/[\w./-]+$")
+_URL_RE = re.compile(r"^/(assets|media)/(?!.*\.\.)[\w./-]+$")
 
 STYLE_PROPS: dict[str, re.Pattern | tuple] = {
     "font-size": _LEN_RE,
@@ -87,8 +87,16 @@ _BG_KEY = "background-image"
 # because something above it moved.
 _PATH_RE = re.compile(
     r"^(\[data-em-sec=[sa]\d{1,3}\]|header\.site-header|footer\.site-footer|main|body)"
-    r"(>\[data-em-el=e\d{1,3}\])?"
+    r"( \[data-em-el=e\d{1,3}\])?"
     r"(>[a-z][a-z0-9]{0,15}(:nth-of-type\(\d{1,3}\))?){0,12}$")
+
+# The element anchor is joined with a SPACE, not ">". A placed element sits
+# inside the blank template's .container > .em-stack, so a child combinator
+# would match nothing — and these paths are emitted verbatim as CSS selectors
+# by build_css and used as querySelector arguments by the editor bridge. The
+# server's own resolver searches descendants either way, which is exactly how
+# a style could look saved and applied while doing nothing at all.
+_EL_JOIN_RE = re.compile(r">(\[data-em-el=e\d{1,3}\])")
 
 # s… = a section that was already in the page, a… = one the editor added
 _SEC_ID_RE = re.compile(r"^[sa]\d{1,3}$")
@@ -100,8 +108,14 @@ _EL_ID_RE = re.compile(r"^e\d{1,3}$")
 # sanitized on the way in by content.sanitize_rich.
 MAX_TEXT = 4000
 
+# The only third-party frame the editor may point at: our own privacy host and
+# a validated 11-character video id, the same shape server/supplier_video.py
+# enforces. Nothing else, and never a raw embed pasted by an admin.
+_YT_EMBED_RE = re.compile(r"^https://www\.youtube-nocookie\.com/embed/[A-Za-z0-9_-]{11}"
+                          r"(\?rel=0(&amp;playsinline=1)?)?$")
+
 ATTRS = {
-    "src": lambda v: bool(_URL_RE.match(v)) and len(v) <= 300,
+    "src": lambda v: len(v) <= 300 and bool(_URL_RE.match(v) or _YT_EMBED_RE.match(v)),
     "alt": lambda v: len(v) <= 300 and not re.search(r'[<>"]', v),
     "href": lambda v: (len(v) <= 300 and not re.search(r'[<>"\s]', v)
                        and bool(re.match(r"^(https://|http://|mailto:|tel:|/|#)", v))),
@@ -121,6 +135,8 @@ def validate_doc(doc: dict, global_scope: bool = False) -> dict:
     if not isinstance(elements, dict) or len(elements) > 200:
         raise DesignError("Too many styled elements.")
     for path, spec in elements.items():
+        if isinstance(path, str):
+            path = _EL_JOIN_RE.sub(r" \1", path, count=1)
         if not isinstance(path, str) or len(path) > 300 or not _PATH_RE.match(path):
             raise DesignError(f"Invalid element path: {str(path)[:80]}")
         if global_scope and not path.startswith(("header.site-header", "footer.site-footer")):
@@ -222,6 +238,9 @@ def validate_doc(doc: dict, global_scope: bool = False) -> dict:
                     raise DesignError("That page is not one of ours.")
                 if not _SEC_ID_RE.match(src_sec):
                     raise DesignError("Invalid copied-section id.")
+                refusal = copy_refusal(src_page, src_sec)
+                if refusal:
+                    raise DesignError(refusal)
                 clean_added.append({"id": sid, "from": {"page": src_page, "sec": src_sec}})
                 continue
             template = str(item.get("template") or "")
@@ -229,6 +248,10 @@ def validate_doc(doc: dict, global_scope: bool = False) -> dict:
                 raise DesignError(f"Unknown section block: {template[:40]}")
             entry = {"id": sid, "template": template}
             children = item.get("children") or []
+            if children and 'data-em-slot="1"' not in blocks.TEMPLATES[template]["html"]:
+                raise DesignError(
+                    "Only a Blank section can hold elements from the library. "
+                    "Add a Blank section for them.")
             if not isinstance(children, list) or len(children) > 40:
                 raise DesignError("Too many elements in one section.")
             clean_children, seen_els = [], set()
@@ -482,6 +505,10 @@ def _find_main_sections(tree: _Tree) -> tuple[_Node | None, list[_Node]]:
 def _resolve_path(tree: _Tree, path: str) -> _Node | None:
     segments = path.split(">")
     anchor = segments[0]
+    el_anchor = ""
+    if " " in anchor:
+        anchor, el_anchor = anchor.split(" ", 1)
+        el_anchor = el_anchor.strip()
     node: _Node | None = None
     if anchor.startswith("[data-em-sec="):
         sec_id = anchor[len("[data-em-sec="):-1]
@@ -507,23 +534,22 @@ def _resolve_path(tree: _Tree, path: str) -> _Node | None:
         node = walk(tree.root)
     if node is None:
         return None
+    if el_anchor.startswith("[data-em-el="):
+        el_id = el_anchor[len("[data-em-el="):-1]
+
+        def find_el(n):
+            for child in n.children:
+                if child.attrs.get("data-em-el") == el_id:
+                    return child
+                found = find_el(child)
+                if found is not None:
+                    return found
+            return None
+
+        node = find_el(node)
+        if node is None:
+            return None
     for seg in segments[1:]:
-        if seg.startswith("[data-em-el="):
-            el_id = seg[len("[data-em-el="):-1]
-
-            def find_el(n):
-                for child in n.children:
-                    if child.attrs.get("data-em-el") == el_id:
-                        return child
-                    found = find_el(child)
-                    if found is not None:
-                        return found
-                return None
-
-            node = find_el(node)
-            if node is None:
-                return None
-            continue
         m = re.match(r"^([a-z][a-z0-9]*)(?::nth-of-type\((\d+)\))?$", seg)
         if not m:
             return None
@@ -551,8 +577,70 @@ def _set_attrs_in_tag(tag_text: str, changes: dict[str, str | None]) -> str:
         tag_text = pattern.sub("", tag_text)
         if value is not None:
             insert = f' {name}="{value}"'
-            tag_text = re.sub(r"(/?)>$", insert + r"\1>", tag_text, count=1)
+            # A replacement STRING would read backslashes in the value as regex
+            # escapes: an alt of "AC\DC" raised re.error and took every later
+            # bake — and Publish — down with it. A function replacement is
+            # literal, and cannot expand \1 into a captured group either.
+            tag_text = re.sub(r"(/?)>$", lambda m, ins=insert: ins + m.group(1) + ">",
+                              tag_text, count=1)
     return tag_text
+
+
+_FORM_RE = re.compile(r"<form\b", re.I)
+_ID_RE = re.compile(r'\sid="([^"]*)"')
+# attributes that point at an id inside the same block
+_REF_ATTRS = ("for", "aria-labelledby", "aria-describedby", "aria-controls", "form", "list")
+
+
+def _reid_copy(body: str, prefix: str) -> str:
+    """Re-prefix the ids inside a copied section and the references to them.
+
+    Deleting them instead broke every label/field pair and every in-block
+    anchor; leaving them alone would put two elements on the page claiming one
+    id. A reference is only rewritten when its target is inside this copy, so a
+    link to a section elsewhere on the page still goes there.
+    """
+    ids = {m.group(1) for m in _ID_RE.finditer(body) if m.group(1)}
+    if not ids:
+        return re.sub(r'\s(data-em|data-em-sec|data-em-list)="[^"]*"', "", body)
+    body = _ID_RE.sub(lambda m: f' id="{prefix}-{m.group(1)}"' if m.group(1) in ids else m.group(0),
+                      body)
+    for attr in _REF_ATTRS:
+        body = re.sub(
+            rf'\s{attr}="([^"]*)"',
+            lambda m, a=attr: (f' {a}="{prefix}-{m.group(1)}"' if m.group(1) in ids else m.group(0)),
+            body)
+    body = re.sub(
+        r'\shref="#([^"]*)"',
+        lambda m: (f' href="#{prefix}-{m.group(1)}"' if m.group(1) in ids else m.group(0)),
+        body)
+    return re.sub(r'\s(data-em|data-em-sec|data-em-list)="[^"]*"', "", body)
+
+
+def copy_refusal(page: str, sec_id: str) -> str:
+    """Why this section cannot be copied, or "" when it can.
+
+    Checked when the copy is saved, so the admin hears about it there rather
+    than finding a section missing from the published page.
+    """
+    markup = section_from_page(page, sec_id, "probe")
+    if markup:
+        return ""
+    from . import content
+
+    try:
+        raw = content.page_source(page)
+    except Exception:
+        return "That page is not one of ours."
+    raw = _apply_sections(raw, {})
+    tree = _Tree(raw)
+    _main, sections = _find_main_sections(tree)
+    for node in sections:
+        if node.attrs.get("data-em-sec") == sec_id:
+            return ("A section containing a form cannot be copied — the copy could not be "
+                    "wired up, and an unwired form would send what a visitor types into a "
+                    "web address. Copy the sections around it instead.")
+    return "That section is no longer on the page."
 
 
 def section_from_page(page: str, sec_id: str, new_id: str) -> str:
@@ -582,7 +670,14 @@ def section_from_page(page: str, sec_id: str, new_id: str) -> str:
         span = raw[node.tag_start:node.end]
         tag_text = raw[node.tag_start:node.content_start]
         body = span[len(tag_text):]
-        body = re.sub(r'\s(data-em|data-em-sec|data-em-list|id|aria-labelledby)="[^"]*"', "", body)
+        if _FORM_RE.search(body):
+            # A form is bound by id to the page's own JavaScript. A second copy
+            # cannot be wired up, and an unbound one submits natively — the
+            # visitor's name, email and message would leave in a URL. Saving one
+            # is refused (see copy_refusal); a doc stored before that rule
+            # existed drops the section rather than breaking the page.
+            return ""
+        body = _reid_copy(body, new_id)
         new_tag = _set_attrs_in_tag(tag_text, {
             "data-em-sec": new_id, "id": None, "aria-labelledby": None,
             "data-em": None, "data-em-list": None})
@@ -650,7 +745,9 @@ def _apply_sections(raw: str, sections_spec: dict) -> str:
             parts.append(by_id[sid])
             if sid in duplicated:
                 copy = by_id[sid]
-                copy = re.sub(r'\s(data-em|data-em-sec|id|aria-labelledby)="[^"]*"', "", copy)
+                head, _, rest = copy.partition(">")
+                copy = re.sub(r'\s(data-em|data-em-sec|id|aria-labelledby)="[^"]*"', "",
+                              head + ">") + _reid_copy(rest, f"{sid}-copy")
                 parts.append(copy)
         # emitted even when the section above it was removed: taking a section
         # off the page must not silently delete the content that sat after it

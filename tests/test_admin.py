@@ -2819,3 +2819,109 @@ def test_a_duplicated_blank_section_is_independent_of_the_original():
     assert "Only the first" in baked
     assert baked.count("A new headline") == 1      # the copy kept the default
     client.post("/api/admin/design/contact", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})
+
+
+def test_a_backslash_in_alt_text_does_not_break_every_bake():
+    """The attribute value used to be a regex replacement template: an alt of
+    "AC\\DC" raised re.error on every later bake and aborted Publish part-way
+    through, with no way back through the editor."""
+    from server import design
+
+    me = client.get("/api/admin/me").json()
+    for value in ("AC\\DC", "C:\\photos\\hero.png", "Sara \\1 Ali"):
+        res = client.post("/api/admin/design/about", headers={"X-CSRF": me["csrf"]},
+                          json={"doc": {"elements": {"main": {"attrs": {"alt": value}}}}})
+        assert res.status_code == 200, (value, res.text)
+        baked = client.get("/admin/preview/about")
+        assert baked.status_code == 200, value
+        assert 'alt="' + value.replace("&", "&amp;") + '"' in baked.text, value
+    assert design._set_attrs_in_tag('<img src="/x.png"/>', {"alt": "a\\b"}) == \
+        '<img src="/x.png" alt="a\\b"/>'
+    client.post("/api/admin/design/about", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})
+
+
+def test_a_placed_elements_style_is_a_selector_that_actually_matches():
+    """The path is emitted verbatim as CSS. A child combinator between the
+    section and the element would resolve on the server and match nothing in a
+    browser — a style that looks saved and does nothing."""
+    from server import design
+
+    me = client.get("/api/admin/me").json()
+    path = "[data-em-sec=a1] [data-em-el=e1]"
+    doc = {"sections": {"added": [{"id": "a1", "template": "blank",
+                                   "children": [{"id": "e1", "template": "heading"}]}],
+                        "order": ["s0", "a1"]},
+           "elements": {path: {"styles": {"base": {"color": "#ff0000"}},
+                               "hidden": {"mobile": True}}}}
+    assert client.post("/api/admin/design/contact", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    baked = client.get("/admin/preview/contact").text
+    assert "[data-em-sec=a1] [data-em-el=e1]{color:#ff0000" in baked
+    assert ">[data-em-el=" not in baked        # never the child combinator
+    # and the markup really does nest the element below .container > .em-stack
+    body = baked.split('data-em-sec="a1"')[1].split("</section>")[0]
+    assert 'class="em-stack"' in body and 'data-em-el="e1"' in body
+    assert body.index("em-stack") < body.index('data-em-el="e1"')
+    # an old path with ">" is normalised on the way in rather than rejected
+    fixed = design.validate_doc({"elements": {"[data-em-sec=a1]>[data-em-el=e1]":
+                                              {"styles": {"base": {"opacity": "0.5"}}}}})
+    assert list(fixed["elements"]) == ["[data-em-sec=a1] [data-em-el=e1]"]
+    client.post("/api/admin/design/contact", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})
+
+
+def test_elements_are_refused_where_a_template_cannot_hold_them():
+    me = client.get("/api/admin/me").json()
+    res = client.post("/api/admin/design/contact", headers={"X-CSRF": me["csrf"]},
+                      json={"doc": {"sections": {"added": [
+                          {"id": "a1", "template": "cta",
+                           "children": [{"id": "e1", "template": "heading"}]}]}}})
+    assert res.status_code == 400
+    assert "Blank section" in res.json()["detail"]
+
+
+def test_a_copied_section_keeps_its_labels_and_never_carries_a_form():
+    """Deleting every id broke label/field pairing and in-block anchors;
+    keeping them would put two elements on one id. They are re-prefixed."""
+    from server import design
+
+    out = design.section_from_page("about", "s3", "a7")
+    assert 'id="a7-mission-h"' in out
+    assert 'aria-labelledby="' not in out.split(">")[0]   # the section's own is dropped
+    # a section with a form cannot be wired up twice, so saving the copy is
+    # refused where the admin can see it — not silently at bake time
+    assert "form" in design.copy_refusal("contact", "s1")
+    assert design.copy_refusal("about", "s3") == ""
+    me = client.get("/api/admin/me").json()
+    refused = client.post("/api/admin/design/about", headers={"X-CSRF": me["csrf"]},
+                          json={"doc": {"sections": {"added": [
+                              {"id": "a1", "from": {"page": "contact", "sec": "s1"}}]}}})
+    assert refused.status_code == 400
+    assert "form" in refused.json()["detail"]
+    # and a page still bakes if such a copy were ever stored some other way
+    assert design.section_from_page("contact", "s1", "a9") == ""
+    assert client.get("/admin/preview/about").status_code == 200
+
+
+def test_the_video_element_can_be_pointed_at_a_real_video():
+    """It ships with a placeholder clip; the editor must be able to change it,
+    and only to a validated id on our privacy host."""
+    from server import design
+
+    assert design.ATTRS["src"]("https://www.youtube-nocookie.com/embed/lFhAiGLjoMo?rel=0")
+    assert not design.ATTRS["src"]("https://www.youtube.com/embed/lFhAiGLjoMo")
+    assert not design.ATTRS["src"]("https://evil.example/embed/lFhAiGLjoMo")
+    assert not design.ATTRS["src"]("/media/../admin/secrets")
+    assert design.ATTRS["src"]("/assets/portfolio/aces-pavilion-live.webp")
+
+    me = client.get("/api/admin/me").json()
+    path = "[data-em-sec=a1] [data-em-el=e1]"
+    doc = {"sections": {"added": [{"id": "a1", "template": "blank",
+                                   "children": [{"id": "e1", "template": "video"}]}],
+                        "order": ["s0", "a1"]},
+           "elements": {path: {"attrs": {
+               "src": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?rel=0"}}}}
+    assert client.post("/api/admin/design/contact", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    baked = client.get("/admin/preview/contact").text
+    assert "youtube-nocookie.com/embed/dQw4w9WgXcQ" in baked
+    client.post("/api/admin/design/contact", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})

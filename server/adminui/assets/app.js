@@ -1737,6 +1737,9 @@
       var ANIMS = ["fade-up", "fade-in", "slide-left", "slide-right", "zoom", "zoom-up",
                    "mask-title", "blur-in", "rise"];
       var st = edState;
+      // the preview reports these; until it does they belong to the page we
+      // just left, and section edits made from them would reorder this one
+      st.sections = [];
       function bp() { return st.vw === "desktop" ? "base" : st.vw; }
       function isGlobalPath(path) {
         return path.indexOf("header.site-header") === 0 || path.indexOf("footer.site-footer") === 0;
@@ -2034,6 +2037,12 @@
         });
 
         /* ---------- selection panel ---------- */
+        /* the 11-character id out of any YouTube link shape, or "" */
+        function ytIdOf(value) {
+          var m = /(?:embed|shorts|live|v|e)\/([A-Za-z0-9_-]{11})|[?&]v=([A-Za-z0-9_-]{11})|youtu\.be\/([A-Za-z0-9_-]{11})/.exec(String(value || ""));
+          if (m) return m[1] || m[2] || m[3];
+          return /^[A-Za-z0-9_-]{11}$/.test(String(value || "").trim()) ? String(value).trim() : "";
+        }
         function rgbToHex(c) {
           var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || "");
           if (!m) return "#000000";
@@ -2045,8 +2054,8 @@
           var spec = specOf(docFor(path), path, false);
           return spec.styles && spec.styles[bp()] ? spec.styles[bp()][prop] || "" : "";
         }
-        function setStyle(path, prop, value) {
-          pushUndo();
+        function setStyle(path, prop, value, noUndo) {
+          if (!noUndo) pushUndo();
           var doc = docFor(path);
           var spec = specOf(doc, path, true);
           spec.styles = spec.styles || {};
@@ -2185,6 +2194,15 @@
         }
 
         function secDuplicate(id) {
+          // an older draft may hold an in-place copy of this section; the same
+          // button takes it off again, or nothing could ever remove one
+          if ((((st.pageDoc.sections || {}).duplicated) || []).indexOf(id) !== -1) {
+            secMutate(function (s) {
+              s.duplicated = (s.duplicated || []).filter(function (x) { return x !== id; });
+            });
+            toast("The in-place copy was removed.");
+            return;
+          }
           if (atLimit()) return;
           var entry = addedEntry(id);
           var copy = { id: nextAddedId() };
@@ -2303,10 +2321,12 @@
         /* a drag on an edge handle writes a real width/height for the viewport
            being edited, so it is responsive like every other style */
         st.onResize = function (msg) {
-          if (!msg.path) return;
+          // one drag is one edit: setStyle pushes its own undo state, so a
+          // corner drag used to leave three and the first Ctrl+Z undid half
+          if (!msg.path || (!msg.width && !msg.height)) return;
           pushUndo();
-          if (msg.width) setStyle(msg.path, "width", msg.width);
-          if (msg.height) setStyle(msg.path, "height", msg.height);
+          if (msg.width) setStyle(msg.path, "width", msg.width, true);
+          if (msg.height) setStyle(msg.path, "height", msg.height, true);
           if (st.sel && st.sel.path === msg.path) st.onSelect(st.sel);
           toast("Size set for " + st.vw + ".");
         };
@@ -2523,6 +2543,17 @@
             ? group("Link", "<label>Target (URL or /page.html)</label>" +
                 textInput("ed-href", attrs.href || meta.attrs.href, "/contact.html"))
             : "";
+          /* A Video element ships with a placeholder clip. This is how it is
+             changed: a YouTube id or link in, a validated youtube-nocookie
+             embed out — the raw embed code an admin might paste is never
+             accepted, here or on the server. */
+          var video = meta.tag === "iframe"
+            ? group("Video",
+                "<label>YouTube link or video id</label>" +
+                textInput("ed-yt", ytIdOf(attrs.src || meta.attrs.src), "lFhAiGLjoMo") +
+                '<span class="admin-inline-note">Paste the link from the address bar. ' +
+                "It plays without cookies, from youtube-nocookie.com.</span>", true)
+            : "";
           var currentAnim = anim ? anim.type : "";
           var animGroup = group("Animation",
             "<label>Effect</label>" +
@@ -2628,7 +2659,9 @@
           /* ---------- elements placed inside a section the editor added ---------- */
           var elGroup = "";
           var entry = secId ? addedEntry(secId) : null;
-          if (entry && !entry.from) {
+          var canHold = entry && !entry.from &&
+            (st.blockHtml[entry.template] || "").indexOf('data-em-slot="1"') !== -1;
+          if (canHold) {
             var kids = entry.children || [];
             var rows = kids.map(function (c, i) {
               return '<div class="ed-elrow' + (meta.elId === c.id ? " is-on" : "") +
@@ -2705,7 +2738,7 @@
             '<button class="btn btn--ghost btn--small" id="ed-parent">Select parent</button></div>' +
             (globalEl ? '<label class="ed-check" style="margin-bottom:10px;"><input type="checkbox" id="ed-scope-page"> Apply changes to this page only</label>' : "") +
             secGroup + elGroup + listGroup +
-            content + media + link + typo + box + space + layout + animGroup + vis +
+            content + media + link + video + typo + box + space + layout + animGroup + vis +
             '<div class="admin-actions" style="margin-top:14px;"><button class="btn btn--ghost btn--small" id="ed-el-reset">Reset this element</button></div>' +
             '<p class="admin-inline-note" style="margin-top:8px;">Style edits apply to the <b>' + esc(st.vw) + "</b> view" +
             (st.vw === "desktop" ? " (and smaller screens unless they override)" : "") + ".</p>";
@@ -2793,7 +2826,7 @@
               setAttr(path, "alt", this.value.trim());
             });
           }
-          if (!meta.isImg && meta.hasBg) {
+          if (!meta.isImg) {
             document.getElementById("ed-bg-replace").addEventListener("click", function () {
               openPicker(function (url) { setStyle(path, "background-image", url); st.onSelect(meta); });
             });
@@ -2832,6 +2865,16 @@
           bindStyle("ed-w", path, "width");
           bindStyle("ed-mw", path, "max-width");
           bindStyle("ed-h", path, "height");
+          var yt = document.getElementById("ed-yt");
+          if (yt) yt.addEventListener("change", function () {
+            var id = ytIdOf(yt.value);
+            if (!id) {
+              toast("That is not a YouTube link — copy it from the address bar.", true);
+              return;
+            }
+            setAttr(path, "src", "https://www.youtube-nocookie.com/embed/" + id + "?rel=0");
+            toast("Video set.");
+          });
           bindStyle("ed-mh", path, "min-height");
           bindStyle("ed-disp", path, "display");
           bindStyle("ed-fd", path, "flex-direction");
@@ -2969,6 +3012,9 @@
           var added = spec.added || [];
           var order = knownOrder();
           var removed = spec.removed || [];
+          // documents saved before duplicate-with-an-id use this field; it
+          // still bakes, so the row has to show it and offer a way to undo it
+          var legacyDup = spec.duplicated || [];
           var clip = readClip();
           panel.innerHTML =
             "<h2>Page sections</h2>" +
@@ -2983,13 +3029,17 @@
                 '<span class="sec-grip" title="Drag to reorder">&#9782;</span>' +
                 "<span>" + esc(sectionLabel(id)) +
                 (entry ? ' <span class="chip chip--violet">added</span>' : "") +
-                (off ? ' <span class="chip">hidden</span>' : "") + "</span>" +
+                (off ? ' <span class="chip">hidden</span>' : "") +
+                (legacyDup.indexOf(id) !== -1 ? ' <span class="chip">duplicated</span>' : "") +
+                "</span>" +
                 '<span class="sec-btns">' +
                 '<button title="Select it in the page" data-sec-pick>&#9678;</button>' +
                 '<button title="Move up" data-sec-up' + (i === 0 ? " disabled" : "") + ">&uarr;</button>" +
                 '<button title="Move down" data-sec-down' +
                   (i === order.length - 1 ? " disabled" : "") + ">&darr;</button>" +
-                '<button title="Duplicate" data-sec-dup>&#9099;</button>' +
+                '<button title="' + (legacyDup.indexOf(id) !== -1
+                    ? "Remove the in-place copy" : "Duplicate") + '" data-sec-dup' +
+                  (legacyDup.indexOf(id) !== -1 ? ' class="is-on"' : "") + ">&#9099;</button>" +
                 '<button title="Copy — paste on any page" data-sec-copy>&#9106;</button>' +
                 '<button title="' + (off ? "Show" : "Hide") + '" data-sec-hide>' +
                   (off ? "&#128683;" : "&#128065;") + "</button>" +
@@ -3120,15 +3170,25 @@
           st.outlines = this.checked;
           st.postFrame({ type: "em-outlines", on: st.outlines });
         });
+        /* restore() rewrites the documents and reloads the frame but leaves
+           the panel showing the pre-undo state — a Sections list whose Show
+           button then hid the section it had just brought back. */
+        function afterRestore() {
+          refreshDirty();
+          if (st.panelMode === "sections") renderSections();
+          else if (st.sel) st.onSelect(st.sel);
+        }
         document.getElementById("ed-undo").addEventListener("click", function () {
           if (!st.undo.length) return;
           st.redo.push(snapshot());
           restore(st.undo.pop());
+          afterRestore();
         });
         document.getElementById("ed-redo").addEventListener("click", function () {
           if (!st.redo.length) return;
           st.undo.push(snapshot());
           restore(st.redo.pop());
+          afterRestore();
         });
         document.addEventListener("keydown", function (e) {
           if (!document.getElementById("ed-frame")) return;

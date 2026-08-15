@@ -1381,7 +1381,7 @@ async def admin_page_visual(request: Request, page: str, lang: str = "en"):
     if content.page_config(page) is None or lang not in content.LANGS:
         raise HTTPException(status_code=404, detail="Unknown page.")
     baked = content.bake_page(page, lang)
-    bridge = '<script src="/admin/assets/editor-bridge.js?v=4" defer></script></body>'
+    bridge = '<script src="/admin/assets/editor-bridge.js?v=5" defer></script></body>'
     baked = baked.replace("</body>", bridge, 1)
     return Response(content=baked, media_type="text/html; charset=utf-8",
                     headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
