@@ -831,6 +831,11 @@
           '<div class="admin-panel"><h2>Printing manuals cache</h2><p class="admin-inline-note">' +
           esc(d.manuals.cachedPdfs) + " PDF(s) cached (" + (d.manuals.bytes / (1024 * 1024)).toFixed(1) + " MB) · " +
           esc(d.manuals.validVerdicts) + " valid · " + esc(d.manuals.failedVerdicts) + " marked unavailable</p></div>" +
+          '<div class="admin-panel"><h2>Product videos</h2><p class="admin-inline-note">' +
+          esc((d.videos && d.videos.withVideo) || 0) + " product(s) with a video · " +
+          esc((d.videos && d.videos.withoutVideo) || 0) + " checked and without one. " +
+          "Read from the supplier's public product page when a customer opens the item — " +
+          "not an API call, and never charged to the daily budget.</p></div>" +
           '<div class="admin-panel" id="jz-visibility"><p class="admin-inline-note">Loading…</p></div>' +
           '<div class="admin-panel"><h2>Search the cached catalog</h2>' +
           '<p class="admin-inline-note" style="margin-bottom:10px;">A quick look-up. The full table, ' +

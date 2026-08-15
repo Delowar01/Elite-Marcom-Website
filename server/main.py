@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import config, jasani, mailer, notify, security, storage
+from . import config, jasani, mailer, notify, security, storage, supplier_video
 
 config.validate_startup()
 
@@ -587,6 +587,25 @@ async def giveaways_branding(request: Request, country: Literal["ksa", "uae"] = 
             return {"branding": []}
         raise HTTPException(status_code=503, detail="Branding details temporarily unavailable.")
     return {"branding": branding}
+
+
+@app.get("/api/giveaways/video")
+async def giveaways_video(request: Request, country: Literal["ksa", "uae"] = Query(...),
+                          product_id: str = Query(..., min_length=1, max_length=80)):
+    """YouTube videos for one product, discovered on the supplier's public page.
+
+    Lazy on purpose: the product page renders from the cached snapshot first
+    and asks for this afterwards, so nothing a customer sees ever waits on a
+    supplier webpage — and the catalogue, which never calls this, can never
+    turn into a crawl. No supplier API call and no daily budget is involved.
+    """
+    catalog_read_guard(request, "giveaways_video")
+    products, _state = await giveaway_catalog_or_503(country)
+    product = next((p for p in products if str(p.get("id")) == product_id), None)
+    if product is None:
+        return JSONResponse({"videos": []}, headers={"Cache-Control": "no-store"})
+    videos = await supplier_video.videos_for(country, product)
+    return JSONResponse({"videos": videos}, headers={"Cache-Control": "no-store"})
 
 
 # ---------------- printing manuals (server-side proxy) ----------------

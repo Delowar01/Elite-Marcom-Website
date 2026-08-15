@@ -715,6 +715,304 @@ def test_manual_proxy_rejects_non_pdf_candidate(tmp_path, monkeypatch):
     assert calls["n"] == 1  # the failed verdict is cached — no refetch
 
 
+# ---------------- product videos from the supplier's public page ----------------
+# Confirmed live example: ITGL 1291 NAPIER — MagCase Phone Cardholder — Grey is
+# id 24246 / parent 29453 with videos: [] from the Product API, while
+# https://www.jasani.ae/shop/itgl-1291-…-29453 embeds youtube.com/embed/lFhAiGLjoMo.
+
+REAL_PAGE = """<!doctype html><html><body><div id="product_detail">
+  <img src="https://www.jasani.ae/web/image/product.product/24246/image_1024">
+  <div class="o_video_container">
+    <iframe src="https://www.youtube.com/embed/lFhAiGLjoMo?rel=0" allowfullscreen></iframe>
+  </div>
+</div>
+<div class="alternative_products">
+  <a href="/shop/other-product-11111">Another item</a>
+  <iframe src="https://www.youtube.com/embed/ZZZZZZZZZZZ"></iframe>
+</div></body></html>"""
+
+
+def _video_product(monkeypatch, tmp_path, **over):
+    """A catalogue of one product, with the video cache pointed at tmp_path."""
+    from server import jasani, supplier_video
+
+    product = {"id": "24246", "code": "ITGL 1291",
+               "name": "NAPIER - MagCase Phone Cardholder - Grey",
+               "parentId": "29453", "templateId": None, "videos": []}
+    product.update(over)
+
+    async def fake_catalog(market):
+        return ([product], "cache")
+    monkeypatch.setattr(jasani, "get_catalog", fake_catalog)
+    monkeypatch.setattr(supplier_video, "_CACHE_DIR", tmp_path)
+    return supplier_video, product
+
+
+def test_the_confirmed_product_video_is_found_on_the_public_page(tmp_path, monkeypatch):
+    sv, _p = _video_product(monkeypatch, tmp_path)
+    asked = []
+
+    async def fake_page(url):
+        asked.append(url)
+        return REAL_PAGE
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    res = client.get("/api/giveaways/video?country=uae&product_id=24246")
+    assert res.status_code == 200
+    assert res.json() == {"videos": [
+        {"youtubeId": "lFhAiGLjoMo", "thumbnail": "https://i.ytimg.com/vi/lFhAiGLjoMo/hqdefault.jpg"}]}
+    # the page is addressed by the template id, on the market's own host
+    assert asked == ["https://www.jasani.ae/shop/"
+                     "itgl-1291-napier-magcase-phone-cardholder-grey-29453"]
+    assert res.headers["cache-control"] == "no-store"
+
+
+def test_a_video_from_the_related_products_strip_is_not_this_product(tmp_path, monkeypatch):
+    """Odoo repeats other items below the product. Their videos are theirs."""
+    sv, _p = _video_product(monkeypatch, tmp_path)
+    assert [v["youtubeId"] for v in sv.parse_videos(REAL_PAGE)] == ["lFhAiGLjoMo"]
+
+
+def test_every_supported_youtube_form_is_read_and_nothing_else_is():
+    from server import supplier_video as sv
+
+    page = """
+      <iframe src="https://www.youtube.com/embed/AAAAAAAAAAA"></iframe>
+      <iframe src="https://www.youtube-nocookie.com/embed/BBBBBBBBBBB"></iframe>
+      <a href="https://www.youtube.com/watch?v=CCCCCCCCCCC">watch</a>
+      <a href="https://www.youtube.com/watch?app=desktop&amp;v=DDDDDDDDDDD">watch</a>
+      <a href="https://youtu.be/EEEEEEEEEEE">short link</a>
+      <a href="https://www.youtube.com/shorts/FFFFFFFFFFF">shorts</a>
+      <a href="https://www.youtube.com/live/GGGGGGGGGGG">live</a>
+      <a href="https://www.youtube.com/v/HHHHHHHHHHH">old embed</a>
+    """
+    got = [v["youtubeId"] for v in sv.parse_videos(page)]
+    assert got == ["AAAAAAAAAAA", "BBBBBBBBBBB", "CCCCCCCCCCC", "DDDDDDDDDDD"]  # capped at MAX_VIDEOS
+    assert sv.MAX_VIDEOS == 4
+    # and nothing that is not a YouTube video id
+    assert sv.parse_videos('<iframe src="https://vimeo.com/embed/AAAAAAAAAAA"></iframe>') == []
+    # a path that merely spells the host is a page on somebody else's server
+    assert sv.parse_videos('<a href="https://evil.example/youtube.com/embed/AAAAAAAAAAA">x</a>') == []
+
+
+def test_a_malformed_youtube_url_is_not_a_video():
+    """Only an exact 11-character id counts — a truncated or padded one is a
+    mis-parse, and a mis-parse is somebody else's video on our product page."""
+    from server import supplier_video as sv
+
+    assert sv.parse_videos('<iframe src="https://www.youtube.com/embed/short"></iframe>') == []
+    assert sv.parse_videos('<iframe src="https://www.youtube.com/embed/AAAAAAAAAAAAAAA"></iframe>') == []
+    assert sv.parse_videos('<a href="https://www.youtube.com/watch?list=PL123">x</a>') == []
+    assert sv.parse_videos("") == []
+    assert sv.parse_videos("<html>no video here at all</html>") == []
+
+
+def test_a_declared_thumbnail_is_kept_over_the_generated_one():
+    from server import supplier_video as sv
+
+    page = ('<img src="https://i.ytimg.com/vi/lFhAiGLjoMo/maxresdefault.jpg">'
+            '<iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe>')
+    assert sv.parse_videos(page) == [
+        {"youtubeId": "lFhAiGLjoMo",
+         "thumbnail": "https://i.ytimg.com/vi/lFhAiGLjoMo/maxresdefault.jpg"}]
+
+
+def test_escaped_urls_inside_inline_json_are_still_found():
+    from server import supplier_video as sv
+
+    page = '<script>var d = {"video": "https:\\/\\/www.youtube.com\\/embed\\/lFhAiGLjoMo"};</script>'
+    assert [v["youtubeId"] for v in sv.parse_videos(page)] == ["lFhAiGLjoMo"]
+
+
+def test_a_product_without_a_parent_id_never_asks_the_supplier(tmp_path, monkeypatch):
+    sv, _p = _video_product(monkeypatch, tmp_path, parentId=None)
+
+    async def boom(url):
+        raise AssertionError("no page request may be made without a template id")
+    monkeypatch.setattr(sv, "fetch_page", boom)
+
+    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {"videos": []}
+
+
+def test_videos_from_the_product_api_are_served_without_any_page_request(tmp_path, monkeypatch):
+    sv, _p = _video_product(monkeypatch, tmp_path,
+                            videos=[{"youtubeId": "Ab3dE5fGh7I", "thumbnail": ""}])
+
+    async def boom(url):
+        raise AssertionError("the feed already carried the video")
+    monkeypatch.setattr(sv, "fetch_page", boom)
+
+    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {
+        "videos": [{"youtubeId": "Ab3dE5fGh7I", "thumbnail": ""}]}
+
+
+def test_a_positive_result_is_cached_and_the_page_is_read_once(tmp_path, monkeypatch):
+    sv, _p = _video_product(monkeypatch, tmp_path)
+    calls = {"n": 0}
+
+    async def fake_page(url):
+        calls["n"] += 1
+        return REAL_PAGE
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    for _ in range(3):
+        res = client.get("/api/giveaways/video?country=uae&product_id=24246")
+        assert [v["youtubeId"] for v in res.json()["videos"]] == ["lFhAiGLjoMo"]
+    assert calls["n"] == 1
+    assert (tmp_path / "uae-29453.json").exists()
+
+
+def test_a_product_with_no_video_is_negative_cached(tmp_path, monkeypatch):
+    """Without this, every visit to every video-less product is a request to
+    the supplier — which is the crawl this must never become."""
+    sv, _p = _video_product(monkeypatch, tmp_path)
+    calls = {"n": 0}
+
+    async def fake_page(url):
+        calls["n"] += 1
+        return "<html><div id='product_detail'>photos only</div></html>"
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    for _ in range(3):
+        assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {"videos": []}
+    assert calls["n"] == 1
+    assert sv.cache_status() == {"withVideo": 0, "withoutVideo": 1, "entries": 1}
+
+
+def test_an_unreachable_page_is_retried_sooner_than_a_settled_verdict(tmp_path, monkeypatch):
+    """A supplier outage is not evidence that a product has no video, so that
+    verdict expires in hours while a real answer stands for weeks."""
+    sv, _p = _video_product(monkeypatch, tmp_path)
+
+    async def dead_page(url):
+        return None  # 404 / timeout / non-HTML — all the same to the caller
+    monkeypatch.setattr(sv, "fetch_page", dead_page)
+
+    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {"videos": []}
+    meta = json.loads((tmp_path / "uae-29453.json").read_text(encoding="utf-8"))
+    assert meta["ok"] is False and meta["videos"] == []
+
+    # a miss is held for VIDEO_MISS_CACHE_DAYS; an outage only for hours
+    meta["checkedAt"] = int(meta["checkedAt"] - config.VIDEO_ERROR_CACHE_HOURS * 3600 - 60)
+    (tmp_path / "uae-29453.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert sv._read_cache("uae", "29453") is None
+    settled = dict(meta, ok=True)
+    (tmp_path / "uae-29453.json").write_text(json.dumps(settled), encoding="utf-8")
+    assert sv._read_cache("uae", "29453") == []
+
+
+def test_the_search_fallback_only_accepts_the_matching_template_id(tmp_path, monkeypatch):
+    """If the slug URL fails we search the public shop — and take the link that
+    ends in this product's template id, never a neighbouring result."""
+    sv, product = _video_product(monkeypatch, tmp_path)
+    listing = ('<a href="/shop/some-other-item-11111">x</a>'
+               '<a href="/shop/itgl-1291-napier-magcase-phone-cardholder-grey-29453">this one</a>')
+    seen = []
+
+    async def fake_page(url):
+        seen.append(url)
+        if "/shop?search=" in url:
+            return listing
+        if url.endswith("-29453") and len(seen) > 1:
+            return REAL_PAGE
+        return None  # the guessed slug URL did not resolve
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    res = client.get("/api/giveaways/video?country=uae&product_id=24246")
+    assert [v["youtubeId"] for v in res.json()["videos"]] == ["lFhAiGLjoMo"]
+    assert seen[1] == "https://www.jasani.ae/shop?search=ITGL%201291"
+    assert sv.link_for_template(listing, "uae", "11111") == \
+        "https://www.jasani.ae/shop/some-other-item-11111"
+    assert sv.link_for_template(listing, "uae", "99999") == ""
+
+
+def test_video_discovery_never_spends_a_supplier_api_call(tmp_path, monkeypatch):
+    """The public page is not an API endpoint: no token, no primary call, and
+    nothing charged to the five-a-day budget."""
+    from server import jasani
+
+    sv, _p = _video_product(monkeypatch, tmp_path)
+
+    async def fake_page(url):
+        assert "token" not in url.lower()
+        return REAL_PAGE
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    def no_calls(*a, **k):
+        raise AssertionError("the supplier API must not be touched for a video")
+    monkeypatch.setattr(jasani, "_fetch", no_calls)
+    monkeypatch.setattr(jasani, "_budget_ok", no_calls)
+
+    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json()["videos"]
+
+
+def test_a_page_request_leaves_the_supplier_hosts_only(monkeypatch):
+    """fetch_page is a supplier-host fetcher, not a general URL opener."""
+    import anyio
+
+    from server import supplier_video as sv
+
+    monkeypatch.setattr(config, "VIDEO_MIN_INTERVAL_S", 0.0)
+
+    attempts = []
+
+    class Recording:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, method, url, headers=None):
+            attempts.append(url)
+            raise AssertionError("recorded")
+    monkeypatch.setattr(sv.httpx, "AsyncClient", Recording)
+
+    for bad in ("http://www.jasani.ae/shop/x-1", "https://evil.example/shop/x-1",
+                "https://www.jasani.ae:8080/shop/x-1", ""):
+        assert anyio.run(sv.fetch_page, bad) is None
+    assert attempts == []  # not "it failed" — it was never dialled
+
+
+def test_a_timed_out_page_is_not_an_error_the_customer_sees(monkeypatch):
+    import anyio
+
+    from server import supplier_video as sv
+
+    monkeypatch.setattr(config, "VIDEO_MIN_INTERVAL_S", 0.0)
+
+    class TimingOut:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, method, url, headers=None):
+            raise sv.httpx.ReadTimeout("too slow")
+    monkeypatch.setattr(sv.httpx, "AsyncClient", TimingOut)
+
+    assert anyio.run(sv.fetch_page, "https://www.jasani.ae/shop/x-29453") is None
+
+
+def test_the_catalogue_and_an_unknown_product_ask_the_supplier_nothing(tmp_path, monkeypatch):
+    sv, _p = _video_product(monkeypatch, tmp_path)
+
+    async def boom(url):
+        raise AssertionError("an unknown product has no page to read")
+    monkeypatch.setattr(sv, "fetch_page", boom)
+
+    assert client.get("/api/giveaways/video?country=uae&product_id=999999").json() == {"videos": []}
+    # the catalogue endpoint itself never reaches into video discovery
+    assert client.get("/api/giveaways/products?country=uae").status_code == 200
+
+
 def _fake_area_image() -> bytes:
     import io as _io
 

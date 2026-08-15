@@ -751,7 +751,13 @@ html.reveals-off .sc-anim .sc-rail { opacity: 1; }
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   transition: transform var(--dur-1) var(--ease-out), background-color var(--dur-1) linear;
 }
-.video-slide__play:hover { transform: translate(-50%, -50%) scale(1.08); background: rgba(240, 111, 34, 0.88); color: #fff; }
+/* the whole poster is the play target, so the button lights up from anywhere
+   on the slide — hovering the 64px circle alone was never the hit area */
+.video-slide:hover .video-slide__play,
+.video-slide:focus-visible .video-slide__play {
+  transform: translate(-50%, -50%) scale(1.08); background: rgba(240, 111, 34, 0.88); color: #fff;
+}
+.video-slide:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .video-slide__play svg { width: 26px; height: 26px; margin-left: 3px; }
 .pdp__thumbs button.is-video { position: relative; }
 .pdp__thumbs button.is-video::after {

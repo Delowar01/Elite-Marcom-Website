@@ -71,6 +71,25 @@ STOCK_REFRESH_HOURS = float(os.environ.get("EM_STOCK_REFRESH_HOURS", "11"))
 BRANDING_CACHE_HOURS = 24
 BRANDING_CACHE_MAX_ENTRIES = 500
 
+# --- product videos from the supplier's PUBLIC pages (server/supplier_video.py) ---
+# Not an API call: no token, no primary endpoint, nothing charged to the daily
+# budget. It is an ordinary webpage request, so it is kept short, small and
+# slow on purpose — a product page must never wait long on it, and browsing
+# our catalogue must never turn into a crawl of theirs.
+VIDEO_PAGE_TIMEOUT_S = float(os.environ.get("EM_VIDEO_PAGE_TIMEOUT_S", "12"))
+VIDEO_PAGE_MAX_BYTES = int(os.environ.get("EM_VIDEO_PAGE_MAX_BYTES", str(3 * 1024 * 1024)))
+# at most this many supplier page requests in flight, and never two closer
+# together than the interval
+VIDEO_CONCURRENCY = max(1, int(os.environ.get("EM_VIDEO_CONCURRENCY", "2")))
+VIDEO_MIN_INTERVAL_S = float(os.environ.get("EM_VIDEO_MIN_INTERVAL_S", "1.0"))
+# A product's video does not change; a product that has none rarely gains one.
+# Both verdicts are cached, which is what keeps the traffic to one request per
+# template ever. A page we could not reach is a third case — retried sooner,
+# because that one really can change within the day.
+VIDEO_CACHE_DAYS = float(os.environ.get("EM_VIDEO_CACHE_DAYS", "30"))
+VIDEO_MISS_CACHE_DAYS = float(os.environ.get("EM_VIDEO_MISS_CACHE_DAYS", "7"))
+VIDEO_ERROR_CACHE_HOURS = float(os.environ.get("EM_VIDEO_ERROR_CACHE_HOURS", "6"))
+
 # --- security secrets (independent) ---
 _DEV_PREFIX = "dev-insecure-"
 

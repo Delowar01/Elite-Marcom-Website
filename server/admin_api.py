@@ -658,9 +658,14 @@ async def admin_jasani(request: Request):
     require_perm(request, "jasani.view")
     from . import jasani
 
+    from . import supplier_video
+
     return {"budgets": jasani.budget_status_all(),
             "markets": {m: jasani.cache_status(m) for m in config.JASANI_HOSTS},
             "manuals": jasani.manuals_status(),
+            # public-page video lookups: no API call, no budget — shown here so
+            # the console accounts for every request we make to the supplier
+            "videos": supplier_video.cache_status(),
             "refreshHours": {"products": config.PRODUCT_REFRESH_HOURS,
                              "prices": config.PRICE_REFRESH_HOURS,
                              "stock": config.STOCK_REFRESH_HOURS},

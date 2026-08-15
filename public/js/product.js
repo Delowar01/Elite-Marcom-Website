@@ -233,61 +233,61 @@
     });
   }
 
-  var currentProductId = null;
+  /* ---------- gallery: images, then play-on-click YouTube slides ----------
+     Rebuilt from scratch on every call — a variant switch and a video that
+     arrives after first paint both land here, so nothing may accumulate. */
+  var galleryScrollBound = false;
 
-  function render(p) {
-    currentProductId = p.id;
-    els.loading.hidden = true;
-    els.loading.style.display = "none";
-    els.pdp.hidden = false;
-    seoMeta({
-      title: p.name + " — Corporate Gifts | Elite Marcom",
-      description: (p.description || ("Branded " + p.name + " from Elite Marcom — corporate gifts and "
-        + "merchandise for Saudi Arabia and the UAE.")).replace(/\s+/g, " ").slice(0, 300),
-      url: location.origin + location.pathname + location.search,
-      image: (p.images && p.images[0]) || p.image || ""
-    });
+  function videoThumb(v) {
+    return v.thumbnail || ("https://i.ytimg.com/vi/" + encodeURIComponent(v.youtubeId) + "/hqdefault.jpg");
+  }
 
-    /* re-rendering (variant switch): drop carousel controls before rebuilding */
+  function playVideo(slide) {
+    if (!slide || slide.querySelector("iframe")) return;
+    var vid = slide.getAttribute("data-youtube");
+    if (!vid) return;
+    var frame = document.createElement("iframe");
+    frame.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(vid) +
+      "?autoplay=1&rel=0&playsinline=1&modestbranding=1";
+    frame.title = "Product video";
+    /* fullscreen needs both the permission and the legacy attribute; without
+       playsinline + autoplay in the policy, iOS refuses to start the video */
+    frame.setAttribute("allow",
+      "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen");
+    frame.setAttribute("allowfullscreen", "");
+    frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+    slide.innerHTML = "";
+    slide.appendChild(frame);
+  }
+
+  function buildGallery(p, vids) {
+    /* re-rendering: drop carousel controls before rebuilding */
     els.carousel.querySelectorAll(".carousel__btn, .carousel__dots").forEach(function (n) { n.remove(); });
     els.carousel.classList.remove("carousel--single");
     els.thumbs.innerHTML = "";
 
-    /* gallery: every image from the API, slideable, with auto-hide arrows;
-       supplier videos become play-on-click YouTube slides after the images */
-    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []));
-    var vids = (p.videos || []).filter(function (v) { return v && v.youtubeId; });
-    function videoThumb(v) {
-      return v.thumbnail || ("https://i.ytimg.com/vi/" + encodeURIComponent(v.youtubeId) + "/hqdefault.jpg");
-    }
+    var thumbSrcs = vids.map(videoThumb);
+    /* a poster that is also in the product photos would otherwise show twice —
+       once as the video, once as a still nobody can play */
+    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []))
+      .filter(function (src) {
+        return thumbSrcs.indexOf(src) === -1 && !vids.some(function (v) {
+          return src.indexOf("/vi/" + v.youtubeId + "/") !== -1;
+        });
+      });
+
     els.track.innerHTML = imgs.map(function (src, i) {
       return '<img src="' + EM.escapeHtml(src) + '" alt="' + EM.escapeHtml(p.name) + ' — image ' + (i + 1) + '"' +
              (i > 0 ? ' loading="lazy"' : "") + ' width="800" height="800">';
     }).join("") + vids.map(function (v) {
-      return '<div class="video-slide" data-youtube="' + EM.escapeHtml(v.youtubeId) + '">' +
+      return '<div class="video-slide" data-youtube="' + EM.escapeHtml(v.youtubeId) + '" tabindex="0" role="button" ' +
+             'aria-label="' + EM.escapeHtml(p.name) + ' — play product video">' +
              '<img src="' + EM.escapeHtml(videoThumb(v)) + '" alt="' + EM.escapeHtml(p.name) + ' — video" loading="lazy" width="800" height="800">' +
-             '<button type="button" class="video-slide__play" aria-label="Play product video">' +
+             '<span class="video-slide__play" aria-hidden="true">' +
              '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>' +
-             "</button></div>";
+             "</span></div>";
     }).join("");
     EM.carousel(els.carousel);
-    function playVideo(slide) {
-      if (!slide || slide.querySelector("iframe")) return;
-      var vid = slide.getAttribute("data-youtube");
-      if (!vid) return;
-      var frame = document.createElement("iframe");
-      frame.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(vid) +
-        "?autoplay=1&rel=0&playsinline=1&modestbranding=1";
-      frame.title = "Product video";
-      /* fullscreen needs both the permission and the legacy attribute; without
-         playsinline + autoplay in the policy, iOS refuses to start the video */
-      frame.setAttribute("allow",
-        "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen");
-      frame.setAttribute("allowfullscreen", "");
-      frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
-      slide.innerHTML = "";
-      slide.appendChild(frame);
-    }
     els.track.querySelectorAll(".video-slide").forEach(function (slide) {
       /* the whole poster is the target, not just the small button — a tap
          anywhere on a video slide should start it */
@@ -312,17 +312,59 @@
         return '<button type="button" class="is-video" aria-label="Show video ' + (i + 1) + '">' +
                '<img src="' + EM.escapeHtml(videoThumb(v)) + '" alt="" loading="lazy" width="72" height="72"></button>';
       }).join("");
-      var thumbBtns = els.thumbs.querySelectorAll("button");
-      thumbBtns.forEach(function (btn, i) {
+      els.thumbs.querySelectorAll("button").forEach(function (btn, i) {
         btn.addEventListener("click", function () {
           els.track.scrollTo({ left: i * els.track.clientWidth, behavior: EM.reducedMotion() ? "auto" : "smooth" });
         });
       });
-      els.track.addEventListener("scroll", function () {
-        var idx = Math.round(els.track.scrollLeft / Math.max(1, els.track.clientWidth));
-        thumbBtns.forEach(function (b, i) { b.classList.toggle("is-active", i === idx); });
-      }, { passive: true });
+      /* bound once: the buttons are re-read on every scroll, so a rebuilt
+         strip is followed without stacking another listener each time */
+      if (!galleryScrollBound) {
+        galleryScrollBound = true;
+        els.track.addEventListener("scroll", function () {
+          var idx = Math.round(els.track.scrollLeft / Math.max(1, els.track.clientWidth));
+          els.thumbs.querySelectorAll("button").forEach(function (b, i) {
+            b.classList.toggle("is-active", i === idx);
+          });
+        }, { passive: true });
+      }
     }
+  }
+
+  /* Videos the Product API did not carry are discovered from the supplier's
+     public product page, server-side and cached. It is asked for only after
+     the page has rendered, and only for the product actually being looked at —
+     the catalogue never asks, so browsing never becomes a crawl. */
+  function enrichVideos(p) {
+    if ((p.videos || []).some(function (v) { return v && v.youtubeId; })) return;
+    if (!p.parentId) return;
+    EM.api("/api/giveaways/video?country=" + encodeURIComponent(market) +
+           "&product_id=" + encodeURIComponent(p.id)).then(function (r) {
+      var vids = (r.ok && r.data && r.data.videos) || [];
+      vids = vids.filter(function (v) { return v && v.youtubeId; });
+      if (!vids.length || currentProductId !== p.id) return;
+      p.videos = vids;
+      buildGallery(p, vids);
+    }).catch(function () { /* a missing video is never an error the customer sees */ });
+  }
+
+  var currentProductId = null;
+
+  function render(p) {
+    currentProductId = p.id;
+    els.loading.hidden = true;
+    els.loading.style.display = "none";
+    els.pdp.hidden = false;
+    seoMeta({
+      title: p.name + " — Corporate Gifts | Elite Marcom",
+      description: (p.description || ("Branded " + p.name + " from Elite Marcom — corporate gifts and "
+        + "merchandise for Saudi Arabia and the UAE.")).replace(/\s+/g, " ").slice(0, 300),
+      url: location.origin + location.pathname + location.search,
+      image: (p.images && p.images[0]) || p.image || ""
+    });
+
+    buildGallery(p, (p.videos || []).filter(function (v) { return v && v.youtubeId; }));
+    enrichVideos(p);
 
     /* badges + core details */
     var badges = "";

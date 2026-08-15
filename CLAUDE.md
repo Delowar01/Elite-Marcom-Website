@@ -106,6 +106,19 @@ documentation). Non-negotiable rules from it:
   `/api/giveaways/manual` proxy; never link to a Jasani URL. Full guide:
   `docs/jasani-printing-manual-guide.md` (drawing tools, custom PDFs and
   branding-price enrichment are future phases from that guide).
+- **Product videos come from the supplier's PUBLIC page, not the API**
+  (`server/supplier_video.py`). The Product API returns `videos: []` for items
+  that plainly have one — ITGL 1291 is id 24246 / `parentId` 29453, and
+  `https://www.jasani.ae/shop/…-29453` embeds `youtube.com/embed/lFhAiGLjoMo`.
+  `parentId` **is** that public page id. Reading a webpage is not an API call:
+  no token, no primary endpoint, nothing charged to the five-a-day budget — do
+  not route it through `_fetch`. It is lazy (only a product page a customer
+  opened, only after that page has rendered — the catalogue never asks), paced
+  (`VIDEO_CONCURRENCY`, `VIDEO_MIN_INTERVAL_S`) and cached per **template**,
+  positive *and* negative: without the negative cache every video-less product
+  would be re-fetched on every visit, which is the crawl this must never
+  become. Only a validated 11-character YouTube id leaves the module; supplier
+  HTML is parsed and discarded.
 
 ## Site conventions
 
