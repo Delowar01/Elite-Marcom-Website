@@ -23,6 +23,10 @@
   --adm-shadow-1: 0 1px 2px rgba(6, 9, 16, 0.28), 0 8px 24px rgba(6, 9, 16, 0.26);
   --adm-shadow-2: 0 2px 6px rgba(6, 9, 16, 0.34), 0 24px 60px rgba(6, 9, 16, 0.44);
   --adm-ring: 0 0 0 1px rgba(245, 242, 237, 0.05) inset;
+  /* a real colour, not the inset sheen: --adm-ring is a complete shadow
+     value, so "0 0 0 3px var(--adm-ring)" parsed to nothing and four
+     controls focused with no visible ring at all. */
+  --adm-focus: 0 0 0 3px rgba(237, 108, 38, 0.30);
   --adm-sheen: linear-gradient(180deg, rgba(245, 242, 237, 0.05), rgba(245, 242, 237, 0) 42%);
 
   /* semantic status — one set, used by badges, pills, charts and dots */
@@ -34,6 +38,16 @@
   --adm-bad-bg: rgba(239, 107, 102, 0.14);
   --adm-info: #6ea8f0;
   --adm-info-bg: rgba(110, 168, 240, 0.14);
+  /* The brand orange is a fine border and a fine background, but as small text
+     on the light theme's near-white card it measures 2.6:1. This is the same
+     orange darkened until it passes, and it is what the panel uses whenever
+     orange carries words or an icon rather than an edge. */
+  --adm-accent: var(--orange-2);
+  /* brand fills that carry white text — the lighter public-site pour
+     measures 3.1:1 there, so it is deepened here and in both themes
+     alike: the text on these surfaces is white either way */
+  --adm-brand-ink: linear-gradient(100deg, #c2500c 0%, #b8490a 100%);
+  --adm-brand-ink-2: linear-gradient(100deg, #b8490a 0%, #5b46a6 100%);
 }
 html[data-theme="light"] .admin-body {
   /* the site's warm-white palette, not a bleached version of the dark one */
@@ -45,6 +59,7 @@ html[data-theme="light"] .admin-body {
   --adm-shadow-1: 0 1px 2px rgba(97, 84, 68, 0.08), 0 10px 26px rgba(97, 84, 68, 0.10);
   --adm-shadow-2: 0 2px 8px rgba(97, 84, 68, 0.12), 0 26px 64px rgba(97, 84, 68, 0.18);
   --adm-ring: 0 0 0 1px rgba(255, 255, 255, 0.7) inset;
+  --adm-focus: 0 0 0 3px rgba(184, 73, 10, 0.26);
   --adm-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0) 46%);
   /* darkened against their own tint: at #1f8f57 the small bold text on a
      12% green chip measured 3.49:1, under the 4.5 needed at that size */
@@ -56,6 +71,9 @@ html[data-theme="light"] .admin-body {
   --adm-bad-bg: rgba(200, 57, 58, 0.11);
   --adm-info: #2f6dbd;
   --adm-info-bg: rgba(47, 109, 189, 0.11);
+  --adm-accent: #b8490a;          /* 5.2:1 on the card, 4.7:1 on the inset */
+  --adm-brand-ink: linear-gradient(100deg, #c2500c 0%, #b8490a 100%);
+  --adm-brand-ink-2: linear-gradient(100deg, #b8490a 0%, #5b46a6 100%);
 }
 
 /* ---------- login ---------- */
@@ -84,7 +102,7 @@ html[data-theme="light"] .admin-body {
 .login-card input:focus-visible { outline: 2px solid var(--orange-2); outline-offset: 1px; }
 .login-card .btn { width: 100%; margin-top: 8px; }
 .login-foot a { color: var(--text-muted); font-size: 0.88rem; }
-.login-foot a:hover { color: var(--orange-2); }
+.login-foot a:hover { color: var(--adm-accent); }
 .qr-box { display: flex; gap: 16px; align-items: center; margin: 14px 0 18px; }
 .qr-box img { width: 132px; height: 132px; border-radius: 10px; background: #fff; padding: 6px; }
 .qr-box code {
@@ -102,13 +120,23 @@ html[data-theme="light"] .admin-body {
   display: flex; flex-direction: column; gap: 20px;
   padding: 24px 16px 20px; border-right: 1px solid var(--adm-line);
   background: var(--surface); backdrop-filter: blur(18px);
-  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  position: sticky; top: 0; height: 100vh; overflow: hidden;
   scrollbar-width: thin;
 }
+/* Seventeen links plus a brand plus a footer is taller than a laptop screen:
+   the whole column scrolled, so Sign out and the theme toggle sat below the
+   fold and the last nav item was clipped flush at the edge. Only the list
+   scrolls now; the brand and the footer stay put. */
+.admin-side .admin-nav { overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+.admin-side .admin-nav::-webkit-scrollbar { width: 6px; }
+.admin-side .admin-nav::-webkit-scrollbar-thumb {
+  background: var(--adm-line-strong); border-radius: 999px;
+}
+.admin-side__brand, .admin-side__foot { flex: none; }
 .admin-side__brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 4px; }
 .admin-side__tag {
   font-size: 0.6rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase;
-  color: #fff; background: linear-gradient(100deg, var(--orange), var(--violet-2));
+  color: #fff; background: var(--adm-brand-ink-2);
   border-radius: 999px; padding: 3px 8px;
 }
 
@@ -136,7 +164,7 @@ html[data-theme="light"] .admin-body {
   content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
   border-radius: 0 3px 3px 0; background: linear-gradient(180deg, var(--orange), var(--violet-2));
 }
-.admin-nav a.is-active svg { opacity: 1; color: var(--orange-2); }
+.admin-nav a.is-active svg { opacity: 1; color: var(--adm-accent); }
 .admin-nav a.soon { opacity: 0.45; pointer-events: none; }
 .admin-nav a span {
   margin-left: auto;
@@ -159,7 +187,7 @@ html[data-theme="light"] .admin-body {
   width: 32px; height: 32px; border-radius: 50%; flex: none;
   display: grid; place-items: center;
   font-size: 0.72rem; font-weight: 800; letter-spacing: 0.02em; color: #fff;
-  background: linear-gradient(135deg, var(--orange), var(--violet-2));
+  background: linear-gradient(135deg, #b8490a, #5b46a6);
 }
 .admin-user__id { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .admin-user__id strong { font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -172,6 +200,34 @@ html[data-theme="light"] .admin-body {
 .admin-side__actions .btn { width: 100%; justify-content: center; text-align: center; }
 
 .admin-burger { display: none; }
+.admin-topbar { display: none; }
+
+/* ---------------- focus, motion and selection ----------------
+   One ring for everything that can be reached with a keyboard. Several
+   controls added over time (icon buttons, cards that act as links, the
+   section rows) had no visible focus state at all. */
+.admin-body :focus-visible {
+  outline: 2px solid var(--orange-2);
+  outline-offset: 2px;
+  border-radius: var(--adm-radius-sm);
+}
+.admin-body input:focus-visible,
+.admin-body select:focus-visible,
+.admin-body textarea:focus-visible { outline-offset: 1px; }
+.admin-body ::selection { background: rgba(237, 108, 38, 0.28); }
+/* An author's display rule outranks the UA's [hidden] on cascade origin,
+   which left the New page form permanently open and its placeholders
+   reading as half-entered data. One guard rather than a patch per
+   component; specificity (0,2,0) beats a bare class, so no !important. */
+.admin-body [hidden] { display: none; }
+.admin-main ::placeholder { color: var(--text-muted); opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .admin-body *, .admin-body *::before, .admin-body *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 .admin-main { padding: 38px clamp(20px, 3.4vw, 48px) 64px; max-width: 1320px; width: 100%; }
 .admin-loading { color: var(--text-muted); padding: 40px 0; }
@@ -179,7 +235,27 @@ html[data-theme="light"] .admin-body {
 .admin-sub { color: var(--text-muted); margin: 0 0 26px; font-size: 0.93rem; max-width: 78ch; }
 
 /* ---------- cards ---------- */
-.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 14px; margin-bottom: 26px; }
+/* A row of five fills the width; a row of three holding "0 B" used to stretch
+   each card to ~395px, which reads as three banners rather than three figures.
+   The cap only bites when there are few cards. */
+.stat-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 14px; margin-bottom: 26px;
+}
+/* a row of two or three tiles stretched to a third of the page reads as a
+   layout accident. Top-level rows only: the same cap inside a market panel
+   forced its three tiles into a single 280px column. */
+.admin-main > .stat-row:has(> :last-child:nth-child(-n + 3)) {
+  grid-template-columns: repeat(auto-fit, minmax(168px, 280px));
+  justify-content: start;
+}
+/* nested in a panel there is far less room, so the tiles go narrower rather
+   than dropping to one per line */
+.admin-panel .stat-row { grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); gap: 10px; }
+/* .stat-card is drawn for the page background. Nested in a panel its own
+   fill sits a point off the panel behind it, so the figures read as bare
+   outlines beside the recessed tiles above them. */
+.admin-panel .stat-card { background: var(--adm-inset); box-shadow: none; border-color: var(--adm-line); }
 .stat-card {
   padding: 16px 18px; border-radius: var(--adm-radius);
   border: 1px solid var(--adm-line);
@@ -187,9 +263,31 @@ html[data-theme="light"] .admin-body {
   box-shadow: var(--adm-shadow-1), var(--adm-ring);
   display: flex; flex-direction: column; gap: 2px; min-width: 0;
 }
+.stat-card > .stat-delta { margin-top: auto; }
+/* a tile that is really a button keeps the card's column layout — display:
+   block here would strand the delta chip that pins to the card floor */
+button.stat-card {
+  font: inherit; text-align: left; width: 100%;
+  display: flex; flex-direction: column; cursor: pointer;
+}
+button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-offset: 2px; }
+/* which filter is on has to survive a zero count */
+.stat-card[aria-pressed="true"] {
+  border-color: var(--orange-2); background: var(--adm-sheen), var(--adm-card-hover);
+}
+.stat-card[aria-pressed="true"]::after { content: "\2713"; opacity: 1; color: var(--adm-accent); }
+.stat-card--click:active { transform: none; background: var(--adm-card-hover); }
 .stat-card b { font-size: 1.65rem; display: block; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .stat-card span { color: var(--text-muted); font-size: 0.8rem; }
 .stat-card--click { cursor: pointer; transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease; }
+.stat-card--click { position: relative; }
+/* a tile that filters the table looked exactly like one that does nothing */
+.stat-card--click::after {
+  content: "›"; position: absolute; right: 14px; top: 12px;
+  font-size: 1.1rem; line-height: 1; color: var(--adm-accent); opacity: 0.85;
+  transition: opacity var(--dur-1) linear, transform var(--dur-1) var(--ease-out);
+}
+.stat-card--click:hover::after { opacity: 1; transform: translateX(2px); color: var(--adm-accent); }
 .stat-card--click:hover { border-color: var(--orange-2); transform: translateY(-1px); background: var(--adm-card-hover); }
 .stat-card--warn { border-color: var(--adm-warn); }
 .stat-card--warn b { color: var(--adm-warn); }
@@ -204,7 +302,37 @@ html[data-theme="light"] .admin-body {
 .stat-delta--up { color: var(--adm-ok); background: var(--adm-ok-bg); }
 .stat-delta--down { color: var(--adm-bad); background: var(--adm-bad-bg); }
 .stat-delta--flat { color: var(--text-muted); background: var(--adm-inset); }
-.stat-spark { display: block; width: 100%; height: 30px; margin-top: 8px; overflow: visible; }
+/* pushed to the card's floor: only some cards carry a delta or a sparkline,
+   and left in the flow they made a row of five read like a broken comb */
+.stat-delta { align-self: flex-start; }
+
+/* ---------------- controls ----------------
+   The site's buttons lift 2px on hover, which is right on a poster and wrong
+   in a table of twenty rows — the whole grid twitches under the pointer. Same
+   shapes and colours, quieter behaviour, and one height from the tokens so a
+   row of mixed buttons lines up. */
+.admin-body .btn {
+  transition: background-color var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out),
+              box-shadow var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.admin-body .btn:hover { transform: none; }
+/* White on the brand gradient measures 2.6:1 — fine for a poster headline,
+   not for a 15px button label in a tool. A deeper pour of the same orange
+   reaches 4.7:1 and still reads as the brand. The public site keeps its
+   lighter fill; this is scoped to the panel. */
+.admin-body .btn--primary {
+  background: linear-gradient(100deg, #c2500c 0%, #b8490a 60%, #ac4409 100%);
+}
+.admin-body .btn--primary:hover {
+  box-shadow: 0 6px 20px var(--glow-orange);
+  background: linear-gradient(100deg, #cf5610 0%, #c44e0b 60%, #b8490a 100%);
+}
+.admin-body .btn--ghost { background: var(--adm-inset); }
+.admin-body .btn--ghost:hover { background: var(--adm-card-hover); border-color: var(--orange-2); }
+.admin-body .btn--small { font-size: 0.83rem; }
+.admin-body .btn:not(.btn--small) { height: var(--adm-control-h); padding: 0 22px; }
+.admin-body .btn[disabled], .admin-body .btn[aria-disabled="true"] { opacity: 0.45; }
 
 .admin-panel {
   border: 1px solid var(--adm-line); border-radius: var(--adm-radius);
@@ -214,12 +342,21 @@ html[data-theme="light"] .admin-body {
 }
 .admin-panel > h2:first-child, .panel-head:first-child { margin-top: -2px; }
 .admin-panel h2 {
-  font-size: 0.95rem; margin-bottom: 14px; letter-spacing: 0.01em;
+  font-size: 1.05rem; margin-bottom: 14px; letter-spacing: 0.01em;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 .panel-head {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+  gap: 12px 20px; flex-wrap: wrap; margin-bottom: 14px;
+}
+/* a heading beside a paragraph of help: top-align them, or the heading floats
+   to the middle of a three-line note */
+.panel-head:has(> .admin-inline-note) { align-items: flex-start; }
+/* Written for a note sitting beside an h2. Once it wraps, right-alignment
+   leaves a paragraph with a ragged left edge, so the box is shrink-to-fit:
+   a one-line note still hugs the right edge, a wrapped one reads normally. */
+.panel-head > .admin-inline-note {
+  max-width: 46ch; width: fit-content; text-align: left; margin-left: auto;
 }
 .panel-head h2 { margin-bottom: 0; }
 
@@ -227,10 +364,15 @@ html[data-theme="light"] .admin-body {
 .admin-table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
 .admin-table th {
   text-align: left; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--text-muted); padding: 9px 10px; border-bottom: 1px solid var(--adm-line-strong);
+  color: var(--text-muted); padding: 9px 12px; border-bottom: 1px solid var(--adm-line-strong);
   position: sticky; top: 0; background: var(--adm-card); backdrop-filter: blur(8px); z-index: 1;
 }
-.admin-table td { padding: 10px; border-bottom: 1px solid var(--adm-line); vertical-align: top; }
+.admin-table td { padding: 11px 12px; border-bottom: 1px solid var(--adm-line); vertical-align: middle; }
+/* the outer edges align with the panel heading rather than being inset
+   by a cell's worth of padding. .jz-table is deliberately excluded: its
+   first two and last columns are sticky with explicit widths. */
+.admin-table th:first-child, .admin-table td:first-child { padding-left: 0; }
+.admin-table th:last-child, .admin-table td:last-child { padding-right: 0; }
 .admin-table tbody tr:hover td { background: var(--adm-inset); }
 .admin-table tr:last-child td { border-bottom: 0; }
 .admin-table .muted { color: var(--text-muted); }
@@ -238,14 +380,43 @@ html[data-theme="light"] .admin-body {
 .admin-table tr.is-current { background: var(--adm-inset); }
 .table-scroll { overflow-x: auto; }
 
+/* the short form, for a card too small to carry the full component: still
+   centred and deliberate rather than one grey line pinned to the top-left */
+.panel-empty {
+  display: grid; place-items: center; text-align: center; min-height: 88px;
+  padding: 10px 12px; color: var(--text-muted); font-size: 0.82rem; line-height: 1.5;
+}
+
+/* One empty state. Panels used to say "No requests yet." in the top-left of a
+   card sized for six rows, which reads as a page that failed to load. */
+.admin-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center; min-height: 132px; padding: 22px 16px;
+  color: var(--text-muted);
+}
+.admin-empty svg { width: 26px; height: 26px; opacity: 0.5; margin-bottom: 2px; }
+.admin-empty b { color: var(--text); font-size: 0.95rem; font-weight: 650; }
+.admin-empty span { font-size: 0.84rem; max-width: 46ch; }
+
 .badge-ok { color: var(--adm-ok); font-weight: 700; }
 .badge-bad { color: var(--adm-bad); font-weight: 700; }
 
 /* ---------- forms ---------- */
 .admin-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .admin-form .full { grid-column: 1 / -1; }
+/* a paired row is two grid items, not one: without this the two fields
+   stacked in the left column and left a field-shaped hole on the right */
+.admin-form .form-row { display: contents; }
+/* by role, not by grid: a 0-2 number field does not need 565px */
+.admin-form input[type="number"] { max-width: 132px; }
+.admin-form select { max-width: 320px; }
+.admin-form .full select, .admin-form select.wide { max-width: none; }
 .admin-form label { display: block; font-size: 0.76rem; font-weight: 700; margin-bottom: 6px; color: var(--text-soft); }
-.admin-form input, .admin-form select, .admin-form textarea,
+/* checkboxes, colour wells and file pickers are not text boxes: the
+   catch-all was giving the one checkbox on the Pages form a 15x40px
+   bordered pill with its label pushed onto the next line. */
+.admin-form input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]),
+.admin-form select, .admin-form textarea,
 .req-filters select, .req-filters input, .ed-toolbar select {
   width: 100%; min-height: var(--adm-control-h); padding: 10px 13px;
   border-radius: var(--adm-radius-sm);
@@ -264,14 +435,33 @@ html[data-theme="light"] .admin-body {
   opacity: 0.55; cursor: not-allowed;
 }
 .admin-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
-.admin-inline-note { font-size: 0.79rem; color: var(--text-muted); line-height: 1.55; }
+/* Explanatory prose is capped at a comfortable measure. Panels run to 1150px
+   here, and a paragraph that wide is a wall — the Settings screen had lines of
+   150 characters. Notes that sit beside a button stay inline (see below). */
+.admin-inline-note { font-size: 0.79rem; color: var(--text-muted); line-height: 1.55; max-width: 76ch; }
+.admin-actions .admin-inline-note { max-width: 52ch; }
+.admin-panel > p:not([class]) { max-width: 78ch; }
+/* Prose links inherited the public site's brand orange, which measures
+   2.6:1 on a light card. --adm-accent was added for exactly this and
+   was never pointed at an anchor. */
+.admin-main p a, .admin-main li a, .admin-main .admin-inline-note a,
+.admin-main .field-help a, .admin-main .admin-sub a, .admin-main a.link {
+  color: var(--adm-accent);
+  text-decoration-color: color-mix(in srgb, var(--adm-accent) 55%, transparent);
+  text-underline-offset: 2px;
+}
+.admin-main p a:hover, .admin-main li a:hover, .admin-main .admin-inline-note a:hover,
+.admin-main .field-help a:hover, .admin-main .admin-sub a:hover, .admin-main a.link:hover {
+  text-decoration-color: currentColor;
+}
+
 /* short explanation shown under a settings control */
-.field-help { display: block; margin-top: 6px; font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
+.field-help { display: block; margin-top: 6px; font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; max-width: 68ch; }
 
 /* ---------- requests inbox ---------- */
 .req-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
 .req-filters select, .req-filters input { width: auto; font-size: 0.87rem; }
-.req-filters input { min-width: 220px; }
+.req-filters input { min-width: 280px; }
 .status-pill {
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
   padding: 4px 11px; border-radius: 999px;
@@ -279,7 +469,10 @@ html[data-theme="light"] .admin-body {
   background: var(--adm-inset); color: var(--text-muted);
 }
 .status-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.status-new { color: #fff; background: linear-gradient(100deg, var(--orange), var(--orange-2)); }
+/* emitted by the hidden-item badge; without it a hidden row announced
+   itself in muted grey on a row already faded to 0.62 */
+.status-pill--warn { color: var(--adm-warn); background: var(--adm-warn-bg); }
+.status-new { color: #fff; background: var(--adm-brand-ink); }
 .status-new::before { background: #fff; }
 .status-in_progress { color: var(--adm-info); background: var(--adm-info-bg); }
 .status-quoted { color: var(--violet-2); background: rgba(143, 119, 214, 0.16); }
@@ -299,6 +492,9 @@ html[data-theme="light"] .admin-body {
 .note-item p { margin: 4px 0 0; font-size: 0.9rem; white-space: pre-wrap; }
 
 .req-export { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; font-size: 0.8rem; color: var(--text-muted); }
+/* display:flex outscores the UA's [hidden] rule, so an untouched inbox
+   carried a full-width accent bar announcing "0 selected" */
+.bulk-bar[hidden] { display: none; }
 .bulk-bar {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
   padding: 10px 14px; margin-bottom: 12px; border-radius: 12px;
@@ -354,6 +550,9 @@ html[data-theme="light"] .admin-body {
   background: linear-gradient(90deg, var(--orange), var(--orange-2));
   transition: width 0.4s ease;
 }
+/* nothing spent is not a sliver of spend: the 4px floor that keeps a small
+   value visible made "0 of 5 calls used" read as "one is gone" */
+.gauge__fill[style*="width:0%"] { min-width: 0; }
 .gauge__fill--max { background: var(--adm-bad); }
 /* the reserved manual call is drawn as a separate segment */
 .gauge--split { display: flex; }
@@ -365,7 +564,15 @@ html[data-theme="light"] .admin-body {
 .jz-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: var(--adm-gap); }
 .jz-grid .admin-panel { margin-bottom: 0; }
 .stat-row--tight { margin-bottom: 14px; }
-.jz-thumb { width: 42px; height: 42px; object-fit: contain; border-radius: 8px; background: #fff; }
+/* one tile for every small preview in the panel. .jz-thumb used to be a
+   pure-white 42px plate, which in the dark theme was the brightest thing
+   on Rentals and Media. Transparent artwork still needs the plate, so
+   that is a modifier rather than the default. */
+.jz-thumb {
+  width: 40px; height: 40px; border-radius: 9px; object-fit: cover; display: block; flex: none;
+  border: 1px solid var(--adm-line); background: var(--adm-inset);
+}
+.jz-thumb--plate { object-fit: contain; background: #fff; padding: 3px; }
 .jz-flag {
   font-size: 0.62rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
   border-radius: 999px; padding: 2px 9px; background: var(--adm-inset); color: var(--text-muted);
@@ -444,7 +651,7 @@ html[data-theme="light"] .admin-body {
   padding: 10px 14px; font-size: 0.85rem; font-weight: 700; cursor: pointer;
   color: var(--text-soft); list-style: none; user-select: none;
 }
-.ed-panel summary::before { content: "▸ "; color: var(--orange-2); }
+.ed-panel summary::before { content: "▸ "; color: var(--adm-accent); }
 .ed-panel details[open] summary::before { content: "▾ "; }
 .ed-panel .ed-fields { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 4px; }
 .ed-panel .ed-fields label { font-size: 0.74rem; font-weight: 600; color: var(--text-muted); margin-top: 8px; }
@@ -454,7 +661,10 @@ html[data-theme="light"] .admin-body {
 }
 .ed-color { display: flex; gap: 8px; align-items: center; }
 .ed-color input[type="color"] { width: 46px; height: 32px; padding: 2px; cursor: pointer; flex-shrink: 0; }
-.ed-check { display: flex; gap: 8px; align-items: center; font-size: 0.84rem; color: var(--text-soft); cursor: pointer; }
+.ed-check, .admin-form label.ed-check {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 0;
+  font-size: 0.84rem; color: var(--text-soft); cursor: pointer;
+}
 .ed-check input { width: 15px; height: 15px; accent-color: var(--orange-2); }
 .ed-thumb { max-width: 100%; max-height: 110px; border-radius: 9px; background: #fff; object-fit: contain; }
 .rich-bar { display: flex; gap: 4px; margin-bottom: 6px; }
@@ -482,7 +692,7 @@ html[data-theme="light"] .admin-body {
 }
 .sec-btns button:hover:not(:disabled) { border-color: var(--orange-2); }
 .sec-btns button:disabled { opacity: 0.3; cursor: default; }
-.sec-btns button.is-on { border-color: var(--orange-2); color: var(--orange-2); }
+.sec-btns button.is-on { border-color: var(--orange-2); color: var(--adm-accent); }
 /* block library — the "Add section" picker inside the editor panel */
 .block-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .block-item {
@@ -523,8 +733,10 @@ html[data-theme="light"] .admin-body {
 .ed-liform label { display: block; margin-top: 8px; font-size: 0.78rem; color: var(--text-muted); }
 .ed-liform input, .ed-liform textarea, .ed-liform select { width: 100%; }
 /* the slug field on the new-page form reads as one address */
+/* a block, so "Web address" sits above its field like every other label
+   rather than beside it on the field's own baseline */
 .np-slug-wrap {
-  display: inline-flex; align-items: center; gap: 2px;
+  display: flex; align-items: center; gap: 2px; margin-top: 6px;
   color: var(--text-muted); font-size: 0.85rem;
 }
 .np-slug-wrap input { min-width: 140px; }
@@ -565,7 +777,8 @@ html[data-theme="light"] .admin-body {
   border: 1px solid var(--adm-line); border-radius: 14px; overflow: hidden;
   background: var(--adm-inset); margin: 0;
 }
-.media-card img { width: 100%; height: 130px; object-fit: cover; display: block; background: #fff; }
+.media-card img { width: 100%; height: 130px; object-fit: cover; display: block;
+  background: var(--adm-inset); }
 .media-card figcaption { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .media-card strong { font-size: 0.82rem; overflow-wrap: anywhere; }
 .media-card input {
@@ -583,10 +796,34 @@ html[data-theme="light"] .admin-body {
   border: 1px solid var(--adm-warn); border-radius: 10px; padding: 9px 13px;
   color: var(--adm-warn); font-size: 0.85rem; margin: 0 0 10px;
 }
-.ident-prev { height: 34px; max-width: 150px; background: #fff; border-radius: 8px; padding: 4px 8px; }
+/* the one column where an admin compares assets side by side: same tile
+   every row, or a transparent wordmark floats unframed beside a slab */
+.ident-prev {
+  box-sizing: border-box; width: 154px; height: 46px; object-fit: contain;
+  background: #fff; border: 1px solid var(--adm-line); border-radius: 8px; padding: 5px 9px;
+}
 .ident-prev--dark { background: #171d29; }
+.ident-prev--none {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-muted); background: var(--adm-inset);
+}
 
 /* image upload / gallery (rentals + media) */
+/* the browser's own file button was the only unstyled control in the panel */
+.admin-main input[type="file"] {
+  font: inherit; font-size: 0.85rem; color: var(--text-muted);
+  background: var(--adm-inset); border: 1px dashed var(--adm-line-strong);
+  border-radius: var(--adm-radius-sm); padding: 9px 12px; width: 100%; cursor: pointer;
+}
+.admin-main input[type="file"]::file-selector-button {
+  font: inherit; font-size: 0.83rem; font-weight: 600; margin-right: 12px; cursor: pointer;
+  color: var(--text); background: var(--adm-card); border: 1px solid var(--adm-line-strong);
+  border-radius: 999px; padding: 7px 15px;
+}
+.admin-main input[type="file"]:hover { border-color: var(--orange-2); color: var(--text); }
+.admin-main input[type="file"]::file-selector-button:hover { border-color: var(--orange-2); }
+
 .up-drop {
   border: 1.5px dashed var(--adm-line-strong); border-radius: 14px;
   padding: 22px; text-align: center; color: var(--text-muted); font-size: 0.86rem;
@@ -600,12 +837,13 @@ html[data-theme="light"] .admin-body {
   position: relative; border: 1px solid var(--adm-line); border-radius: 12px;
   overflow: hidden; background: var(--adm-inset);
 }
-.gal-item img { width: 100%; height: 92px; object-fit: cover; display: block; background: #fff; }
+.gal-item img { width: 100%; height: 92px; object-fit: cover; display: block;
+  background: var(--adm-inset); }
 .gal-item.is-primary { border-color: var(--orange-2); box-shadow: 0 0 0 1px var(--orange-2); }
 .gal-tag {
   position: absolute; top: 6px; left: 6px; font-size: 0.6rem; font-weight: 800;
   letter-spacing: 0.08em; text-transform: uppercase; color: #fff;
-  background: linear-gradient(100deg, var(--orange), var(--orange-2));
+  background: var(--adm-brand-ink);
   border-radius: 999px; padding: 2px 8px;
 }
 .gal-btns { display: flex; gap: 4px; padding: 6px; flex-wrap: wrap; }
@@ -627,12 +865,17 @@ html[data-theme="light"] .admin-body {
 
 /* ---------- site insights ---------- */
 .ins-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
-.ins-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: var(--adm-gap); }
-.ins-grid--tight { gap: 26px; }
+.ins-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: var(--adm-gap); margin-bottom: var(--adm-gap); }
+.ins-grid--tight { gap: 14px; }
 .ins-grid .admin-panel { margin-bottom: 0; }
 .ins-h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--text-muted); margin: 0 0 10px; }
-.chart { width: 100%; height: 150px; display: block; margin-bottom: 8px; overflow: visible; }
+.chart { width: 100%; height: 150px; display: block; margin-bottom: 4px; overflow: visible; }
+.chart-caption {
+  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px;
+  font-size: 0.74rem; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
 .key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; }
 .key--orange { background: var(--orange-2); }
 .key--violet { background: var(--violet-2); }
@@ -657,7 +900,7 @@ html[data-theme="light"] .admin-body {
   flex-direction: column; gap: 3px; }
 .funnel-step b { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
 .funnel-step span { color: var(--text-muted); font-size: 0.8rem; }
-.funnel-rate { color: var(--orange-2) !important; font-weight: 700; }
+.funnel-rate { color: var(--adm-accent) !important; font-weight: 700; }
 .funnel-arrow { color: var(--text-muted); font-size: 1.2rem; }
 .date-range { display: inline-flex; align-items: center; gap: 7px; font-size: 0.82rem;
   color: var(--text-muted); padding-left: 6px; flex-wrap: wrap; }
@@ -674,17 +917,18 @@ html[data-theme="light"] .admin-body {
 .ops-check b { display: block; font-size: 0.86rem; }
 .ops-check span { color: var(--text-muted); font-size: 0.78rem; }
 .ops-dot { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; display: grid;
-  place-items: center; font-size: 0.72rem; font-weight: 800; color: #fff; }
+  place-items: center; font-size: 0.72rem; font-weight: 800; color: var(--ink); }
 .ops-check--ok .ops-dot { background: var(--adm-ok); }
 .ops-check--bad .ops-dot { background: var(--adm-bad); }
-.ops-check--info .ops-dot { background: var(--violet-2); }
-.ops-check--bad { border-color: var(--adm-bad); }
+.ops-check--info .ops-dot { background: var(--adm-info); }
+.ops-check--bad { border-color: var(--adm-bad); background: var(--adm-bad-bg); }
+.ops-check--info { border-color: var(--adm-info); background: var(--adm-info-bg); }
 
 /* ---------- email settings ---------- */
 .var-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .var-chip { border: 1px solid var(--adm-line-strong); background: var(--adm-inset); color: var(--text-soft);
   border-radius: 7px; padding: 4px 9px; font-size: 0.75rem; cursor: pointer; font-family: inherit; }
-.var-chip:hover { border-color: var(--orange-2); color: var(--orange-2); }
+.var-chip:hover { border-color: var(--orange-2); color: var(--adm-accent); }
 .pv-frame { width: 100%; height: 62vh; border: 1px solid var(--adm-line-strong);
   border-radius: 12px; background: #f6f2ec; }
 
@@ -697,19 +941,41 @@ html[data-theme="light"] .admin-body {
     background: var(--surface-strong); box-shadow: var(--shadow-2);
   }
   .admin-side.is-open { transform: none; }
-  .admin-burger {
-    display: inline-flex; align-items: center; justify-content: center;
-    position: fixed; top: 14px; left: 14px; z-index: 701;
-    width: 42px; height: 42px; border-radius: 12px;
-    border: 1px solid var(--adm-line-strong); background: var(--surface-strong);
-    backdrop-filter: blur(14px); color: var(--text); cursor: pointer;
+  /* One bar rather than a floating button: it names the screen, which the
+     sidebar was doing before it slid off, and gives the page a top edge. */
+  .admin-topbar {
+    display: flex; align-items: center; gap: 12px;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 701; height: 58px;
+    padding: 0 14px; background: var(--surface-strong);
+    border-bottom: 1px solid var(--adm-line);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   }
+  /* the bar title and the page's own h1 are the same words 32px apart, so
+     the bar keeps quiet until the heading has scrolled behind it */
+  .admin-topbar__title {
+    font-weight: 700; font-size: 0.95rem; letter-spacing: -0.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    opacity: 0; transition: opacity var(--dur-1) linear;
+  }
+  .admin-topbar.is-scrolled .admin-topbar__title { opacity: 1; }
+  .admin-burger {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 38px; height: 38px; border-radius: 11px;
+    border: 1px solid var(--adm-line-strong); background: var(--adm-inset);
+    color: var(--text); cursor: pointer;
+    transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+  }
+  .admin-burger:hover { border-color: var(--orange-2); background: var(--adm-card-hover); }
   .admin-scrim {
     position: fixed; inset: 0; z-index: 699; background: var(--scrim);
     backdrop-filter: blur(2px);
   }
   .admin-scrim[hidden] { display: none; }
-  .admin-main { padding-top: 70px; }
+  .admin-main { padding-top: 78px; }
+  /* a five-tile KPI row wrapped 4 + 1 and left the last card stranded */
+  .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stat-row > :last-child:nth-child(3n + 2) { grid-column: span 2; }
+  .stat-row > :last-child:nth-child(3n + 1) { grid-column: 1 / -1; }
   .ed-body { grid-template-columns: 1fr; height: auto; }
   .ed-canvas { height: 60vh; }
   .ed-panel { max-height: 340px; }
@@ -718,12 +984,14 @@ html[data-theme="light"] .admin-body {
   .admin-form { grid-template-columns: 1fr; }
   .req-detail, .jz-grid, .dash-grid { grid-template-columns: 1fr; }
   .admin-panel { padding: 16px 14px; }
-  .stat-row { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat-row > :last-child:nth-child(odd) { grid-column: 1 / -1; }
   .stat-card b { font-size: 1.4rem; }
   .req-filters input { min-width: 0; flex: 1; }
   .admin-table { font-size: 0.82rem; }
   .act-item { flex-wrap: wrap; gap: 4px 12px; }
   .act-item span { margin-left: 0; }
+  .panel-head > .admin-inline-note { margin-left: 0; max-width: none; width: auto; }
 }
 
 
@@ -735,15 +1003,18 @@ html[data-theme="light"] .admin-body {
    role, applied wherever the control appears rather than per screen.
    ============================================================ */
 
-/* buttons: 34 and 36px side by side read as a mistake, not a hierarchy */
-.admin-body .btn,
-.admin-body .btn--small {
-  min-height: 36px;
+/* buttons: 34 and 36px side by side read as a mistake, not a hierarchy.
+   min-height has to follow the same token as height, or the floor leaks
+   back in and a compact row carries two sizes again. */
+.admin-body .btn {
+  min-height: var(--adm-control-h);
   display: inline-flex; align-items: center; justify-content: center;
   line-height: 1.1;
 }
-.admin-body .btn--small { padding: 7px 14px; }
-.admin-body .icon-btn { width: 36px; height: 36px; }
+.admin-body .btn--small {
+  height: var(--adm-control-sm); min-height: var(--adm-control-sm); padding: 0 14px;
+}
+.admin-body .icon-btn { width: var(--adm-control-sm); height: var(--adm-control-sm); }
 
 /* every text control in the panel, including the ones that were never
    matched by a form selector and fell back to the browser default —
@@ -767,6 +1038,10 @@ html[data-theme="light"] .admin-body {
   outline: 2px solid var(--orange-2); outline-offset: 1px; border-color: transparent;
 }
 /* compact contexts keep their own, equally consistent, size */
+.admin-main .jz-search select,
+.admin-main .jz-filters select,
+.admin-main .ed-toolbar select,
+.admin-main .date-range input[type="date"],
 .admin-main .admin-table input:not([type="checkbox"]),
 .admin-main .admin-table select,
 .admin-main .media-card input,
@@ -796,16 +1071,24 @@ html[data-theme="light"] .admin-body {
 
 /* ---------- supplier schedule strip ---------- */
 .slot-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+/* four sync buttons in a market card wrapped 3 + 1 at every panel width,
+   leaving "Stock (1 call)" alone on a line. Two by two, always. */
+.jz-sync { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+.jz-sync .btn { width: 100%; }
 .slot {
   display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
   padding: 5px 10px; border-radius: 9px; font-size: 0.72rem; font-weight: 700;
   font-variant-numeric: tabular-nums;
   border: 1px solid var(--adm-line); background: var(--adm-inset); color: var(--text-muted);
 }
-.slot em { font-style: normal; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.06em;
-  text-transform: uppercase; opacity: 0.75; }
+/* muted text at 75% opacity measured about 3:1 in the light theme — under the
+   bar for 9.6px type. Full opacity, and the colour is inherited from the slot's
+   own state, which is already contrast-checked. */
+.slot em { font-style: normal; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; opacity: 1; }
+.slot { color: var(--text-soft); }
 .slot--done { border-color: var(--adm-ok); color: var(--adm-ok); background: var(--adm-ok-bg); }
-.slot--next { border-color: var(--orange-2); color: var(--orange-2); }
+.slot--next { border-color: var(--orange-2); color: var(--adm-accent); }
 /* the hour has passed but the sync has not run — it catches up on the next tick */
 .slot--due { border-color: var(--adm-warn); color: var(--adm-warn); background: var(--adm-warn-bg); }
 
@@ -816,15 +1099,13 @@ html[data-theme="light"] .admin-body {
   background: none; border: 0; accent-color: var(--orange-2); cursor: pointer;
 }
 .admin-form label output {
-  font-variant-numeric: tabular-nums; color: var(--orange-2); font-weight: 800;
+  font-variant-numeric: tabular-nums; color: var(--adm-accent); font-weight: 800;
 }
 
 /* ================= Jasani items ================= */
 /* The list, the item page and its gallery. Ported from the approved
    design preview; the printed product sheet is generated server-side
    in exports.py, so none of its styling lives here. */
-button.stat-card { font: inherit; text-align: left; width: 100%; display: block; }
-button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-offset: 2px; }
 .jz-pager__gap { color: var(--text-muted); padding: 0 3px; align-self: center; }
 .jz-pdp__main--empty {
   display: flex; align-items: center; justify-content: center;
@@ -836,8 +1117,6 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 .menu-item.has-sub.flip .menu-sub-pop { right: auto; left: calc(100% + 2px); }
 /* the stat tiles are filters, so they are buttons and must look/behave like the
    cards they replaced */
-button.stat-card { font: inherit; text-align: left; width: 100%; display: block; }
-button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-offset: 2px; }
 .jz-booked { color: var(--text-muted); }
 /* ---- Jasani items page ---- */
 .jz-head {
@@ -852,6 +1131,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 .jz-seg button {
   border: 0; background: none; color: var(--text-muted); font: inherit; font-size: 0.85rem;
   padding: 8px 16px; cursor: pointer; display: flex; align-items: center; gap: 7px;
+  white-space: nowrap;
 }
 .jz-seg button + button { border-left: 1px solid var(--adm-line); }
 .jz-seg button[aria-pressed="true"] { background: var(--adm-inset); color: var(--text); font-weight: 600; }
@@ -870,7 +1150,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   border: 1px solid var(--adm-line-strong); background: var(--adm-inset);
   border-radius: 13px; padding: 8px 10px; min-height: 48px;
 }
-.jz-search:focus-within { border-color: var(--orange-2); box-shadow: 0 0 0 3px var(--adm-ring); }
+.jz-search:focus-within { border-color: var(--orange-2); box-shadow: var(--adm-focus); }
 .jz-search__icon { color: var(--text-muted); display: flex; padding-left: 4px; }
 .jz-search__icon svg { width: 17px; height: 17px; }
 .jz-search input {
@@ -888,7 +1168,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   font: inherit; line-height: 1; padding: 2px 4px; border-radius: 50%;
 }
 .jz-chip button:hover { color: var(--adm-bad); }
-.jz-search__hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 8px; }
+.jz-search__hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 8px; max-width: 76ch; }
 /* filters */
 .jz-filters { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
 .jz-filters select {
@@ -898,7 +1178,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 9px center; background-size: 15px;
 }
-.jz-filters select:focus-visible { border-color: var(--orange-2); outline: none; box-shadow: 0 0 0 3px var(--adm-ring); }
+.jz-filters select:focus-visible { border-color: var(--orange-2); outline: none; box-shadow: var(--adm-focus); }
 .jz-toggle {
   display: inline-flex; align-items: center; gap: 9px; font-size: 0.85rem; color: var(--text);
   border: 1px solid var(--adm-line-strong); background: var(--adm-inset);
@@ -936,7 +1216,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 .jz-price-filter input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .jz-price-filter i { color: var(--text-muted); font-style: normal; }
 .jz-price-filter em { color: var(--text-muted); font-style: normal; font-size: 0.74rem; white-space: nowrap; }
-.jz-price-filter:focus-within { border-color: var(--orange-2); box-shadow: 0 0 0 3px var(--adm-ring); }
+.jz-price-filter:focus-within { border-color: var(--orange-2); box-shadow: var(--adm-focus); }
 /* table */
 .jz-table { width: 100%; min-width: 1120px; border-collapse: collapse; font-size: 0.87rem; }
 @media (max-width: 900px) {
@@ -1034,7 +1314,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   border-radius: 8px; min-width: 31px; height: 31px; font: inherit; font-size: 0.83rem;
   cursor: pointer; font-variant-numeric: tabular-nums;
 }
-.jz-pager button[aria-current="true"] { border-color: var(--orange-2); color: var(--orange-2); }
+.jz-pager button[aria-current="true"] { border-color: var(--orange-2); color: var(--adm-accent); }
 .jz-pager button:disabled { opacity: 0.35; cursor: default; }
 /* ---- item detail page ---- */
 .jz-back {
@@ -1042,7 +1322,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   border: 1px solid var(--adm-line-strong); background: var(--adm-inset); color: var(--text);
   border-radius: 10px; padding: 7px 14px; font: inherit; font-size: 0.85rem; cursor: pointer;
 }
-.jz-back:hover { border-color: var(--orange-2); color: var(--orange-2); }
+.jz-back:hover { border-color: var(--orange-2); color: var(--adm-accent); }
 .jz-pdp {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 30px;
   margin-bottom: 26px;
@@ -1108,7 +1388,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   border: 1px solid var(--adm-line); background: var(--adm-inset);
 }
 .jz-thumb-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.jz-thumb-btn.is-on { border-color: var(--orange-2); box-shadow: 0 0 0 2px var(--adm-ring); }
+.jz-thumb-btn.is-on { border-color: var(--orange-2); box-shadow: var(--adm-focus); }
 /* the product video, playing where its poster was */
 .jz-pdp__main--video { cursor: pointer; }
 .jz-play {
@@ -1268,6 +1548,9 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   }
   .jz-table tbody td { border: 0; padding: 0; }
   .jz-table tbody tr:hover td { background: none; }
+  .jz-table tbody tr:has(.admin-empty) {
+    padding: 0; border: 0; background: none; margin-bottom: 0;
+  }
   /* td-qualified so the sticky-column rules above cannot out-specify these */
   .jz-table td.jz-cell-img {
     position: absolute; top: 13px; left: 13px; z-index: 1;
@@ -1324,25 +1607,47 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   .jz-lightbox { grid-template-columns: 44px 1fr 44px; }
   .jz-head, .jz-filters { gap: 8px; }
   .jz-seg { flex: 1 1 auto; }
-  .jz-seg button { padding: 8px 12px; flex: 1 1 0; justify-content: center; }
-  .jz-search { padding: 7px 8px; }
-  .jz-search input { flex: 1 1 100%; order: -1; }
+  .jz-seg button { padding: 8px 12px; flex: 1 1 auto; justify-content: center; }
+  .jz-search { padding: 7px 8px; flex-wrap: wrap; }
+  /* the same selector shape as the catch-all above, or it does not land */
+  .admin-main .jz-search input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) {
+    flex: 1 1 120px; min-width: 0; order: 0;
+  }
+  .jz-search__icon { order: -1; }
+  .jz-search select { flex: 1 1 100%; order: 1; }
+  .jz-search .btn { order: 2; }
   .jz-filters select, .jz-toggle { flex: 1 1 46%; }
 }
 
 /* ---------------- sections & items (repeatable page content) ---------------- */
-.coll-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+/* auto-fill kept four empty tracks beside a one-card list, which reads as
+   content that failed to load rather than as a short list */
+.coll-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .coll-card {
   display: flex; flex-direction: column; gap: 5px; padding: 15px 16px;
   border: 1px solid var(--adm-line); border-radius: 14px; background: var(--adm-inset);
   text-decoration: none; color: var(--text); transition: border-color 0.18s ease, transform 0.18s ease;
 }
 .coll-card:hover { border-color: var(--orange-2); transform: translateY(-2px); }
-.coll-card__name { font-weight: 700; }
+.coll-card__name { font-weight: 700; font-size: 0.92rem; }
 .coll-card__hint { font-size: 0.84rem; color: var(--text-muted); }
-.coll-card__meta { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
-.coll-hid { color: var(--orange-2); }
-.coll-state { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.68rem; }
+/* the card is a flex column: pin the count line to the floor so a title
+   that wraps to two lines does not push its footer below its neighbours */
+.coll-card__meta { font-size: 0.78rem; color: var(--text-muted); margin-top: auto; padding-top: 6px; }
+.coll-hid { color: var(--adm-accent); }
+/* whether an edit will stick was the least visible thing on the card */
+.coll-state {
+  text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.66rem; font-weight: 700;
+  border-radius: 999px; padding: 2px 8px; background: var(--adm-inset); color: var(--text-soft);
+}
+.coll-state--managed { color: var(--adm-accent); background: rgba(237, 108, 38, 0.12); }
+/* delete is not the same kind of button as duplicate. The row menus already
+   colour it (.menu-danger); a plain ghost button beside Duplicate was the
+   only place the same action read as neutral. */
+.admin-main .btn[data-del], .admin-main .btn[data-page-del] { color: var(--adm-bad); }
+.admin-main .btn[data-del]:hover, .admin-main .btn[data-page-del]:hover {
+  border-color: var(--adm-bad); background: var(--adm-bad-bg);
+}
 .coll-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
 .coll-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .coll-item {

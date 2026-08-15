@@ -7,12 +7,15 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="stylesheet" href="/styles.css?v=11">
-<link rel="stylesheet" href="/admin/assets/admin.css?v=28">
+<link rel="stylesheet" href="/admin/assets/admin.css?v=31">
 <script src="/js/theme-init.js?v=1"></script>
 <link rel="stylesheet" href="/theme-custom.css">
 </head>
 <body class="admin-body">
-<button class="admin-burger" id="admin-burger" type="button" aria-label="Open the admin menu" aria-expanded="false" aria-controls="admin-side"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+<header class="admin-topbar" id="admin-topbar">
+  <button class="admin-burger" id="admin-burger" type="button" aria-label="Open the admin menu" aria-expanded="false" aria-controls="admin-side"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  <span class="admin-topbar__title" id="admin-topbar-title">Admin</span>
+</header>
 <div class="admin-scrim" id="admin-scrim" hidden></div>
 <div class="admin-shell">
   <aside class="admin-side" id="admin-side">
@@ -69,6 +72,6 @@
   </main>
 </div>
 <div class="admin-toast" id="admin-toast" role="status" aria-live="polite" hidden></div>
-<script src="/admin/assets/app.js?v=40" defer></script>
+<script src="/admin/assets/app.js?v=43" defer></script>
 </body>
 </html>

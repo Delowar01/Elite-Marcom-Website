@@ -1846,10 +1846,10 @@ async def admin_operations(request: Request):
           f"{chain['checked']} entries verified, chain intact." if chain["ok"]
           else f"Chain broken at entry {chain['brokenAt']} — investigate immediately.")
     check(len(owners) >= 2, "Owner accounts",
-          f"{len(owners)} active owner account(s)." +
+          f"{len(owners)} active owner account{'' if len(owners) == 1 else 's'}." +
           ("" if len(owners) >= 2 else " Consider a second owner so access is never lost."), "info")
     check(len(failed) < 20, "Failed sign-ins (7 days)",
-          f"{len(failed)} failed attempt(s) in the last 7 days.")
+          f"{len(failed)} failed attempt{'' if len(failed) == 1 else 's'} in the last 7 days.")
     check(bool(config.JASANI_API_TOKEN), "Supplier token",
           "Jasani token is configured (never shown here)." if config.JASANI_API_TOKEN
           else "No supplier token set — the gifts catalog serves cached data only.", "info")
@@ -2130,7 +2130,7 @@ async def admin_dashboard(request: Request):
     day = 86400
     counts: dict = {}
     series: list[dict] = []
-    totals = {"last30": 0, "prev30": 0, "last7": 0}
+    totals = {"last30": 0, "prev30": 0, "last7": 0, "prev7": 0}
     try:
         conn = st._connect()
         for kind in KINDS:
@@ -2156,6 +2156,9 @@ async def admin_dashboard(request: Request):
             (now - 60 * day, now - 30 * day)).fetchone()[0]
         totals["last7"] = conn.execute(
             "SELECT COUNT(*) FROM records WHERE created_at >= ?", (now - 7 * day,)).fetchone()[0]
+        totals["prev7"] = conn.execute(
+            "SELECT COUNT(*) FROM records WHERE created_at >= ? AND created_at < ?",
+            (now - 14 * day, now - 7 * day)).fetchone()[0]
     except Exception:
         counts = {}
 

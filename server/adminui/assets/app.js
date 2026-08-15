@@ -10,9 +10,25 @@
     d.textContent = String(s == null ? "" : s);
     return d.innerHTML;
   }
+  /* One date format across the panel. The browser default gave
+     "8/15/2026, 1:06:46 PM" — a US ordering with seconds nobody needs, beside
+     tables that write "15 Aug". */
   function when(ts) {
     if (!ts) return "—";
-    return new Date(ts * 1000).toLocaleString();
+    return new Date(ts * 1000).toLocaleString("en-GB", {
+      day: "numeric", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit"
+    }).replace(",", "");
+  }
+  /* Every "nothing here yet" in the panel goes through this, so an empty
+     screen looks deliberate rather than broken. */
+  function emptyState(title, hint) {
+    return '<div class="admin-empty">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 15h8"/></svg>' +
+      "<b>" + esc(title) + "</b>" +
+      (hint ? "<span>" + esc(hint) + "</span>" : "") + "</div>";
   }
   var toastTimer = null;
   function toast(msg, isErr) {
@@ -74,7 +90,8 @@
             return '<button type="button" class="picker-item" data-url="' + esc(it.url) + '">' +
               '<img src="' + esc(it.url) + '" alt="" loading="lazy"><span>' + esc(it.label) + "</span></button>";
           }).join("")
-        : '<p class="admin-inline-note">Nothing in the library yet — upload an image above or on the Media screen.</p>';
+        : emptyState("Nothing in the library yet",
+            "Upload an image above, or add one on the Media screen.");
       grid.querySelectorAll(".picker-item").forEach(function (btn) {
         btn.addEventListener("click", function () {
           overlay.hidden = true;
@@ -395,30 +412,22 @@
                        rental_enquiry: "Rental requests", rental_notification: "Availability alerts",
                        contact: "Contact messages", career: "Applications" };
 
-        function delta(now, prev) {
+        function delta(now, prev, against) {
+          against = against || "vs the previous 30 days";
           if (!prev && !now) return '<span class="stat-delta stat-delta--flat">no change</span>';
           if (!prev) return '<span class="stat-delta stat-delta--up">new</span>';
           var pc = Math.round(((now - prev) / prev) * 100);
           var cls = pc > 0 ? "up" : (pc < 0 ? "down" : "flat");
           return '<span class="stat-delta stat-delta--' + cls + '">' +
-                 (pc > 0 ? "▲ +" : pc < 0 ? "▼ " : "= ") + esc(pc) + "% vs previous 30 days</span>";
-        }
-        /* 14-day trend, drawn inline — no chart library, no external request */
-        function sparkline(vals) {
-          if (!vals.length) return "";
-          var max = Math.max.apply(null, vals.concat([1]));
-          var w = 100, h = 30;
-          var pts = vals.map(function (v, i) {
-            return [(i / Math.max(1, vals.length - 1)) * w, h - (v / max) * (h - 3) - 1.5];
-          });
-          var line = pts.map(function (p, i) { return (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1); }).join(" ");
-          return '<svg class="stat-spark" viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="none" aria-hidden="true">' +
-            '<path d="' + line + " L" + w + " " + h + " L0 " + h + ' Z" fill="var(--orange)" opacity="0.13"/>' +
-            '<path d="' + line + '" fill="none" stroke="var(--orange-2)" stroke-width="1.6" ' +
-            'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>';
+                 (pc > 0 ? "▲ +" : pc < 0 ? "▼ " : "= ") + esc(pc) + "% " + esc(against) + "</span>";
         }
         function areaChart(rows) {
-          if (!rows.length) return '<p class="admin-inline-note">No submissions in the last 14 days.</p>';
+          /* an empty array was the only bail-out, so fourteen days of zeros
+             still drew a chart and captioned it "peak 1/day" — a figure no
+             day reached, with both series flat on top of the axis rule */
+          var any = rows.some(function (r) { return (r.enquiries || 0) + (r.notifications || 0) > 0; });
+          if (!rows.length || !any) return emptyState("No submissions in the last 14 days",
+            "Enquiries and back-in-stock alerts from the website are counted here.");
           var w = 560, h = 150, pad = 22;
           var max = Math.max.apply(null, rows.map(function (x) { return x.enquiries + x.notifications; }).concat([1]));
           var step = (w - pad * 2) / Math.max(1, rows.length - 1);
@@ -430,18 +439,23 @@
             }).join(" ");
           }
           var base = " L" + (pad + (rows.length - 1) * step).toFixed(1) + " " + (h - pad) + " L" + pad + " " + (h - pad) + " Z";
-          return '<svg class="chart" viewBox="0 0 ' + w + " " + h + '" role="img" aria-label="Submissions over the last 14 days">' +
+          /* preserveAspectRatio="none" so the plot fills the card: the default
+             xMidYMid left it drawn at its natural 560px in the middle of an
+             1174px panel. The labels move out of the viewBox — stretched
+             glyphs were the reason they were ever inside it. */
+          return '<svg class="chart" viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="none" ' +
+            'role="img" aria-label="Submissions over the last 14 days">' +
             '<line x1="' + pad + '" y1="' + (h - pad) + '" x2="' + (w - pad) + '" y2="' + (h - pad) +
-            '" stroke="var(--adm-line-strong)" stroke-width="1"/>' +
+            '" stroke="var(--adm-line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"/>' +
             '<path d="' + path("x", true) + base + '" fill="var(--violet)" opacity="0.16"/>' +
-            '<path d="' + path("x", true) + '" fill="none" stroke="var(--violet-2)" stroke-width="2"/>' +
+            '<path d="' + path("x", true) + '" fill="none" stroke="var(--violet-2)" stroke-width="2" ' +
+            'stroke-linejoin="round" vector-effect="non-scaling-stroke"/>' +
             '<path d="' + path("enquiries") + base + '" fill="var(--orange)" opacity="0.18"/>' +
-            '<path d="' + path("enquiries") + '" fill="none" stroke="var(--orange-2)" stroke-width="2"/>' +
-            '<text x="' + pad + '" y="' + (h - 5) + '" font-size="9" fill="var(--text-muted)">' +
-            esc(dayLabel(rows[0].day)) + "</text>" +
-            '<text x="' + (w - pad) + '" y="' + (h - 5) + '" font-size="9" fill="var(--text-muted)" text-anchor="end">' +
-            esc(dayLabel(rows[rows.length - 1].day)) + "</text>" +
-            '<text x="' + pad + '" y="12" font-size="9" fill="var(--text-muted)">peak ' + esc(max) + "/day</text></svg>";
+            '<path d="' + path("enquiries") + '" fill="none" stroke="var(--orange-2)" stroke-width="2" ' +
+            'stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>' +
+            '<div class="chart-caption"><span>' + esc(dayLabel(rows[0].day)) + "</span>" +
+            "<span>peak " + esc(max) + "/day</span>" +
+            "<span>" + esc(dayLabel(rows[rows.length - 1].day)) + "</span></div>";
         }
         function dayLabel(ts) {
           var dt = new Date(ts * 1000);
@@ -453,7 +467,9 @@
           var colors = { new: "var(--orange-2)", in_progress: "var(--adm-info)", quoted: "var(--violet-2)",
                          won: "var(--adm-ok)", lost: "var(--adm-bad)", closed: "var(--text-muted)" };
           var total = order.reduce(function (s, k) { return s + (counts[k] || 0); }, 0);
-          if (!total) return '<p class="admin-inline-note">No requests yet.</p>';
+          /* At zero this used to go blank while the panel beside it drew its
+             full skeleton, so one card read as finished and its twin as
+             broken. Draw the ring empty and the legend at nought instead. */
           var C = 2 * Math.PI * 42, at = 0;
           var ring = order.map(function (k) {
             var v = counts[k] || 0;
@@ -473,7 +489,8 @@
             '<div class="bar-list" style="flex:1;min-width:180px">' + order.map(function (k) {
               var v = counts[k] || 0;
               return '<div class="bar-row"><span class="bar-label">' + esc(STATUS_LABELS[k] || k) + "</span>" +
-                '<span class="bar-track"><i class="bar-fill" style="width:' + Math.round((v / total) * 100) +
+                '<span class="bar-track"><i class="bar-fill" style="width:' +
+                (total ? Math.round((v / total) * 100) : 0) +
                 "%;background:" + colors[k] + '"></i></span><span class="bar-num">' + esc(v) + "</span></div>";
             }).join("") + "</div></div>";
         }
@@ -508,23 +525,34 @@
         }
         var mailState = !mail.configured ? "warn" : (mail.failed ? "bad" : "ok");
         var totalRequests = Object.keys(d.requests || {}).reduce(function (s, k) { return s + d.requests[k]; }, 0);
+        var waiting = (d.statusCounts || {}).new || 0;
 
         main.innerHTML =
           '<h1 class="admin-h1">Welcome back, ' + esc(d.user.name) + "</h1>" +
           '<p class="admin-sub">Live figures from the site — enquiries, supplier catalogue and delivery. ' +
           "Everything here reads the real system state.</p>" +
 
+          /* One card used to carry a delta chip and a sparkline and the other
+             four nothing, so the single tall card set the row height and left
+             80px of empty card beside it. Every tile now carries a second line
+             it can actually stand behind — and the sparkline is gone, because
+             the same fourteen days are drawn full width immediately below. */
           '<div class="stat-row">' +
-          '<div class="stat-card stat-card--click" data-go="requests"><b>' + esc(totalRequests) +
-          "</b><span>Requests all time</span>" + delta(tot.last30 || 0, tot.prev30 || 0) +
-          sparkline(series.map(function (x) { return x.enquiries + x.notifications; })) + "</div>" +
-          '<div class="stat-card stat-card--click" data-go="requests"><b>' + esc((d.statusCounts || {}).new || 0) +
-          "</b><span>Awaiting a first reply</span></div>" +
-          '<div class="stat-card"><b>' + esc(tot.last7 || 0) + "</b><span>Last 7 days</span></div>" +
+          '<button type="button" class="stat-card stat-card--click" data-go="requests"><b>' + esc(totalRequests) +
+          "</b><span>Requests all time</span>" + delta(tot.last30 || 0, tot.prev30 || 0) + "</button>" +
+          '<button type="button" class="stat-card stat-card--click" data-go="requests"><b>' + esc(waiting) +
+          "</b><span>Awaiting a first reply</span>" +
+          '<span class="stat-delta stat-delta--' + (waiting ? "down" : "flat") + '">' +
+          (waiting ? "needs an answer" : "nothing waiting") + "</span></button>" +
+          '<div class="stat-card"><b>' + esc(tot.last7 || 0) + "</b><span>Last 7 days</span>" +
+          delta(tot.last7 || 0, tot.prev7 || 0, "vs the 7 days before") + "</div>" +
           '<div class="stat-card' + (mail.failed ? " stat-card--bad" : "") + '"><b>' + esc(mail.sent || 0) +
           "</b><span>Emails delivered</span>" +
-          (mail.failed ? '<span class="stat-delta stat-delta--down">' + esc(mail.failed) + " failed</span>" : "") + "</div>" +
-          '<div class="stat-card"><b>' + esc((d.rentals || {}).count || 0) + "</b><span>Rental items</span></div>" +
+          (mail.failed ? '<span class="stat-delta stat-delta--down">' + esc(mail.failed) + " failed</span>"
+                       : '<span class="stat-delta stat-delta--flat">none failed</span>') + "</div>" +
+          '<div class="stat-card"><b>' + esc((d.rentals || {}).count || 0) + "</b><span>Rental items</span>" +
+          '<span class="stat-delta stat-delta--flat">' +
+          ((d.rentals || {}).source === "custom" ? "managed here" : "as shipped") + "</span></div>" +
           "</div>" +
 
           '<div class="dash-grid">' +
@@ -589,7 +617,7 @@
           ((d.audit || []).map(function (a) {
             return '<div class="act-item"><time>' + esc(when(a.ts)) + "</time><b>" + esc(a.action) +
               "</b><span>" + esc(a.user_email || "system") + "</span></div>";
-          }).join("") || '<p class="admin-inline-note">Nothing yet.</p>') + "</div></div>" +
+          }).join("") || emptyState("Nothing yet", "")) + "</div></div>" +
           "</div>";
 
         main.querySelectorAll("[data-go]").forEach(function (el) {
@@ -618,18 +646,22 @@
                  esc(STATUS_LABELS[s] || s) + "</option>";
         }).join("");
         var selCount = Object.keys(reqState.sel).length;
+        var hasFilters = !!(reqState.kind || reqState.status || reqState.q);
         main.innerHTML =
           '<h1 class="admin-h1">Requests inbox</h1>' +
           '<p class="admin-sub">Customer submissions decrypt on view — every view is recorded in the activity log.</p>' +
           '<div class="stat-row">' + (d.statuses || []).map(function (s) {
-            return '<div class="stat-card stat-card--click" data-status="' + s + '"><b>' + esc(counts[s] || 0) +
-                   "</b><span>" + esc(STATUS_LABELS[s] || s) + "</span></div>";
+            /* aria-pressed so the live filter is legible even at a zero count */
+            return '<button type="button" class="stat-card stat-card--click" data-status="' + s +
+                   '" aria-pressed="' + (reqState.status === s ? "true" : "false") + '"><b>' +
+                   esc(counts[s] || 0) + "</b><span>" + esc(STATUS_LABELS[s] || s) + "</span></button>";
           }).join("") + "</div>" +
           '<div class="admin-panel"><h2>Find a request</h2><div class="req-filters">' +
           '<select id="rq-kind"><option value="">All types</option>' + kindOpts + "</select>" +
           '<select id="rq-status"><option value="">All statuses</option>' + statusOpts + "</select>" +
-          '<input id="rq-q" placeholder="Search reference (e.g. GV-XXXX)" maxlength="20" value="' + esc(reqState.q) + '">' +
-          '<span class="admin-inline-note">' + esc(d.total) + " request(s)</span>" +
+          '<input id="rq-q" placeholder="Reference, e.g. GV-1234" maxlength="20" value="' + esc(reqState.q) + '">' +
+          '<span class="admin-inline-note">' +
+          (d.total ? esc(d.total) + (d.total === 1 ? " request" : " requests") : "No requests") + "</span>" +
           '<span class="req-export"><button class="btn btn--ghost btn--small" id="rq-export">Export ▾</button></span></div>' +
           '<div class="bulk-bar" id="bulk-bar"' + (selCount ? "" : " hidden") + '><b id="bulk-count">' + selCount +
           '</b> selected — use <b>Export</b> to download them ' +
@@ -650,7 +682,18 @@
               '<td class="muted">' + (x.noteCount || 0) + "</td>" +
               '<td class="cell-actions"><a class="btn btn--ghost btn--small" href="#requests/' + esc(x.reference) + '">Open</a> ' +
               '<button class="icon-btn dots-btn" data-dots aria-label="Actions for ' + esc(x.reference) + '">⋮</button></td></tr>';
-          }).join("") + "</tbody></table></div>" +
+          }).join("") +
+          /* with no rows the panel used to end in a column-header band and a
+             strip of blank card, which says nothing about whether the inbox
+             is empty or a filter is hiding everything */
+          ((d.requests || []).length ? "" : '<tr><td colspan="8">' +
+            (hasFilters
+              ? emptyState("No requests match these filters",
+                  "Clear the type, status or reference filter to see the rest.")
+              : emptyState("No requests yet",
+                  "Submissions from the website land here the moment they are sent.")) +
+            "</td></tr>") +
+          "</tbody></table></div>" +
           '<div class="admin-actions">' +
           (reqState.offset > 0 ? '<button class="btn btn--ghost btn--small" id="rq-prev">Newer</button>' : "") +
           (reqState.offset + 30 < d.total ? '<button class="btn btn--ghost btn--small" id="rq-next">Older</button>' : "") +
@@ -772,8 +815,9 @@
             '<p class="admin-inline-note">' + esc(b.used || 0) + " of " + esc(b.limit || 0) +
             " calls used · " + esc(b.remaining || 0) + " left · resets in " + resetH + "h " + resetM +
             "m · " + esc(zone) + " day " + esc(b.day || "—") + "<br>" +
-            "Automatic syncs stop after " + esc(b.autoLimit || 0) + "; the last " +
-            esc(b.reserved || 0) + " is reserved for a manual sync by an owner or admin.</p>" +
+            "Automatic syncs stop after " + esc(b.autoLimit || 0) + "; the remaining " +
+            esc(b.reserved || 0) + ((b.reserved || 0) === 1 ? " call is" : " calls are") +
+            " reserved for a manual sync by an owner or admin.</p>" +
             '<div class="slot-row">' + (b.schedule || []).map(function (s) {
               var ran = done.indexOf(s.hour) !== -1;
               return '<span class="slot' + (ran ? " slot--done" : "") +
@@ -819,7 +863,7 @@
                   esc(a.what) + ", " + esc(when(a.ts)) + ": " + esc(a.reason) + "</p>";
             }()) +
             (can("jasani.refresh")
-              ? '<div class="admin-actions">' +
+              ? '<div class="jz-sync">' +
                 '<button class="btn btn--primary btn--small" data-refresh="full" data-market="' + key + '">Full sync (3 calls)</button>' +
                 '<button class="btn btn--ghost btn--small" data-refresh="products" data-market="' + key + '">Products (1 call)</button>' +
                 '<button class="btn btn--ghost btn--small" data-refresh="prices" data-market="' + key + '">Prices (1 call)</button>' +
@@ -836,10 +880,12 @@
             return marketCard(m[0], m[1], m[2]);
           }).join("") + "</div>" +
           '<div class="admin-panel"><h2>Printing manuals cache</h2><p class="admin-inline-note">' +
-          esc(d.manuals.cachedPdfs) + " PDF(s) cached (" + (d.manuals.bytes / (1024 * 1024)).toFixed(1) + " MB) · " +
+          esc(d.manuals.cachedPdfs) + (d.manuals.cachedPdfs === 1 ? " PDF" : " PDFs") +
+          " cached (" + (d.manuals.bytes / (1024 * 1024)).toFixed(1) + " MB) · " +
           esc(d.manuals.validVerdicts) + " valid · " + esc(d.manuals.failedVerdicts) + " marked unavailable</p></div>" +
           '<div class="admin-panel"><h2>Product videos</h2><p class="admin-inline-note">' +
-          esc((d.videos && d.videos.withVideo) || 0) + " product(s) with a video · " +
+          esc((d.videos && d.videos.withVideo) || 0) +
+          (((d.videos && d.videos.withVideo) || 0) === 1 ? " product" : " products") + " with a video · " +
           esc((d.videos && d.videos.withoutVideo) || 0) + " checked and without one. " +
           "Read from the supplier's public product page when a customer opens the item — " +
           "not an API call, and never charged to the daily budget.</p></div>" +
@@ -960,7 +1006,7 @@
                       (it.hidden ? "Show on website" : "Hide from website") + "</button>" : "") +
                     "</div>";
                 }).join("") + "</div>"
-              : '<p class="admin-inline-note">Nothing matches “' + esc(term) + "”.</p>";
+              : emptyState("Nothing matches “" + term + "”", "Try a different word or a SKU.");
             out.querySelectorAll("[data-hidetoggle]").forEach(function (b) {
               b.addEventListener("click", function () {
                 api("/api/admin/jasani/visibility", {
@@ -1108,9 +1154,9 @@
                     '<td class="cell-actions"><button class="btn btn--ghost btn--small" data-unhide="' +
                     esc(h.page) + "|" + esc(h.kind) + "|" + esc(h.path) + '">Show again</button></td></tr>';
                 }).join("") + "</tbody></table></div>"
-              : '<p class="admin-inline-note">Nothing is hidden — every section and element is visible. ' +
-                "To hide something, open the <b>Visual editor</b>, click it, and use Visibility " +
-                "(or the eye button in the Sections list for a whole section).</p>";
+              : emptyState("Nothing is hidden",
+                  "Every section and element is visible. To hide one, open the Visual editor, " +
+                  "click it and use Visibility — or the eye button in the Sections list for a whole section.");
             box.querySelectorAll("[data-unhide]").forEach(function (btn) {
               btn.addEventListener("click", function () {
                 var parts = btn.getAttribute("data-unhide").split("|");
@@ -1212,8 +1258,11 @@
           '<p class="admin-sub">Items shown on the public Rental page. ' +
           (d.source === "custom" ? 'You are editing a custom inventory. <button class="btn btn--ghost btn--small" id="rent-reset">Restore shipped list</button>'
                                  : "Currently showing the shipped list — saving any change creates your editable copy.") + "</p>" +
-          '<div class="admin-panel"><h2>Items (' + (d.products || []).length + ')</h2>' +
-          '<div class="admin-actions" style="margin-bottom:14px;"><button class="btn btn--primary btn--small" id="rent-new">Add new item</button></div>' +
+          /* the heading and its one action belong on the same line, as on
+             every other panel in the app */
+          '<div class="admin-panel"><div class="panel-head"><h2>Items (' +
+          (d.products || []).length + ')</h2>' +
+          '<button class="btn btn--primary btn--small" id="rent-new">Add new item</button></div>' +
           '<div class="table-scroll"><table class="admin-table"><thead>' +
           "<tr><th></th><th>Name</th><th>Category</th><th>Stock KSA</th><th>Stock UAE</th><th>Featured</th><th></th></tr></thead><tbody>" +
           (d.products || []).map(function (p) {
@@ -1276,7 +1325,8 @@
                   '<button type="button" data-gal-del="' + i + '" title="Remove">✕</button>' +
                   "</figcaption></figure>";
               }).join("")
-            : '<p class="admin-inline-note">No images yet — upload one or choose from the Media Library.</p>';
+            : emptyState("No images yet",
+                "Upload one, or choose a picture from the Media Library.");
           grid.querySelectorAll("[data-gal-left]").forEach(function (b) {
             b.addEventListener("click", function () {
               var i = +b.getAttribute("data-gal-left");
@@ -1454,12 +1504,16 @@
               '<span class="media-actions"><button class="btn btn--ghost btn--small" data-save-alt>Save alt</button>' +
               '<button class="btn btn--ghost btn--small" data-copy>Copy URL</button>' +
               '<button class="btn btn--ghost btn--small" data-del>Delete</button></span></figcaption></figure>';
-          }).join("") + "</div>" : '<p class="admin-inline-note">Nothing uploaded yet.</p>') + "</div>" +
+          }).join("") + "</div>"
+            : emptyState("No images in the library yet",
+                "Upload one above — it becomes available to every page, rental item and section.")) + "</div>" +
           '<div class="admin-panel"><h2>Site assets</h2>' +
           '<p class="admin-inline-note" style="margin-bottom:12px;">Replacing keeps the same address, so every page using the file updates instantly.</p>' +
           '<div class="table-scroll"><table class="admin-table"><thead><tr><th></th><th>File</th><th>Size</th><th>Used on</th><th>State</th><th></th></tr></thead><tbody>' +
           (d.siteAssets || []).map(function (a) {
-            var img = a.ext === "glb" ? "" : '<img class="jz-thumb" src="/' + esc(a.path) + '?t=' + (a.overridden ? a.overrideBytes : 0) + '" alt="" loading="lazy">';
+            /* site assets are transparent logos and wordmarks: they need the
+               white plate and must not be cropped, unlike a rental photograph */
+            var img = a.ext === "glb" ? "" : '<img class="jz-thumb jz-thumb--plate" src="/' + esc(a.path) + '?t=' + (a.overridden ? a.overrideBytes : 0) + '" alt="" loading="lazy">';
             return '<tr data-path="' + esc(a.path) + '"><td>' + img + "</td>" +
               "<td>" + esc(a.path.replace("assets/", "")) + "</td>" +
               '<td class="muted">' + esc(fmtBytes(a.overridden ? a.overrideBytes : a.bytes)) + "</td>" +
@@ -1564,7 +1618,10 @@
           '<div class="admin-panel"><h2>Identity</h2><div class="table-scroll"><table class="admin-table"><thead>' +
           "<tr><th>Asset</th><th>Preview</th><th>State</th><th></th></tr></thead><tbody>" +
           (d.identity || []).map(function (s) {
-            var prev = s.kind === "pdflogo" ? '<span class="muted">used inside generated PDFs</span>'
+            /* the same tile on every row: a sentence in the column where the
+               other three show artwork made the set impossible to compare */
+            var prev = s.kind === "pdflogo"
+              ? '<span class="ident-prev ident-prev--none" title="Used inside generated PDFs">PDF</span>'
               : '<img class="ident-prev' + (s.slot === "logoDark" ? " ident-prev--dark" : "") + '" src="/' + esc(s.path) + '?t=' + Date.now() + '" alt="">';
             return '<tr data-slot="' + esc(s.slot) + '"><td>' + esc(s.label) + "</td><td>" + prev + "</td>" +
               "<td>" + (s.overridden ? '<span class="badge-ok">custom</span>' : '<span class="muted">default</span>') + "</td>" +
@@ -3252,11 +3309,13 @@
         var t = d.totals || {};
         var s = d.settings || {};
 
+        /* the same chip the dashboard uses — this screen used to render a
+           bare badge inside the <b>, so +12% read differently on each */
         function delta(v) {
           if (v === null || v === undefined) return "";
-          var cls = v >= 0 ? "badge-ok" : "badge-bad";
-          return ' <span class="' + cls + '" style="font-size:0.72rem;">' +
-                 (v >= 0 ? "+" : "") + esc(v) + "%</span>";
+          var cls = v > 0 ? "up" : (v < 0 ? "down" : "flat");
+          return '<span class="stat-delta stat-delta--' + cls + '">' +
+                 (v > 0 ? "▲ +" : v < 0 ? "▼ " : "= ") + esc(v) + "% vs the period before</span>";
         }
         function sparkline(series) {
           if (!series.length) return "";
@@ -3279,12 +3338,12 @@
             '<stop offset="100%" stop-color="var(--orange)" stop-opacity="0.02"/></linearGradient></defs>' +
             '<polygon points="' + area + '" fill="url(#cg)"></polygon>' +
             '<polyline points="' + line + '" fill="none" stroke="var(--orange-2)" stroke-width="2.5" ' +
-            'stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+            'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></polyline>' +
             '<polyline points="' + pts("visitors") + '" fill="none" stroke="var(--violet-2)" ' +
-            'stroke-width="2" stroke-dasharray="5 4"></polyline></svg>';
+            'stroke-width="2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></polyline></svg>';
         }
         function barList(rows, empty, suffix) {
-          if (!rows || !rows.length) return '<p class="admin-inline-note">' + esc(empty) + "</p>";
+          if (!rows || !rows.length) return '<p class="panel-empty">' + esc(empty) + "</p>";
           var max = Math.max.apply(null, rows.map(function (x) { return x.count; })) || 1;
           return '<div class="bar-list">' + rows.map(function (x) {
             return '<div class="bar-row"><span class="bar-label" title="' + esc(x.label) + '">' +
@@ -3297,17 +3356,17 @@
         main.innerHTML =
           '<h1 class="admin-h1">Site Insights</h1>' +
           '<p class="admin-sub">Your own measurement — no cookies, no visitor profiles. Visitor counts use a key that changes every day, so nobody can be followed across days or identified.</p>' +
-          '<div class="ins-toolbar">' +
+          '<div class="ins-toolbar"><span class="jz-seg" role="group" aria-label="Date range">' +
           [7, 30, 90, 365].map(function (n) {
             var on = !rng.start && n === days;
-            return '<button class="btn btn--small ' + (on ? "btn--primary" : "btn--ghost") +
+            return '<button type="button" aria-pressed="' + (on ? "true" : "false") +
               '" data-days="' + n + '">' + (n === 365 ? "12 months" : n + " days") + "</button>";
-          }).join("") +
+          }).join("") + "</span>" +
           '<span class="date-range"><label for="ins-from">From</label>' +
           '<input type="date" id="ins-from" value="' + esc(rng.start || d.start) + '" max="' + esc(d.end) + '">' +
           '<label for="ins-to">to</label>' +
           '<input type="date" id="ins-to" value="' + esc(rng.end || d.end) + '" max="' + esc(d.end) + '">' +
-          '<button class="btn btn--ghost btn--small" id="ins-apply">Apply</button>' +
+          '<button class="btn btn--primary btn--small" id="ins-apply">Apply</button>' +
           (rng.start ? '<button class="btn btn--ghost btn--small" id="ins-clear">Clear</button>' : "") +
           "</span>" +
           '<span class="ed-spacer"></span>' +
@@ -3318,13 +3377,14 @@
                 return '<p class="ins-alert ins-alert--' + esc(a.level) + '">' + esc(a.text) + "</p>";
               }).join("") + "</div>" : "") +
           '<div class="stat-row">' +
-          '<div class="stat-card"><b>' + esc(t.views || 0) + delta(t.viewsChange) + "</b><span>Pageviews</span></div>" +
-          '<div class="stat-card"><b>' + esc(t.visitors || 0) + delta(t.visitorsChange) + "</b><span>Visitors</span></div>" +
+          '<div class="stat-card"><b>' + esc(t.views || 0) + "</b><span>Pageviews</span>" + delta(t.viewsChange) + "</div>" +
+          '<div class="stat-card"><b>' + esc(t.visitors || 0) + "</b><span>Visitors</span>" + delta(t.visitorsChange) + "</div>" +
           '<div class="stat-card"><b>' + esc(t.sessions || 0) + "</b><span>Visits</span></div>" +
           '<div class="stat-card"><b>' + esc((d.funnel && d.funnel[2] ? d.funnel[2].count : 0)) + "</b><span>Enquiries sent</span></div>" +
           '<div class="stat-card"><b>' + esc(d.manualDownloads || 0) + "</b><span>Manuals downloaded</span></div></div>" +
           '<div class="admin-panel"><h2>Traffic</h2>' +
-          (t.views ? sparkline(d.series || []) : '<p class="admin-inline-note">No visits recorded yet — the beacon starts counting as soon as people browse the site.</p>') +
+          (t.views ? sparkline(d.series || [])
+            : '<p class="panel-empty">No visits recorded yet — the beacon starts counting as soon as people browse the site.</p>') +
           '<p class="admin-inline-note"><span class="key key--orange"></span> Pageviews &nbsp; <span class="key key--violet"></span> Visitors &nbsp;·&nbsp; ' +
           esc(d.start) + " → " + esc(d.end) + "</p></div>" +
           '<div class="ins-grid">' +
@@ -3441,14 +3501,26 @@
         main.innerHTML =
           '<h1 class="admin-h1">Operations</h1>' +
           '<p class="admin-sub">Backups, scheduled publishing, the announcement bar and a health check of the whole site.</p>' +
-          '<div class="admin-panel"><h2>Security centre <span class="ops-score">' +
-          esc(d.score) + "/" + esc(d.total) + " security checks passing" +
-          (d.advisories ? " · " + esc(d.advisories) + " suggestion(s)" : "") + "</span></h2>" +
-          '<div class="ops-checks">' + (d.checks || []).map(function (c) {
-            return '<div class="ops-check ops-check--' + (c.ok ? "ok" : (c.weight === "info" ? "info" : "bad")) + '">' +
-              '<span class="ops-dot">' + (c.ok ? "✓" : (c.weight === "info" ? "i" : "!")) + "</span>" +
-              "<div><b>" + esc(c.label) + "</b><span>" + esc(c.detail) + "</span></div></div>";
-          }).join("") + "</div>" +
+          /* "2 of 4 passing" printed above nine tiles, with a passing advisory
+             drawing the same tick as a passing gate: nothing said which four
+             the score was counting. Two labelled groups, one panel. */
+          '<div class="admin-panel"><h2>Security centre</h2>' +
+          (function () {
+            function tile(c) {
+              return '<div class="ops-check ops-check--' + (c.ok ? "ok" : (c.weight === "info" ? "info" : "bad")) + '">' +
+                '<span class="ops-dot">' + (c.ok ? "✓" : (c.weight === "info" ? "i" : "!")) + "</span>" +
+                "<div><b>" + esc(c.label) + "</b><span>" + esc(c.detail) + "</span></div></div>";
+            }
+            var all = d.checks || [];
+            var gates = all.filter(function (c) { return c.weight !== "info"; });
+            var tips = all.filter(function (c) { return c.weight === "info"; });
+            return '<h3 class="ins-h3">Security checks — ' + esc(d.score) + " of " + esc(d.total) +
+              " passing</h3><div class=\"ops-checks\">" + gates.map(tile).join("") + "</div>" +
+              (tips.length
+                ? '<h3 class="ins-h3" style="margin-top:18px;">Suggestions — ' + esc(tips.length) +
+                  '</h3><div class="ops-checks">' + tips.map(tile).join("") + "</div>"
+                : "");
+          })() +
           '<div class="stat-row" style="margin-top:18px;">' +
           '<div class="stat-card"><b>' + esc(d.users.active) + "</b><span>Active accounts</span></div>" +
           '<div class="stat-card"><b>' + esc(d.sessions) + "</b><span>Open sessions</span></div>" +
@@ -3607,26 +3679,34 @@
           '<h1 class="admin-h1">Email</h1>' +
           '<p class="admin-sub">Sender identity, where each form is delivered, and the confirmation your customers receive. ' +
           "The email service key lives on the server only — it is never shown or stored here.</p>" +
-          (d.configured ? "" :
-            '<p class="ins-alert ins-alert--warn">No email service key is configured on the server yet ' +
-            "(RESEND_API_KEY). Settings can be prepared now; sending starts once the key is in place.</p>") +
-          '<div class="stat-row stat-row--tight">' +
-          '<div class="stat-card' + (pending ? " stat-card--warn" : "") + '"><b>' + esc(pending) +
-          "</b><span>Pending</span></div>" +
-          '<div class="stat-card"><b>' + esc(sending) + "</b><span>Sending</span></div>" +
-          '<div class="stat-card"><b>' + esc(stats.sent || 0) + "</b><span>Sent</span></div>" +
-          '<div class="stat-card' + (failed ? " stat-card--bad" : "") + '"><b>' + esc(failed) +
-          "</b><span>Failed</span></div>" +
-          '<div class="stat-card"><b>' + esc(stats.total || 0) + "</b><span>Total deliveries</span></div></div>" +
-          (failed
-            ? '<p class="ins-alert ins-alert--warn mail-health">\u26a0 <b>Email delivery attention required</b> — ' +
-              esc(failed) + " email deliver" + (failed === 1 ? "y" : "ies") + " failed and require review" +
-              (pending ? ", " + esc(pending) + " still waiting to send" : "") +
-              ". Retry them under Recent deliveries below.</p>"
-            : pending
-              ? '<p class="ins-alert mail-health">' + esc(pending) + " email" + (pending === 1 ? " is" : "s are") +
-                " waiting in the queue — the server sends them automatically.</p>"
-              : '<p class="ins-alert ins-alert--good mail-health">\u2713 Email delivery is healthy.</p>') +
+          /* One verdict, not two. With no key on the server the screen used to
+             carry an amber "sending is off" banner and a green "delivery is
+             healthy" line 165px below it — healthy being derived from counts
+             that are zero precisely because nothing can be sent. */
+          (d.configured
+            ? '<div class="stat-row stat-row--tight">' +
+              '<div class="stat-card' + (pending ? " stat-card--warn" : "") + '"><b>' + esc(pending) +
+              "</b><span>Pending</span></div>" +
+              '<div class="stat-card"><b>' + esc(sending) + "</b><span>Sending</span></div>" +
+              '<div class="stat-card"><b>' + esc(stats.sent || 0) + "</b><span>Sent</span></div>" +
+              '<div class="stat-card' + (failed ? " stat-card--bad" : "") + '"><b>' + esc(failed) +
+              "</b><span>Failed</span></div>" +
+              '<div class="stat-card"><b>' + esc(stats.total || 0) + "</b><span>Total deliveries</span></div></div>" +
+              (failed
+                ? '<p class="ins-alert ins-alert--warn mail-health">\u26a0 <b>Email delivery attention required</b> — ' +
+                  esc(failed) + " email deliver" + (failed === 1 ? "y" : "ies") + " failed and require review" +
+                  (pending ? ", " + esc(pending) + " still waiting to send" : "") +
+                  ". Retry them under Recent deliveries below.</p>"
+                : pending
+                  ? '<p class="ins-alert mail-health">' + esc(pending) + " email" + (pending === 1 ? " is" : "s are") +
+                    " waiting in the queue — the server sends them automatically.</p>"
+                  : stats.total
+                    ? '<p class="ins-alert ins-alert--good mail-health">\u2713 Email delivery is healthy.</p>'
+                    : '<p class="ins-alert mail-health">Nothing has been sent yet — the first form submission ' +
+                      "will show up here.</p>")
+            : '<p class="ins-alert ins-alert--warn mail-health">Sending is paused — there is no email service key ' +
+              "on the server (RESEND_API_KEY). Everything below can be set up now and starts working the moment " +
+              "the key is in place.</p>") +
 
           '<div class="admin-panel"><h2>Sender &amp; branding</h2>' +
           '<form class="admin-form" id="em-general">' +
@@ -3649,7 +3729,10 @@
               "<td>" + (f.internalOn ? '<span class="badge-ok">on</span>' : '<span class="muted">off</span>') + "</td>" +
               "<td>" + (f.customerOn ? '<span class="badge-ok">on</span>' : '<span class="muted">off</span>') + "</td>" +
               '<td class="cell-actions"><button class="btn btn--ghost btn--small" data-pick="' + esc(f.key) + '">Edit</button></td></tr>';
-          }).join("") + "</tbody></table></div></div>" +
+          }).join("") +
+          (forms.length ? "" : '<tr><td colspan="5">' +
+            emptyState("No forms configured", "Forms appear here once the site defines them.") + "</td></tr>") +
+          "</tbody></table></div></div>" +
 
           '<div class="admin-panel"><h2>' + esc(current.label || "") + " — notification &amp; template</h2>" +
           '<form class="admin-form" id="em-form">' +
@@ -3701,7 +3784,8 @@
                     ? ' <button class="btn btn--ghost btn--small" data-retry="' + esc(l.reference) + '">Retry</button>'
                     : "") + "</td></tr>";
               }).join("") + "</tbody></table></div>"
-            : '<p class="admin-inline-note">Nothing sent yet.</p>') + "</div>" +
+            : emptyState("Nothing sent yet",
+                "Delivery attempts appear here as soon as the site sends its first email.")) + "</div>" +
           '<div class="picker-overlay" id="em-preview" hidden><div class="picker-box">' +
           '<div class="picker-head"><div><h2 id="pv-subject">Preview</h2>' +
           '<p class="admin-inline-note" id="pv-meta"></p></div>' +
@@ -3827,7 +3911,10 @@
               "<td><button class=\"btn btn--ghost btn--small\" data-save>Save</button> " +
               "<button class=\"btn btn--ghost btn--small\" data-toggle>" + (u.active ? "Disable" : "Enable") + "</button> " +
               "<button class=\"btn btn--ghost btn--small\" data-reset2fa>Reset 2FA</button></td></tr>";
-          }).join("") + "</tbody></table></div></div>" +
+          }).join("") +
+          (r.data.users.length ? "" : '<tr><td colspan="7">' +
+            emptyState("No team members yet", "Invite someone below to give them access.") + "</td></tr>") +
+          "</tbody></table></div></div>" +
           '<div class="admin-panel"><h2>Invite a new user</h2><form class="admin-form" id="user-create">' +
           '<div><label for="nu-name">Name</label><input id="nu-name" required minlength="2" maxlength="120"></div>' +
           '<div><label for="nu-email">Email</label><input id="nu-email" type="email" required maxlength="200"></div>' +
@@ -3870,6 +3957,17 @@
       api("/api/admin/audit?limit=150").then(function (r) {
         if (!r.ok) return apiErr(r);
         var chain = r.data.chain || {};
+        /* the payload was printed verbatim, so the widest column read
+           {"count": 0, "kind": "all"} — and for a sign-in, a bare {} */
+        function detailCell(raw) {
+          var o;
+          try { o = JSON.parse(raw || "{}"); } catch (e) { return esc(raw || ""); }
+          var keys = o && typeof o === "object" ? Object.keys(o) : [];
+          if (!keys.length) return "—";
+          return '<span title="' + esc(raw) + '">' + keys.map(function (k) {
+            return esc(k) + " " + esc(String(o[k]));
+          }).join(" · ") + "</span>";
+        }
         main.innerHTML =
           '<h1 class="admin-h1">Activity log</h1>' +
           '<p class="admin-sub">Append-only and hash-chained — ' +
@@ -3879,10 +3977,13 @@
           '<div class="table-scroll"><table class="admin-table"><thead>' +
           "<tr><th>When</th><th>Who</th><th>Action</th><th>Module</th><th>Detail</th></tr></thead><tbody>" +
           (r.data.entries || []).map(function (a) {
-            return "<tr><td class=\"muted\">" + esc(when(a.ts)) + "</td><td>" + esc(a.user_email) +
+            return "<tr><td>" + esc(when(a.ts)) + "</td><td>" + esc(a.user_email) +
               "</td><td>" + esc(a.action) + "</td><td class=\"muted\">" + esc(a.module) +
-              "</td><td class=\"muted\">" + esc(a.detail) + "</td></tr>";
-          }).join("") + "</tbody></table></div></div>";
+              "</td><td class=\"muted\">" + detailCell(a.detail) + "</td></tr>";
+          }).join("") +
+          ((r.data.entries || []).length ? "" : '<tr><td colspan="5">' +
+            emptyState("No activity yet", "Actions taken in the panel are recorded here.") + "</td></tr>") +
+          "</tbody></table></div></div>";
       });
     },
 
@@ -3908,9 +4009,9 @@
           '<p class="admin-sub">Everything the site reads from configuration, and where each one shows up. ' +
           "Settings that live on their own screen are listed at the bottom with a link.</p>" +
 
-          '<div class="admin-panel"><h2>Staff notifications</h2>' +
-          '<p class="admin-inline-note" style="margin-bottom:14px;">Internal alerts about new submissions. ' +
-          "These are separate from the customer emails, which are configured on the Email screen.</p>" +
+          '<div class="admin-panel"><h2>Notifications &amp; languages</h2>' +
+          '<p class="admin-inline-note" style="margin-bottom:14px;">Internal alerts about new submissions, ' +
+          "and which editions of the site are published. Customer emails are configured on the Email screen.</p>" +
           '<form class="admin-form" id="settings-form">' +
 
           '<div class="full"><label for="s-emails">Alert recipients (one email per line)</label>' +
@@ -3923,6 +4024,7 @@
                (smtp ? "The legacy SMTP route is also configured and is used if the mail service is not."
                      : "")) + "</div>" +
 
+          '<h3 class="ins-h3 full" style="margin: 6px 0 -4px;">Languages</h3>' +
           '<div><label for="s-lang">Published languages</label><select id="s-lang">' +
           '<option value="en"' + (langs.indexOf("ar") === -1 ? " selected" : "") + ">English only</option>" +
           '<option value="en,ar"' + (langs.indexOf("ar") !== -1 ? " selected" : "") + ">English + Arabic</option>" +
@@ -4024,11 +4126,16 @@
             return "<tr><td>" + (s.current ? '<span class="badge-ok">this device</span>' : "") +
               "</td><td class=\"muted\">" + esc(when(s.createdAt)) + "</td><td class=\"muted\">" + esc(when(s.expiresAt)) +
               "</td><td class=\"muted\">" + esc(s.userAgent) + "</td></tr>";
-          }).join("") + "</tbody></table></div>" +
+          }).join("") +
+          ((r.data.sessions || []).length ? "" : '<tr><td colspan="4">' +
+            emptyState("No active sessions", "Sessions appear here while you are signed in.") + "</td></tr>") +
+          "</tbody></table></div>" +
           '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="revoke-others">Sign out other devices</button></div></div>';
         document.getElementById("revoke-others").addEventListener("click", function () {
           api("/api/admin/sessions/revoke-others", {}).then(function (r2) {
-            r2.ok ? (toast("Signed out " + r2.data.revoked + " other session(s)."), views.security()) : apiErr(r2);
+            r2.ok ? (toast("Signed out " + r2.data.revoked +
+              (r2.data.revoked === 1 ? " other session." : " other sessions.")), views.security())
+                  : apiErr(r2);
           });
         });
       });
@@ -4174,10 +4281,12 @@
           (jzState.priceMax || "any") + " " + cur]);
       }
 
+      /* A zero is good news: an amber or red border on "0 out of stock" made
+         the screen shout at a catalogue that is perfectly healthy. */
       var cards = [["", jzNum(t.all), "Items in the snapshot", "all"],
-                   ["ok", jzNum(t.in), "In stock", "in"],
-                   ["warn", jzNum(t.low), "Low stock (≤ " + d.lowThreshold + ")", "low"],
-                   ["bad", jzNum(t.out), "Out of stock", "out"],
+                   [t.in ? "ok" : "", jzNum(t.in), "In stock", "in"],
+                   [t.low ? "warn" : "", jzNum(t.low), "Low stock (≤ " + d.lowThreshold + ")", "low"],
+                   [t.out ? "bad" : "", jzNum(t.out), "Out of stock", "out"],
                    ["", jzNum(t.hidden), "Hidden from the website", "hidden"]];
       var snap = d.snapshot || {};
 
@@ -4228,11 +4337,11 @@
           "results match any of them. Paste a column of SKUs and each line becomes its own term.</p>" +
           '<div class="jz-filters">' +
             sel("jz-sort", "Sort", jzState.sort,
-                [["featured", "Featured (website order)"], ["name", "Name A–Z"],
-                 ["sku", "SKU A–Z"], ["stockDesc", "Stock high → low"],
-                 ["stockAsc", "Stock low → high"]].concat(prices
-                   ? [["priceAsc", "Price low → high"], ["priceDesc", "Price high → low"]] : [])
-                 .concat([["brand", "Brand"]])) +
+                [["featured", "Sort: featured (website order)"], ["name", "Sort: name A–Z"],
+                 ["sku", "Sort: SKU A–Z"], ["stockDesc", "Sort: stock high → low"],
+                 ["stockAsc", "Sort: stock low → high"]].concat(prices
+                   ? [["priceAsc", "Sort: price low → high"], ["priceDesc", "Sort: price high → low"]] : [])
+                 .concat([["brand", "Sort: brand"]])) +
             sel("jz-stock", "Stock status", jzState.stock,
                 [["in", "In stock"], ["low", "Low stock (≤ " + d.lowThreshold + ")"],
                  ["out", "Out of stock"], ["incoming", "Incoming expected"]]
@@ -4250,7 +4359,7 @@
               '<i aria-hidden="true">–</i>' +
               '<input id="jz-pmax" type="number" min="0" step="0.01" placeholder="Max" aria-label="Maximum price" value="' + esc(jzState.priceMax) + '">' +
               "<em>" + esc(cur) + " ex VAT</em></span>" : "") +
-            '<button class="btn btn--primary btn--small jz-export" id="jz-export">Export ▾</button>' +
+            '<button class="btn btn--ghost btn--small jz-export" id="jz-export">Export ▾</button>' +
           "</div>" +
           (chips.length ? '<div class="jz-applied"><span class="muted">Filters:</span>' +
             chips.map(function (c) {
@@ -4315,8 +4424,14 @@
                 '<td class="jz-cell-actions cell-actions"><button class="dots-btn" data-jzrow="' +
                   esc(it.id) + '" aria-label="Actions for ' + esc(it.code) + '">⋮</button></td></tr>';
             }).join("")
-              : '<tr><td colspan="12"><div class="jz-empty"><b>Nothing matches.</b><br>' +
-                '<span class="admin-inline-note">Try removing a filter, or search a different SKU.</span></div></td></tr>') +
+              : '<tr><td colspan="12">' + (t.all
+                  ? emptyState("Nothing matches",
+                               "Try removing a filter, or search a different SKU.")
+                  /* "try removing a filter" is unhelpful advice when there is
+                     no snapshot to filter — say what is actually missing */
+                  : emptyState("Nothing cached for this market yet",
+                               "Run a sync from the Jasani console and the catalogue "
+                               + "appears here.")) + "</td></tr>") +
           "</tbody></table></div>" +
           '<div class="jz-foot"><span>Showing ' +
             (d.matched ? jzNum((d.page - 1) * d.perPage + 1) + "–" +
@@ -4533,8 +4648,8 @@
                 '<span class="coll-card__meta">' + esc(c.count) + " " +
                 esc(c.itemLabel + (c.count === 1 ? "" : "s")) +
                 (c.hidden ? ' · <b class="coll-hid">' + esc(c.hidden) + " hidden</b>" : "") +
-                ' · <span class="coll-state">' + (c.managed ? "edited here" : "as shipped") +
-                "</span></span></a>";
+                ' <span class="coll-state' + (c.managed ? " coll-state--managed" : "") + '">' +
+                (c.managed ? "edited here" : "as shipped") + "</span></span></a>";
             }).join("") + "</div></div>";
         }).join("") +
         '<div class="admin-panel"><h2>Whole sections</h2><p class="admin-inline-note">' +
@@ -4628,8 +4743,8 @@
                     '<button class="btn btn--ghost btn--small" type="button" data-cancel>Cancel</button>' +
                   "</div></form></li>";
             }).join("") + "</ol>"
-          : '<p class="admin-inline-note">Nothing in this list yet — add the first ' +
-            esc(spec.itemLabel) + ".</p>") +
+          : emptyState("No " + spec.itemLabel + "s yet",
+              "Add the first one — it appears on the page as soon as you publish.")) +
         "</div>" +
         '<form class="admin-panel" id="coll-new" hidden><h2>New ' + esc(spec.itemLabel) + "</h2>" +
           '<div class="form-grid">' +
@@ -4978,12 +5093,44 @@
     if (!views[name]) { name = "dashboard"; param = ""; }
     var link = document.querySelector('.admin-nav a[data-view="' + name + '"]');
     if (link && link.hidden) { name = "dashboard"; param = ""; }
+    var active = null;
     document.querySelectorAll(".admin-nav a").forEach(function (a) {
-      a.classList.toggle("is-active", a.getAttribute("data-view") === name);
+      var on = a.getAttribute("data-view") === name;
+      a.classList.toggle("is-active", on);
+      if (on) active = a;
     });
+    /* only .admin-nav scrolls, so a link low in the list can open its screen
+       while sitting half off the bottom of the rail */
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
+    /* the narrow layout has no sidebar on screen — the bar says where you are */
+    var crumb = document.getElementById("admin-topbar-title");
+    if (crumb) crumb.textContent = active ? active.textContent.trim() : "Admin";
     main.classList.toggle("admin-main--wide", name === "editor");
     main.innerHTML = '<div class="admin-loading">Loading…</div>';
     views[name](param);
+    watchHeading();
+  }
+  /* On the phone the bar title and the page's own h1 are the same words 32px
+     apart — a fifth of the first screen spent saying it twice. The bar earns
+     its title only once the h1 has scrolled past it. Measured on scroll
+     rather than watched with an observer, because a view renders from a
+     fetch and the h1 does not exist yet when route() returns. */
+  function syncHeading() {
+    var bar = document.getElementById("admin-topbar");
+    if (!bar) return;
+    var h1 = main.querySelector(".admin-h1");
+    bar.classList.toggle("is-scrolled", !h1 || h1.getBoundingClientRect().bottom < 58);
+  }
+  var headingTick = 0;
+  function watchHeading(delay) {
+    if (headingTick) clearTimeout(headingTick);
+    headingTick = setTimeout(function () { headingTick = 0; syncHeading(); }, delay || 60);
+  }
+  window.addEventListener("scroll", function () { if (!headingTick) watchHeading(80); }, { passive: true });
+  /* a view arrives from a fetch, so the h1 does not exist when route() returns */
+  if (window.MutationObserver) {
+    new MutationObserver(function () { watchHeading(30); })
+      .observe(main, { childList: true });
   }
   window.addEventListener("hashchange", route);
 
