@@ -283,7 +283,10 @@
     touchedAttrPaths: {}, touchedAnimPaths: {},
     sections: [], sel: null,
     undo: [], redo: [],
-    onSelect: null, onReady: null, postFrame: null
+    onSelect: null, onReady: null, postFrame: null,
+    onSectionAction: null, onResize: null,
+    elements: [], elementHtml: {}, elementLabel: {},
+    copyHtml: {}, clip: null, panelMode: "select", lists: {}
   };
   window.addEventListener("message", function (ev) {
     if (ev.origin !== location.origin || !ev.data || typeof ev.data !== "object") return;
@@ -292,6 +295,10 @@
       edState.onSelect(ev.data);
     } else if (ev.data.type === "em-ready" && edState.onReady) {
       edState.onReady(ev.data);
+    } else if (ev.data.type === "em-sec-action" && edState.onSectionAction) {
+      edState.onSectionAction(ev.data);
+    } else if (ev.data.type === "em-resize" && edState.onResize) {
+      edState.onResize(ev.data);
     }
   });
 
@@ -1796,6 +1803,36 @@
         });
         return css;
       }
+      /* The markup a live preview shows for a section the editor added. A
+         blank section carries the elements placed in it; a pasted copy is
+         rendered by the server, from the same function the bake uses, and
+         cached so the preview never re-asks for markup it already has. */
+      function addedHtml(item) {
+        if (item.from) {
+          var key = item.from.page + "/" + item.from.sec;
+          var cached = st.copyHtml[key];
+          if (cached === undefined) {
+            st.copyHtml[key] = "";      // in flight — do not ask twice
+            api("/api/admin/section-copy?page=" + encodeURIComponent(item.from.page) +
+                "&sec=" + encodeURIComponent(item.from.sec)).then(function (r) {
+              st.copyHtml[key] = (r.ok && r.data && r.data.html) || "";
+              applyLive();
+            });
+            return "";
+          }
+          return cached.replace(/__ID__/g, item.id);
+        }
+        var html = (st.blockHtml[item.template] || "").replace(/__ID__/g, item.id);
+        if (item.children && item.children.length) {
+          var inner = item.children.map(function (c) {
+            return (st.elementHtml[c.template] || "")
+              .replace(/__EID__/g, c.id).replace(/__ID__/g, item.id);
+          }).join("");
+          html = html.replace(/(<div class="em-stack" data-em-slot="1")><\/div>/,
+                              function (_m, open) { return open + ">" + inner + "</div>"; });
+        }
+        return html;
+      }
       function applyLive() {
         if (!st.postFrame) return;
         var elements = mergedElements();
@@ -1823,8 +1860,7 @@
         });
         var sections = Object.assign({}, st.pageDoc.sections || {});
         sections.added = (sections.added || []).map(function (item) {
-          return { id: item.id, template: item.template,
-                   html: (st.blockHtml[item.template] || "").replace(/__ID__/g, item.id) };
+          return { id: item.id, template: item.template, html: addedHtml(item) };
         });
         st.postFrame({ type: "em-apply", css: buildCss(elements), attrs: attrs,
                        anims: anims, sections: sections, texts: texts, pathTexts: pathTexts });
@@ -1899,6 +1935,13 @@
         st.blocks.forEach(function (b) {
           st.blockHtml[b.id] = b.html;
           st.blockLabel[b.id] = b.label;
+        });
+        st.elements = (rs[4].data && rs[4].data.elements) || [];
+        st.maxElements = (rs[4].data && rs[4].data.maxElements) || 40;
+        st.elementHtml = {}; st.elementLabel = {};
+        st.elements.forEach(function (e) {
+          st.elementHtml[e.id] = e.html;
+          st.elementLabel[e.id] = e.label;
         });
 
         st.pageList = rs[2].data.pages;
@@ -2072,8 +2115,341 @@
           });
         }
 
+        /* ---------- section operations, shared by the list and the on-page bar ----------
+           One implementation, so the toolbar over a section and the row in the
+           Sections list can never disagree about what a button does. */
+        var CLIP = "em-editor-section-clip";
+        function secSpec() { return (st.pageDoc.sections = st.pageDoc.sections || {}); }
+        function knownOrder() {
+          var spec = st.pageDoc.sections || {};
+          var added = spec.added || [];
+          var known = st.sections.map(function (x) { return x.id; })
+            .concat(added.map(function (a) { return a.id; }));
+          var order = (spec.order && spec.order.length ? spec.order : known)
+            .filter(function (id) { return known.indexOf(id) !== -1; });
+          known.forEach(function (id) { if (order.indexOf(id) === -1) order.push(id); });
+          return order;
+        }
+        function secMutate(fn) {
+          /* The page's own sections are reported by the preview when it loads.
+             Writing an order before that arrives would list only the sections
+             the editor added, and the bake would append the real ones after
+             them — the page would come back reordered. */
+          if (!st.sections.length) {
+            toast("The page is still loading — try again in a moment.", true);
+            return;
+          }
+          pushUndo();
+          var s = secSpec();
+          s.order = knownOrder();
+          fn(s);
+          st.docTouched.page = true;
+          applyLive();
+          if (st.panelMode === "sections") renderSections();
+          else if (st.sel) st.onSelect(st.sel);
+          refreshDirty();
+        }
+        function nextAddedId() {
+          var used = ((st.pageDoc.sections || {}).added || []).map(function (a) {
+            return parseInt(a.id.slice(1), 10);
+          });
+          var n = 1;
+          while (used.indexOf(n) !== -1) n++;
+          return "a" + n;
+        }
+        function addedEntry(id) {
+          return (((st.pageDoc.sections || {}).added) || []).filter(function (a) {
+            return a.id === id;
+          })[0] || null;
+        }
+        function sectionLabel(id) {
+          var found = st.sections.filter(function (x) { return x.id === id; })[0];
+          if (found) return found.label;
+          var entry = addedEntry(id);
+          if (!entry) return id;
+          if (entry.from) return "Copy of a section";
+          return (st.blockLabel[entry.template] || "Block") + " (added)";
+        }
+        function dropSectionOverrides(id) {
+          Object.keys(st.pageDoc.elements).forEach(function (path) {
+            if (path.indexOf("[data-em-sec=" + id + "]") === 0) delete st.pageDoc.elements[path];
+          });
+        }
+        function atLimit() {
+          var current = ((st.pageDoc.sections || {}).added || []);
+          if (current.length >= st.maxBlocks) {
+            toast("That is the most sections one page can hold.", true);
+            return true;
+          }
+          return false;
+        }
+
+        function secDuplicate(id) {
+          if (atLimit()) return;
+          var entry = addedEntry(id);
+          var copy = { id: nextAddedId() };
+          if (entry && entry.from) copy.from = entry.from;
+          else if (entry) {
+            copy.template = entry.template;
+            if (entry.children) {
+              copy.children = entry.children.map(function (c, i) {
+                return { id: "e" + (i + 1), template: c.template };
+              });
+            }
+          } else copy.from = { page: st.page, sec: id };
+          secMutate(function (s) {
+            s.added = (s.added || []).concat([copy]);
+            var at = s.order.indexOf(id);
+            if (at === -1) s.order.push(copy.id);
+            else s.order.splice(at + 1, 0, copy.id);
+          });
+          toast("Duplicated — the copy sits directly below and can be edited on its own.");
+        }
+        function secCopy(id) {
+          var entry = addedEntry(id);
+          var payload = entry && entry.from ? { from: entry.from }
+            : entry ? { template: entry.template, children: entry.children || null }
+            : { from: { page: st.page, sec: id } };
+          payload.label = sectionLabel(id);
+          try { localStorage.setItem(CLIP, JSON.stringify(payload)); } catch (e) { /* private mode */ }
+          st.clip = payload;
+          toast("Copied — open any page and press Paste section.");
+          if (st.panelMode === "sections") renderSections();
+        }
+        function readClip() {
+          if (st.clip) return st.clip;
+          try {
+            var raw = localStorage.getItem(CLIP);
+            st.clip = raw ? JSON.parse(raw) : null;
+          } catch (e) { st.clip = null; }
+          return st.clip;
+        }
+        function secPaste() {
+          var clip = readClip();
+          if (!clip) { toast("Nothing copied yet — use ⎘ on a section first.", true); return; }
+          if (atLimit()) return;
+          var entry = { id: nextAddedId() };
+          if (clip.from) entry.from = clip.from;
+          else {
+            entry.template = clip.template;
+            if (clip.children) entry.children = clip.children.map(function (c, i) {
+              return { id: "e" + (i + 1), template: c.template };
+            });
+          }
+          secMutate(function (s) {
+            s.added = (s.added || []).concat([entry]);
+            s.order = s.order.concat([entry.id]);
+          });
+          toast("Pasted at the bottom of the page.");
+        }
+        function secHide(id) {
+          secMutate(function (s) {
+            s.removed = s.removed || [];
+            var i = s.removed.indexOf(id);
+            if (i === -1) s.removed.push(id); else s.removed.splice(i, 1);
+          });
+        }
+        function secDelete(id) {
+          var entry = addedEntry(id);
+          var msg = entry
+            ? "Delete this section and everything written in it?"
+            : "Remove this section from the page? You can put it back from the Sections list.";
+          if (!confirm(msg)) return;
+          secMutate(function (s) {
+            if (entry) {
+              s.added = (s.added || []).filter(function (a) { return a.id !== id; });
+              s.order = s.order.filter(function (x) { return x !== id; });
+              s.removed = (s.removed || []).filter(function (x) { return x !== id; });
+              s.duplicated = (s.duplicated || []).filter(function (x) { return x !== id; });
+              dropSectionOverrides(id);
+            } else {
+              s.removed = (s.removed || []).concat(
+                (s.removed || []).indexOf(id) === -1 ? [id] : []);
+            }
+          });
+          if (!entry) toast("Removed from the page — restore it any time from Sections.");
+        }
+        function secMove(id, step) {
+          secMutate(function (s) {
+            var i = s.order.indexOf(id);
+            var to = i + step;
+            if (i === -1 || to < 0 || to >= s.order.length) return;
+            s.order.splice(i, 1);
+            s.order.splice(to, 0, id);
+          });
+        }
+        function secMoveBefore(id, beforeId) {
+          if (id === beforeId) return;
+          secMutate(function (s) {
+            var i = s.order.indexOf(id);
+            if (i === -1) return;
+            s.order.splice(i, 1);
+            var at = beforeId ? s.order.indexOf(beforeId) : -1;
+            if (at === -1) s.order.push(id); else s.order.splice(at, 0, id);
+          });
+        }
+
+        st.onSectionAction = function (msg) {
+          var id = msg.id;
+          if (msg.action === "up") secMove(id, -1);
+          else if (msg.action === "down") secMove(id, 1);
+          else if (msg.action === "move") secMoveBefore(id, msg.before || null);
+          else if (msg.action === "duplicate") secDuplicate(id);
+          else if (msg.action === "copy") secCopy(id);
+          else if (msg.action === "hide") secHide(id);
+          else if (msg.action === "delete") secDelete(id);
+        };
+
+        /* a drag on an edge handle writes a real width/height for the viewport
+           being edited, so it is responsive like every other style */
+        st.onResize = function (msg) {
+          if (!msg.path) return;
+          pushUndo();
+          if (msg.width) setStyle(msg.path, "width", msg.width);
+          if (msg.height) setStyle(msg.path, "height", msg.height);
+          if (st.sel && st.sel.path === msg.path) st.onSelect(st.sel);
+          toast("Size set for " + st.vw + ".");
+        };
+
+        /* ---------- elements inside a blank section ---------- */
+        function elMutate(secId, fn) {
+          secMutate(function (s) {
+            var entry = (s.added || []).filter(function (a) { return a.id === secId; })[0];
+            if (!entry) return;
+            entry.children = entry.children || [];
+            fn(entry);
+          });
+        }
+        function nextElId(entry) {
+          var used = (entry.children || []).map(function (c) { return parseInt(c.id.slice(1), 10); });
+          var n = 1;
+          while (used.indexOf(n) !== -1) n++;
+          return "e" + n;
+        }
+        function elAdd(secId, template) {
+          elMutate(secId, function (entry) {
+            if ((entry.children || []).length >= (st.maxElements || 40)) {
+              toast("That is the most elements one section can hold.", true);
+              return;
+            }
+            entry.children.push({ id: nextElId(entry), template: template });
+          });
+          toast("Added — click it in the page to write and style it.");
+        }
+        function elMove(secId, elId, step) {
+          elMutate(secId, function (entry) {
+            var i = entry.children.map(function (c) { return c.id; }).indexOf(elId);
+            var to = i + step;
+            if (i === -1 || to < 0 || to >= entry.children.length) return;
+            entry.children.splice(to, 0, entry.children.splice(i, 1)[0]);
+          });
+        }
+        function elDuplicate(secId, elId) {
+          elMutate(secId, function (entry) {
+            var i = entry.children.map(function (c) { return c.id; }).indexOf(elId);
+            if (i === -1) return;
+            entry.children.splice(i + 1, 0,
+              { id: nextElId(entry), template: entry.children[i].template });
+          });
+        }
+        function elDelete(secId, elId) {
+          if (!confirm("Delete this element?")) return;
+          elMutate(secId, function (entry) {
+            entry.children = entry.children.filter(function (c) { return c.id !== elId; });
+          });
+          Object.keys(st.pageDoc.elements).forEach(function (path) {
+            if (path.indexOf("[data-em-sec=" + secId + "]>[data-em-el=" + elId + "]") === 0) {
+              delete st.pageDoc.elements[path];
+            }
+          });
+        }
+
+        /* ---------- the repeating items of a section, edited in place ----------
+           Adding an eleventh service happens here, on the page you are looking
+           at. An item change is a draft like any other: it reaches the site at
+           the next Publish, and the frame is reloaded so the preview shows it. */
+        function loadList(name, redraw) {
+          return api("/api/admin/collections/" + encodeURIComponent(name)).then(function (r) {
+            if (!r.ok) return apiErr(r);
+            st.lists[name] = {
+              label: r.data.collection.label, itemLabel: r.data.collection.itemLabel,
+              titleField: r.data.collection.titleField, fields: r.data.collection.fields,
+              items: r.data.items || [], count: (r.data.items || []).length
+            };
+            if (redraw) reloadFrame();
+            if (st.sel) st.onSelect(st.sel);
+          });
+        }
+
+        function itemField(f, value) {
+          var id = "li-" + f.key;
+          var label = "<label>" + esc(f.label) +
+            (f.required ? ' <span class="req">required</span>' : "") + "</label>" +
+            (f.hint ? '<span class="admin-inline-note">' + esc(f.hint) + "</span>" : "");
+          if (f.type === "textarea" || f.type === "lines") {
+            return label + '<textarea id="' + id + '" data-key="' + esc(f.key) + '" rows="' +
+              (f.type === "lines" ? 5 : 3) + '" maxlength="' + (f.max || 400) + '">' +
+              esc(value || "") + "</textarea>";
+          }
+          if (f.type === "select") {
+            return label + '<select id="' + id + '" data-key="' + esc(f.key) + '">' +
+              (f.options || []).map(function (o) {
+                return '<option value="' + esc(o.value) + '"' +
+                  (String(value) === o.value ? " selected" : "") + ">" + esc(o.label) + "</option>";
+              }).join("") + "</select>";
+          }
+          if (f.type === "image") {
+            return label + '<span class="ed-color"><input id="' + id + '" data-key="' + esc(f.key) +
+              '" type="text" value="' + esc(value || "") + '" maxlength="' + (f.max || 240) + '">' +
+              '<button type="button" class="btn btn--ghost btn--small" data-lipick="' +
+              esc(f.key) + '">Pick</button></span>';
+          }
+          return label + '<input id="' + id + '" data-key="' + esc(f.key) + '" type="text" value="' +
+            esc(value || "") + '" maxlength="' + (f.max || 300) + '">';
+        }
+
+        function openItemForm(name, item, box) {
+          var lst = st.lists[name];
+          if (!lst || !box) return;
+          var values = (item && item.values) || {};
+          box.innerHTML =
+            '<div class="ed-liform"><h3>' + (item ? "Edit" : "New " + esc(lst.itemLabel)) + "</h3>" +
+            lst.fields.map(function (f) { return itemField(f, values[f.key]); }).join("") +
+            '<div class="admin-actions" style="margin-top:10px;">' +
+            '<button class="btn btn--primary btn--small" data-lisave="1">Save</button>' +
+            '<button class="btn btn--ghost btn--small" data-licancel="1">Cancel</button></div></div>';
+          box.querySelectorAll("[data-lipick]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              openPicker(function (url) {
+                var input = box.querySelector('[data-key="' + btn.getAttribute("data-lipick") + '"]');
+                if (input) input.value = url;
+              });
+            });
+          });
+          box.querySelector("[data-licancel]").addEventListener("click", function () {
+            box.innerHTML = "";
+          });
+          box.querySelector("[data-lisave]").addEventListener("click", function () {
+            var values2 = {};
+            box.querySelectorAll("[data-key]").forEach(function (el) {
+              values2[el.getAttribute("data-key")] = el.value;
+            });
+            var url = "/api/admin/collections/" + encodeURIComponent(name) +
+              (item ? "/items/" + encodeURIComponent(item.id) : "/items");
+            api(url, { values: values2 }).then(function (r2) {
+              if (!r2.ok) return apiErr(r2);
+              toast(item ? "Saved — publish the site to put it live."
+                         : "Added — publish the site to put it live.");
+              box.innerHTML = "";
+              loadList(name, true);
+            });
+          });
+          box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+
         st.onSelect = function (meta) {
           st.sel = meta;
+          st.panelMode = "select";
           var path = meta.path;
           var c = meta.computed;
           var panel = document.getElementById("ed-panel");
@@ -2122,11 +2498,26 @@
               '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-img-replace">Replace…</button>' +
               (attrs.src ? '<button class="btn btn--ghost btn--small" id="ed-img-reset">Reset</button>' : "") + "</div>" +
               "<label>Alt text</label>" + textInput("ed-alt", attrs.alt || meta.attrs.alt, "describe the image"), true);
-          } else if (meta.hasBg) {
+          } else {
+            var bgNow = styleVal(path, "background-image");
             media = group("Background image",
-              '<span class="admin-inline-note">' + esc((styleVal(path, "background-image") || c.backgroundImage).slice(0, 60)) + "</span>" +
-              '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-bg-replace">Replace…</button>' +
-              (styleVal(path, "background-image") ? '<button class="btn btn--ghost btn--small" id="ed-bg-reset">Reset</button>' : "") + "</div>");
+              '<span class="admin-inline-note">' +
+              esc((bgNow || (meta.hasBg ? c.backgroundImage : "") || "None").slice(0, 60)) + "</span>" +
+              '<div class="admin-actions"><button class="btn btn--ghost btn--small" id="ed-bg-replace">' +
+              (bgNow || meta.hasBg ? "Replace…" : "Choose a picture…") + "</button>" +
+              (bgNow ? '<button class="btn btn--ghost btn--small" id="ed-bg-reset">Reset</button>' : "") +
+              "</div>" +
+              (bgNow || meta.hasBg
+                ? "<label>How it fills the space</label>" + selectInput("ed-bgsize",
+                    [["", "Default"], ["cover", "Cover the whole area"], ["contain", "Fit inside"],
+                     ["auto", "Original size"]], styleVal(path, "background-size")) +
+                  "<label>Position</label>" + selectInput("ed-bgpos",
+                    [["", "Default"], ["center", "Centre"], ["top", "Top"], ["bottom", "Bottom"],
+                     ["left", "Left"], ["right", "Right"]], styleVal(path, "background-position")) +
+                  "<label>Repeat</label>" + selectInput("ed-bgrep",
+                    [["", "Default"], ["no-repeat", "Do not repeat"], ["repeat", "Tile"]],
+                    styleVal(path, "background-repeat"))
+                : ""));
           }
           var link = meta.isLink
             ? group("Link", "<label>Target (URL or /page.html)</label>" +
@@ -2177,7 +2568,131 @@
             "<label>Padding</label>" + textInput("ed-pd", styleVal(path, "padding"), c.padding) +
             "<label>Width</label>" + textInput("ed-w", styleVal(path, "width"), c.width) +
             "<label>Max width</label>" + textInput("ed-mw", styleVal(path, "max-width"), c.maxWidth) +
-            "<label>Height</label>" + textInput("ed-h", styleVal(path, "height"), c.height));
+            "<label>Height</label>" + textInput("ed-h", styleVal(path, "height"), c.height) +
+            "<label>Minimum height</label>" + textInput("ed-mh", styleVal(path, "min-height"), c.minHeight) +
+            '<span class="admin-inline-note">Or drag the orange handles on the ' +
+            "element itself.</span>");
+          var layout = group("Layout & alignment",
+            "<label>Arrange children as</label>" + selectInput("ed-disp",
+              [["", "Default (" + c.display + ")"], ["block", "Stacked"], ["flex", "A row (flex)"],
+               ["grid", "A grid"], ["inline-block", "Inline block"]], styleVal(path, "display")) +
+            "<label>Direction (flex)</label>" + selectInput("ed-fd",
+              [["", "Default"], ["row", "Left to right"], ["column", "Top to bottom"],
+               ["row-reverse", "Right to left"], ["column-reverse", "Bottom to top"]],
+              styleVal(path, "flex-direction")) +
+            "<label>Columns (grid)</label>" + selectInput("ed-gtc",
+              [["", "Default"], ["repeat(2, minmax(0, 1fr))", "Two equal columns"],
+               ["repeat(3, minmax(0, 1fr))", "Three equal columns"],
+               ["repeat(4, minmax(0, 1fr))", "Four equal columns"]],
+              styleVal(path, "grid-template-columns")) +
+            "<label>Gap between children</label>" + textInput("ed-gap", styleVal(path, "gap"), c.gap) +
+            "<label>Horizontal alignment</label>" + selectInput("ed-jc",
+              [["", "Default"], ["flex-start", "Start"], ["center", "Centre"], ["flex-end", "End"],
+               ["space-between", "Spread apart"], ["space-around", "Even spacing"]],
+              styleVal(path, "justify-content")) +
+            "<label>Vertical alignment</label>" + selectInput("ed-ai",
+              [["", "Default"], ["flex-start", "Top"], ["center", "Middle"], ["flex-end", "Bottom"],
+               ["stretch", "Stretch"]], styleVal(path, "align-items")));
+          /* ---------- what you can do to the section you are standing in ---------- */
+          var secId = meta.sectionId;
+          var secGroup = "";
+          if (secId) {
+            var secOrderNow = knownOrder();
+            var atIdx = secOrderNow.indexOf(secId);
+            var isOff = ((st.pageDoc.sections || {}).removed || []).indexOf(secId) !== -1;
+            secGroup = group("Section — " + sectionLabel(secId),
+              '<div class="ed-secbar">' +
+                '<button class="btn btn--ghost btn--small" data-sa="up"' +
+                  (atIdx <= 0 ? " disabled" : "") + ">&uarr; Up</button>" +
+                '<button class="btn btn--ghost btn--small" data-sa="down"' +
+                  (atIdx === -1 || atIdx === secOrderNow.length - 1 ? " disabled" : "") +
+                  ">&darr; Down</button>" +
+                '<button class="btn btn--ghost btn--small" data-sa="duplicate">Duplicate</button>' +
+                '<button class="btn btn--ghost btn--small" data-sa="copy">Copy</button>' +
+                '<button class="btn btn--ghost btn--small" data-sa="paste">Paste</button>' +
+                '<button class="btn btn--ghost btn--small" data-sa="hide">' +
+                  (isOff ? "Show" : "Hide") + "</button>" +
+                '<button class="btn btn--ghost btn--small" data-sa="delete">Delete</button>' +
+              "</div>" +
+              '<span class="admin-inline-note">' +
+              (meta.isSection
+                ? "The width, padding, background and spacing panels below apply to this section."
+                : "These act on the section this element sits in.") + "</span>" +
+              '<div class="admin-actions">' +
+              '<button class="btn btn--ghost btn--small" id="ed-sec-list">All sections</button>' +
+              (meta.isSection ? ""
+                : '<button class="btn btn--ghost btn--small" id="ed-sec-select">Select the section</button>') +
+              "</div>", true);
+          }
+
+          /* ---------- elements placed inside a section the editor added ---------- */
+          var elGroup = "";
+          var entry = secId ? addedEntry(secId) : null;
+          if (entry && !entry.from) {
+            var kids = entry.children || [];
+            var rows = kids.map(function (c, i) {
+              return '<div class="ed-elrow' + (meta.elId === c.id ? " is-on" : "") +
+                '" data-el="' + esc(c.id) + '"><span>' +
+                esc(st.elementLabel[c.template] || c.template) + "</span>" +
+                '<span class="sec-btns">' +
+                '<button title="Move up" data-ea="up"' + (i === 0 ? " disabled" : "") + ">&uarr;</button>" +
+                '<button title="Move down" data-ea="down"' +
+                  (i === kids.length - 1 ? " disabled" : "") + ">&darr;</button>" +
+                '<button title="Select it in the page" data-ea="pick">&#9678;</button>' +
+                '<button title="Duplicate" data-ea="dup">&#9099;</button>' +
+                '<button title="Delete" data-ea="del">&#128465;</button>' +
+                "</span></div>";
+            }).join("");
+            elGroup = group("Elements in this section",
+              (kids.length
+                ? '<div class="ed-ellist">' + rows + "</div>"
+                : '<p class="admin-inline-note">This section is empty — add something below, ' +
+                  "then click it in the page to write and style it.</p>") +
+              '<label style="margin-top:10px;">Add an element</label>' +
+              '<div class="block-list block-list--el">' + st.elements.map(function (e) {
+                return '<button class="block-item" data-addel="' + esc(e.id) + '">' +
+                  "<b>" + esc(e.label) + "</b><span>" + esc(e.hint) + "</span></button>";
+              }).join("") + "</div>", true);
+          }
+
+          /* ---------- the repeating items inside this section ----------
+             The eleventh service is added right here, without leaving the page
+             you are looking at. Item edits are drafts like everything else —
+             the site changes when you press Publish. */
+          var listGroup = "";
+          if (meta.listName) {
+            var lst = st.lists[meta.listName];
+            if (!lst) {
+              listGroup = group("Items in this list",
+                '<p class="admin-inline-note">Loading…</p>', true);
+              loadList(meta.listName);
+            } else {
+              listGroup = group("Items — " + esc(lst.label),
+                '<div class="ed-ellist">' + (lst.items || []).map(function (it, i) {
+                  var title = (it.values || {})[lst.titleField] || "(untitled)";
+                  return '<div class="ed-elrow' + (i === meta.listIndex ? " is-on" : "") +
+                    (it.hidden ? " is-off" : "") + '" data-li="' + esc(it.id) + '">' +
+                    "<span>" + esc(title) + "</span>" +
+                    '<span class="sec-btns">' +
+                    '<button title="Move up" data-la="up"' + (i === 0 ? " disabled" : "") + ">&uarr;</button>" +
+                    '<button title="Move down" data-la="down"' +
+                      (i === lst.items.length - 1 ? " disabled" : "") + ">&darr;</button>" +
+                    '<button title="Edit" data-la="edit">&#9998;</button>' +
+                    '<button title="Duplicate" data-la="dup">&#9099;</button>' +
+                    '<button title="' + (it.hidden ? "Show" : "Hide") + '" data-la="hide">' +
+                      (it.hidden ? "&#128683;" : "&#128065;") + "</button>" +
+                    '<button title="Delete" data-la="del">&#128465;</button>' +
+                    "</span></div>";
+                }).join("") + "</div>" +
+                '<div class="admin-actions" style="margin-top:10px;">' +
+                '<button class="btn btn--primary btn--small" data-la-add="1">+ Add ' +
+                esc(lst.itemLabel) + "</button>" +
+                '<a class="btn btn--ghost btn--small" href="#sections/' + esc(meta.listName) +
+                '">Open the full editor</a></div>' +
+                '<div id="ed-li-form"></div>', true);
+            }
+          }
+
           var vis = group("Visibility",
             ["base", "tablet", "mobile"].map(function (b) {
               var labels = { base: "Hide on desktop", tablet: "Hide on tablet", mobile: "Hide on mobile" };
@@ -2189,7 +2704,8 @@
             (globalEl ? '<span class="chip chip--violet">site-wide</span>' : "") +
             '<button class="btn btn--ghost btn--small" id="ed-parent">Select parent</button></div>' +
             (globalEl ? '<label class="ed-check" style="margin-bottom:10px;"><input type="checkbox" id="ed-scope-page"> Apply changes to this page only</label>' : "") +
-            content + media + link + typo + box + space + animGroup + vis +
+            secGroup + elGroup + listGroup +
+            content + media + link + typo + box + space + layout + animGroup + vis +
             '<div class="admin-actions" style="margin-top:14px;"><button class="btn btn--ghost btn--small" id="ed-el-reset">Reset this element</button></div>' +
             '<p class="admin-inline-note" style="margin-top:8px;">Style edits apply to the <b>' + esc(st.vw) + "</b> view" +
             (st.vw === "desktop" ? " (and smaller screens unless they override)" : "") + ".</p>";
@@ -2316,6 +2832,102 @@
           bindStyle("ed-w", path, "width");
           bindStyle("ed-mw", path, "max-width");
           bindStyle("ed-h", path, "height");
+          bindStyle("ed-mh", path, "min-height");
+          bindStyle("ed-disp", path, "display");
+          bindStyle("ed-fd", path, "flex-direction");
+          bindStyle("ed-gtc", path, "grid-template-columns");
+          bindStyle("ed-gap", path, "gap");
+          bindStyle("ed-jc", path, "justify-content");
+          bindStyle("ed-ai", path, "align-items");
+          bindStyle("ed-bgsize", path, "background-size");
+          bindStyle("ed-bgpos", path, "background-position");
+          bindStyle("ed-bgrep", path, "background-repeat");
+
+          /* ---------- section buttons in the panel ---------- */
+          panel.querySelectorAll("[data-sa]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var action = btn.getAttribute("data-sa");
+              if (action === "paste") return secPaste();
+              st.onSectionAction({ action: action, id: secId });
+            });
+          });
+          var secListBtn = document.getElementById("ed-sec-list");
+          if (secListBtn) secListBtn.addEventListener("click", renderSections);
+          var secPick = document.getElementById("ed-sec-select");
+          if (secPick) secPick.addEventListener("click", function () {
+            st.postFrame({ type: "em-focus", path: "[data-em-sec=" + secId + "]" });
+          });
+
+          /* ---------- elements inside a section the editor added ---------- */
+          panel.querySelectorAll("[data-addel]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              elAdd(secId, btn.getAttribute("data-addel"));
+            });
+          });
+          panel.querySelectorAll(".ed-elrow[data-el]").forEach(function (row) {
+            var elId = row.getAttribute("data-el");
+            row.querySelectorAll("[data-ea]").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                var a = btn.getAttribute("data-ea");
+                if (a === "up") elMove(secId, elId, -1);
+                else if (a === "down") elMove(secId, elId, 1);
+                else if (a === "dup") elDuplicate(secId, elId);
+                else if (a === "del") elDelete(secId, elId);
+                else if (a === "pick") {
+                  st.postFrame({ type: "em-focus",
+                                 path: "[data-em-sec=" + secId + "]>[data-em-el=" + elId + "]" });
+                }
+              });
+            });
+          });
+
+          /* ---------- the repeating items of this section ---------- */
+          if (meta.listName && st.lists[meta.listName]) {
+            var lstNow = st.lists[meta.listName];
+            var formBox = document.getElementById("ed-li-form");
+            function reloadList(msg) {
+              return function (r2) {
+                if (!r2.ok) return apiErr(r2);
+                if (msg) toast(msg);
+                loadList(meta.listName, true);
+              };
+            }
+            panel.querySelectorAll("[data-la-add]").forEach(function (btn) {
+              btn.addEventListener("click", function () { openItemForm(meta.listName, null, formBox); });
+            });
+            panel.querySelectorAll(".ed-elrow[data-li]").forEach(function (row) {
+              var itemId = row.getAttribute("data-li");
+              var base = "/api/admin/collections/" + encodeURIComponent(meta.listName);
+              row.querySelectorAll("[data-la]").forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                  var a = btn.getAttribute("data-la");
+                  var ids = lstNow.items.map(function (x) { return x.id; });
+                  var i = ids.indexOf(itemId);
+                  if (a === "edit") {
+                    openItemForm(meta.listName, lstNow.items[i], formBox);
+                  } else if (a === "dup") {
+                    api(base + "/duplicate/" + encodeURIComponent(itemId), {})
+                      .then(reloadList("Copied."));
+                  } else if (a === "hide") {
+                    api(base + "/hidden/" + encodeURIComponent(itemId),
+                        { hidden: !lstNow.items[i].hidden }).then(reloadList());
+                  } else if (a === "del") {
+                    if (!confirm("Delete this item from the page?")) return;
+                    // a body makes it a POST with the CSRF header — the
+                    // delete route takes nothing else, but it is still a write
+                    api(base + "/delete/" + encodeURIComponent(itemId), {})
+                      .then(reloadList("Deleted."));
+                  } else {
+                    var to = i + (a === "up" ? -1 : 1);
+                    if (to < 0 || to >= ids.length) return;
+                    ids.splice(to, 0, ids.splice(i, 1)[0]);
+                    api(base + "/order", { order: ids }).then(reloadList());
+                  }
+                });
+              });
+            });
+          }
+
           document.getElementById("ed-color").addEventListener("change", function () {
             setStyle(path, "color", this.value);
           });
@@ -2351,120 +2963,123 @@
 
         /* ---------- sections manager ---------- */
         function renderSections() {
+          st.panelMode = "sections";
           var panel = document.getElementById("ed-panel");
           var spec = st.pageDoc.sections || {};
           var added = spec.added || [];
-          var known = st.sections.map(function (s) { return s.id; })
-            .concat(added.map(function (a) { return a.id; }));
-          var order = (spec.order && spec.order.length ? spec.order : known)
-            .filter(function (id) { return known.indexOf(id) !== -1; });
-          known.forEach(function (id) {
-            if (order.indexOf(id) === -1) order.push(id);
-          });
+          var order = knownOrder();
           var removed = spec.removed || [];
-          var duplicated = spec.duplicated || [];
-          var labels = {};
-          st.sections.forEach(function (s) { labels[s.id] = s.label; });
-          added.forEach(function (a) {
-            labels[a.id] = (st.blockLabel[a.template] || "Block") + " (added)";
-          });
+          var clip = readClip();
           panel.innerHTML =
             "<h2>Page sections</h2>" +
-            '<p class="admin-inline-note">Reorder, hide, duplicate or delete the big blocks of this page — and add new ones.</p>' +
-            '<div class="sec-list">' + order.map(function (id, i) {
+            '<p class="admin-inline-note">Drag a row by its handle to reorder, or use the arrows. ' +
+            "Every section can be duplicated, copied to another page, hidden or deleted — and a " +
+            "<b>Blank section</b> gives you an empty canvas to build on.</p>" +
+            '<div class="sec-list" id="sec-list">' + order.map(function (id, i) {
               var off = removed.indexOf(id) !== -1;
-              var isAdded = added.some(function (a) { return a.id === id; });
-              return '<div class="sec-item' + (off ? " sec-item--off" : "") + '" data-sec="' + esc(id) + '">' +
-                "<span>" + esc(labels[id] || id) + "</span><span class=\"sec-btns\">" +
-                '<button title="Move up" data-sec-up' + (i === 0 ? " disabled" : "") + ">↑</button>" +
-                '<button title="Move down" data-sec-down' + (i === order.length - 1 ? " disabled" : "") + ">↓</button>" +
-                '<button title="' + (off ? "Show" : "Hide") + '" data-sec-hide>' + (off ? "🚫" : "👁") + "</button>" +
-                '<button title="Duplicate" data-sec-dup' + (duplicated.indexOf(id) !== -1 ? ' class="is-on"' : "") + ">⧉</button>" +
-                (isAdded ? '<button title="Delete this added block" data-sec-del>🗑</button>' : "") +
+              var entry = addedEntry(id);
+              return '<div class="sec-item' + (off ? " sec-item--off" : "") +
+                '" data-sec="' + esc(id) + '" draggable="true">' +
+                '<span class="sec-grip" title="Drag to reorder">&#9782;</span>' +
+                "<span>" + esc(sectionLabel(id)) +
+                (entry ? ' <span class="chip chip--violet">added</span>' : "") +
+                (off ? ' <span class="chip">hidden</span>' : "") + "</span>" +
+                '<span class="sec-btns">' +
+                '<button title="Select it in the page" data-sec-pick>&#9678;</button>' +
+                '<button title="Move up" data-sec-up' + (i === 0 ? " disabled" : "") + ">&uarr;</button>" +
+                '<button title="Move down" data-sec-down' +
+                  (i === order.length - 1 ? " disabled" : "") + ">&darr;</button>" +
+                '<button title="Duplicate" data-sec-dup>&#9099;</button>' +
+                '<button title="Copy — paste on any page" data-sec-copy>&#9106;</button>' +
+                '<button title="' + (off ? "Show" : "Hide") + '" data-sec-hide>' +
+                  (off ? "&#128683;" : "&#128065;") + "</button>" +
+                '<button title="Delete" data-sec-del>&#128465;</button>' +
                 "</span></div>";
             }).join("") + "</div>" +
             '<div class="admin-actions" style="margin-top:12px;">' +
             '<button class="btn btn--primary btn--small" id="sec-add">+ Add section</button>' +
-            '<button class="btn btn--ghost btn--small" id="sec-reset">Reset section layout</button></div>' +
+            '<button class="btn btn--ghost btn--small" id="sec-paste"' +
+              (clip ? "" : " disabled") + ">Paste" +
+              (clip && clip.label ? " — " + esc(clip.label) : " section") + "</button>" +
+            '<button class="btn btn--ghost btn--small" id="sec-reset">Reset layout</button></div>' +
             '<div id="sec-picker" hidden><h3 style="margin-top:18px;">Choose a block</h3>' +
             '<div class="block-list">' + st.blocks.map(function (b) {
-              return '<button class="block-item" data-block="' + esc(b.id) + '">' +
+              return '<button class="block-item' + (b.id === "blank" ? " block-item--blank" : "") +
+                '" data-block="' + esc(b.id) + '">' +
                 "<b>" + esc(b.label) + "</b><span>" + esc(b.hint) + "</span></button>";
             }).join("") + "</div></div>";
-          function mutate(fn) {
-            pushUndo();
-            var s = st.pageDoc.sections = st.pageDoc.sections || {};
-            s.order = order.slice();
-            fn(s);
-            st.docTouched.page = true;
-            applyLive();
-            renderSections();
-          }
+
           panel.querySelectorAll(".sec-item").forEach(function (row) {
             var id = row.getAttribute("data-sec");
-            row.querySelector("[data-sec-up]").addEventListener("click", function () {
-              mutate(function (s) {
-                var i = s.order.indexOf(id);
-                if (i > 0) { s.order.splice(i, 1); s.order.splice(i - 1, 0, id); }
-              });
+            row.querySelector("[data-sec-pick]").addEventListener("click", function () {
+              st.postFrame({ type: "em-focus", path: "[data-em-sec=" + id + "]" });
             });
-            row.querySelector("[data-sec-down]").addEventListener("click", function () {
-              mutate(function (s) {
-                var i = s.order.indexOf(id);
-                if (i < s.order.length - 1) { s.order.splice(i, 1); s.order.splice(i + 1, 0, id); }
-              });
+            row.querySelector("[data-sec-up]").addEventListener("click", function () { secMove(id, -1); });
+            row.querySelector("[data-sec-down]").addEventListener("click", function () { secMove(id, 1); });
+            row.querySelector("[data-sec-hide]").addEventListener("click", function () { secHide(id); });
+            row.querySelector("[data-sec-dup]").addEventListener("click", function () { secDuplicate(id); });
+            row.querySelector("[data-sec-copy]").addEventListener("click", function () { secCopy(id); });
+            row.querySelector("[data-sec-del]").addEventListener("click", function () { secDelete(id); });
+
+            /* drag a row onto another to drop it there */
+            row.addEventListener("dragstart", function (e) {
+              st.dragSec = id;
+              row.classList.add("is-dragging");
+              try { e.dataTransfer.setData("text/plain", id); } catch (err) { /* older browsers */ }
+              e.dataTransfer.effectAllowed = "move";
             });
-            row.querySelector("[data-sec-hide]").addEventListener("click", function () {
-              mutate(function (s) {
-                s.removed = s.removed || [];
-                var i = s.removed.indexOf(id);
-                if (i === -1) s.removed.push(id); else s.removed.splice(i, 1);
+            row.addEventListener("dragend", function () {
+              row.classList.remove("is-dragging");
+              panel.querySelectorAll(".sec-item").forEach(function (r) {
+                r.classList.remove("is-over", "is-over-below");
               });
+              st.dragSec = null;
             });
-            row.querySelector("[data-sec-dup]").addEventListener("click", function () {
-              mutate(function (s) {
-                s.duplicated = s.duplicated || [];
-                var i = s.duplicated.indexOf(id);
-                if (i === -1) s.duplicated.push(id); else s.duplicated.splice(i, 1);
-              });
+            row.addEventListener("dragover", function (e) {
+              if (!st.dragSec || st.dragSec === id) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              var r = row.getBoundingClientRect();
+              var below = e.clientY > r.top + r.height / 2;
+              row.classList.toggle("is-over", !below);
+              row.classList.toggle("is-over-below", below);
             });
-            var del = row.querySelector("[data-sec-del]");
-            if (del) del.addEventListener("click", function () {
-              if (!confirm("Delete this added block and everything written in it?")) return;
-              mutate(function (s) {
-                s.added = (s.added || []).filter(function (a) { return a.id !== id; });
-                s.order = s.order.filter(function (x) { return x !== id; });
-                s.removed = (s.removed || []).filter(function (x) { return x !== id; });
-                s.duplicated = (s.duplicated || []).filter(function (x) { return x !== id; });
-                // drop styles and text written into the block that is going away
-                Object.keys(st.pageDoc.elements).forEach(function (path) {
-                  if (path.indexOf("[data-em-sec=" + id + "]") === 0) delete st.pageDoc.elements[path];
-                });
-              });
+            row.addEventListener("dragleave", function () {
+              row.classList.remove("is-over", "is-over-below");
+            });
+            row.addEventListener("drop", function (e) {
+              e.preventDefault();
+              var moving = st.dragSec;
+              var below = row.classList.contains("is-over-below");
+              row.classList.remove("is-over", "is-over-below");
+              if (!moving || moving === id) return;
+              var list = knownOrder().filter(function (x) { return x !== moving; });
+              var at = list.indexOf(id) + (below ? 1 : 0);
+              secMoveBefore(moving, list[at] || null);
             });
           });
+
           document.getElementById("sec-add").addEventListener("click", function () {
             var picker = document.getElementById("sec-picker");
             picker.hidden = !picker.hidden;
           });
+          document.getElementById("sec-paste").addEventListener("click", secPaste);
           panel.querySelectorAll("[data-block]").forEach(function (btn) {
             btn.addEventListener("click", function () {
-              var current = (st.pageDoc.sections || {}).added || [];
-              if (current.length >= st.maxBlocks) {
-                toast("That is the most blocks one page can hold.", true);
-                return;
-              }
-              var used = current.map(function (a) { return parseInt(a.id.slice(1), 10); });
-              var next = 1;
-              while (used.indexOf(next) !== -1) next++;
-              mutate(function (s) {
-                s.added = current.concat([{ id: "a" + next, template: btn.getAttribute("data-block") }]);
-                s.order = s.order.concat(["a" + next]);
+              if (atLimit()) return;
+              var id = nextAddedId();
+              secMutate(function (s) {
+                s.added = (s.added || []).concat([{ id: id, template: btn.getAttribute("data-block") }]);
+                s.order = s.order.concat([id]);
               });
-              toast("Block added at the bottom — use ↑ to move it.");
+              toast(btn.getAttribute("data-block") === "blank"
+                ? "Blank section added at the bottom — select it and add elements."
+                : "Block added at the bottom — drag it where you want it.");
+              st.postFrame({ type: "em-focus", path: "[data-em-sec=" + id + "]" });
             });
           });
           document.getElementById("sec-reset").addEventListener("click", function () {
+            if (!confirm("Undo every section change on this page — order, hidden ones and any you added?")) return;
             pushUndo();
             st.pageDoc.sections = {};
             st.docTouched.page = true;

@@ -464,17 +464,23 @@ html[data-theme="light"] .admin-body {
 }
 .rich-bar button:hover { border-color: var(--orange-2); }
 .sec-list { display: flex; flex-direction: column; gap: 6px; }
+/* Grip and name on the first line, the seven controls on their own line —
+   the panel is ~330px wide and a single row cut the last button off. */
 .sec-item {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  padding: 9px 12px; border: 1px solid var(--adm-line); border-radius: 10px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center;
+  gap: 4px 8px; padding: 9px 11px; border: 1px solid var(--adm-line); border-radius: 10px;
   background: var(--adm-inset); font-size: 0.85rem;
 }
+.sec-item > span:not(.sec-btns) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sec-item > .sec-btns { grid-column: 1 / -1; justify-content: flex-end; }
 .sec-item--off { opacity: 0.45; }
-.sec-btns { display: flex; gap: 4px; }
+.sec-btns { display: flex; gap: 4px; flex-wrap: wrap; }
 .sec-btns button {
   border: 1px solid var(--adm-line-strong); background: var(--panel); color: var(--text);
-  border-radius: 7px; width: 28px; height: 26px; cursor: pointer; font-size: 0.8rem;
+  border-radius: 7px; width: 30px; height: 27px; cursor: pointer; font-size: 0.82rem;
+  display: grid; place-items: center; padding: 0;
 }
+.sec-btns button:hover:not(:disabled) { border-color: var(--orange-2); }
 .sec-btns button:disabled { opacity: 0.3; cursor: default; }
 .sec-btns button.is-on { border-color: var(--orange-2); color: var(--orange-2); }
 /* block library — the "Add section" picker inside the editor panel */
@@ -488,6 +494,34 @@ html[data-theme="light"] .admin-body {
 .block-item:hover { border-color: var(--orange-2); background: var(--adm-card); }
 .block-item b { font-size: 0.87rem; font-weight: 600; }
 .block-item span { font-size: 0.78rem; color: var(--text-muted); }
+.block-item--blank { border-style: dashed; border-color: var(--orange-2); }
+.block-list--el { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* dragging a section row to a new place in the order */
+.sec-grip { cursor: grab; opacity: 0.55; padding-right: 2px; user-select: none; }
+.sec-item[draggable="true"] { cursor: default; }
+.sec-item.is-dragging { opacity: 0.45; }
+.sec-item.is-over { box-shadow: 0 -3px 0 -1px var(--orange-2); }
+.sec-item.is-over-below { box-shadow: 0 3px 0 -1px var(--orange-2); }
+/* the section action row inside the selection panel */
+.ed-secbar { display: flex; flex-wrap: wrap; gap: 6px; }
+.ed-secbar .btn { flex: 0 0 auto; }
+/* elements placed in a blank section, and the items of a managed list */
+.ed-ellist { display: flex; flex-direction: column; gap: 6px; }
+.ed-elrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; border: 1px solid var(--adm-line); border-radius: 9px;
+  background: var(--adm-inset); font-size: 0.82rem;
+}
+.ed-elrow.is-on { border-color: var(--orange-2); }
+.ed-elrow.is-off { opacity: 0.5; }
+.ed-elrow > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-liform {
+  margin-top: 10px; padding: 12px; border: 1px dashed var(--adm-line-strong);
+  border-radius: 12px; background: var(--adm-inset);
+}
+.ed-liform h3 { margin: 0 0 8px; font-size: 0.9rem; }
+.ed-liform label { display: block; margin-top: 8px; font-size: 0.78rem; color: var(--text-muted); }
+.ed-liform input, .ed-liform textarea, .ed-liform select { width: 100%; }
 /* the slug field on the new-page form reads as one address */
 .np-slug-wrap {
   display: inline-flex; align-items: center; gap: 2px;

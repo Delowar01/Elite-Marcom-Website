@@ -180,6 +180,28 @@ documentation). Non-negotiable rules from it:
     for added ones; both are valid in `order` / `removed` / `duplicated`.
     **Templates are ours, never admin input** — an admin places a block and
     edits its text, and that text goes through the same whitelist.
+  - A **blank** section carries `children: [{id: "eN", template}]` from
+    `blocks.ELEMENTS` — heading, paragraph, image, video, button, icon,
+    columns, cards, list, divider, spacer. Each is stamped `data-em-el`, and a
+    path may anchor on it (`[data-em-sec=a1]>[data-em-el=e2]>a:nth-of-type(1)`)
+    so a style stays on its element when the ones around it are reordered.
+    Same rule as sections: the panel sends a template id, never markup.
+  - A **copied** section is `{id: "aN", from: {page, sec}}` — we remember which
+    of our pages it came from and `design.section_from_page` lifts the markup
+    out of that page at bake time, after collections have been applied, with
+    ids and `data-em`/`data-em-list` markers stripped. So copy/paste works
+    across pages, the copy is edited independently, and no HTML ever travels
+    through the panel. It is a frozen copy: it does not become a second live
+    instance of a managed list.
+- **The visual editor's section controls** are one implementation shared by
+  two surfaces: an on-page toolbar the bridge draws over the selected section
+  (grip, ↑ ↓, duplicate, copy, hide, delete) and the Sections list in the
+  panel (the same, plus drag-and-drop rows and Paste). Both call the same
+  `sec*` functions, so they cannot disagree. A hidden section stays on screen
+  in the editor, dimmed and labelled — `display:none` would take its own Show
+  button away with it; only the bake drops it. Dragging an element's orange
+  edge handle writes `width`/`height` for the viewport being edited, like any
+  other style.
 - **Repeatable content — the items inside a section** lives in
   `server/collections.py`, and is the other half of the design layer: sections
   are added, duplicated, reordered, hidden and deleted in the visual editor;

@@ -2595,3 +2595,227 @@ def test_a_backup_carries_the_lists_and_a_restore_puts_them_back():
     assert any(i["values"]["title"] == "Jeddah" for i in co.items("about-presence"))
     co.reset("about-presence", "test")
 
+
+# ---------------- visual editor: blank sections, elements, copied sections ----------------
+# Sections are added, copied, reordered, hidden and deleted from the editor; a
+# blank one is filled from an element library. Everything here is still our
+# markup — the panel sends template ids, never HTML.
+
+def test_a_blank_section_carries_the_elements_placed_in_it():
+    me = client.get("/api/admin/me").json()
+    doc = {"sections": {"added": [{"id": "a1", "template": "blank", "children": [
+        {"id": "e1", "template": "heading"},
+        {"id": "e2", "template": "text"},
+        {"id": "e3", "template": "button"}]}],
+        "order": ["s0", "a1"]}}
+    res = client.post("/api/admin/design/contact", json={"doc": doc},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/preview/contact").text
+    assert 'data-em-sec="a1"' in baked and 'data-em-block="blank"' in baked
+    # each element is stamped, so a style survives the ones around it moving
+    for eid in ("e1", "e2", "e3"):
+        assert 'data-em-el="' + eid + '"' in baked
+    assert baked.index('data-em-el="e1"') < baked.index('data-em-el="e2"') \
+        < baked.index('data-em-el="e3"')
+    assert "A new headline" in baked and "Start the conversation" in baked
+
+
+def test_an_element_keeps_its_styling_when_the_ones_around_it_move():
+    """The whole reason a placed element has an id: nth-of-type would hand the
+    style to whatever ended up in that position instead."""
+    me = client.get("/api/admin/me").json()
+    path = "[data-em-sec=a1]>[data-em-el=e3]>a:nth-of-type(1)"
+    doc = {"sections": {"added": [{"id": "a1", "template": "blank", "children": [
+        {"id": "e1", "template": "heading"},
+        {"id": "e2", "template": "text"},
+        {"id": "e3", "template": "button"}]}], "order": ["s0", "a1"]},
+        "elements": {path: {"styles": {"base": {"border-radius": "2px"}},
+                            "text": "Talk to us"}}}
+    assert client.post("/api/admin/design/contact", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    baked = client.get("/admin/preview/contact").text
+    assert "Talk to us" in baked
+    assert "border-radius:2px" in baked
+
+    # now move that element to the front — the style must travel with it
+    doc["sections"]["added"][0]["children"] = [
+        {"id": "e3", "template": "button"},
+        {"id": "e1", "template": "heading"},
+        {"id": "e2", "template": "text"}]
+    assert client.post("/api/admin/design/contact", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    moved = client.get("/admin/preview/contact").text
+    assert "Talk to us" in moved and "border-radius:2px" in moved
+    assert moved.index('data-em-el="e3"') < moved.index('data-em-el="e1"')
+
+
+def test_only_elements_we_ship_can_be_placed():
+    me = client.get("/api/admin/me").json()
+    bad = client.post("/api/admin/design/contact", json={"doc": {"sections": {"added": [
+        {"id": "a1", "template": "blank",
+         "children": [{"id": "e1", "template": "<script>alert(1)</script>"}]}]}}},
+        headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    assert "Unknown element" in bad.json()["detail"]
+    bad_id = client.post("/api/admin/design/contact", json={"doc": {"sections": {"added": [
+        {"id": "a1", "template": "blank", "children": [{"id": "x9", "template": "heading"}]}]}}},
+        headers={"X-CSRF": me["csrf"]})
+    assert bad_id.status_code == 400
+
+
+def test_a_section_copied_from_another_page_is_that_pages_own_markup():
+    """Copy/paste moves a section between pages without any HTML travelling
+    through the panel: we remember which page and which section, and the bake
+    lifts the markup out of the git-tracked page itself."""
+    me = client.get("/api/admin/me").json()
+    doc = {"sections": {"added": [{"id": "a2", "from": {"page": "about", "sec": "s3"}}],
+                        "order": ["s0", "a2"]}}
+    res = client.post("/api/admin/design/contact", json={"doc": doc},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/preview/contact").text
+    assert 'data-em-sec="a2"' in baked
+    assert "Excellence" in baked and "Personal service" in baked   # the About values
+    # the copy is edited on its own: no keyed regions, no ids taken from the original
+    copy = baked.split('data-em-sec="a2"')[1].split("</section>")[0]
+    assert "data-em=" not in copy and 'id="mission' not in copy
+    assert 'data-em-list' not in copy      # a frozen copy, not a second live list
+
+
+def test_a_copied_section_carries_the_items_the_page_shows_today():
+    """Copy a section after a fifth item was added to its list and the copy has
+    five — a copy of the page as it stands, not of the file in git."""
+    from server import collections as co
+
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/collections/about-values/items", headers={"X-CSRF": me["csrf"]},
+                json={"values": {"title": "Curiosity", "text": "We ask before we answer."}})
+    doc = {"sections": {"added": [{"id": "a3", "from": {"page": "about", "sec": "s3"}}],
+                        "order": ["s0", "a3"]}}
+    assert client.post("/api/admin/design/contact", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    baked = client.get("/admin/preview/contact").text
+    assert "Curiosity" in baked and "We ask before we answer." in baked
+    co.reset("about-values", "test")
+    client.post("/api/admin/design/contact", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})
+
+
+def test_a_copy_can_only_name_a_page_of_ours():
+    me = client.get("/api/admin/me").json()
+    for source in ({"page": "https://evil.example/x", "sec": "s1"},
+                   {"page": "about", "sec": "../../etc/passwd"},
+                   {"page": "about", "sec": "s999999"}):
+        res = client.post("/api/admin/design/contact", json={"doc": {"sections": {
+            "added": [{"id": "a4", "from": source}]}}}, headers={"X-CSRF": me["csrf"]})
+        assert res.status_code == 400, source
+    client.post("/api/admin/design/contact", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})
+
+
+def test_the_element_library_is_offered_with_the_block_library():
+    res = client.get("/api/admin/blocks")
+    assert res.status_code == 200
+    data = res.json()
+    ids = {b["id"] for b in data["blocks"]}
+    assert "blank" in ids                      # the empty canvas
+    el_ids = {e["id"] for e in data["elements"]}
+    for wanted in ("heading", "text", "image", "video", "button", "icon",
+                   "columns-2", "columns-3", "card", "divider", "spacer-el", "list"):
+        assert wanted in el_ids, wanted
+    # every element arrives pre-rendered with the id placeholder the panel fills
+    for e in data["elements"]:
+        assert "__EID__" in e["html"], e["id"]
+        assert "<script" not in e["html"]
+    assert data["maxElements"] >= 10
+
+
+def test_the_section_copy_endpoint_serves_our_markup_only():
+    res = client.get("/api/admin/section-copy?page=about&sec=s3")
+    assert res.status_code == 200
+    assert 'data-em-sec="__ID__"' in res.json()["html"]
+    assert client.get("/api/admin/section-copy?page=nope&sec=s1").status_code == 404
+    assert client.get("/api/admin/section-copy?page=about&sec=s404").status_code == 404
+    lean, _ = _catalog_client()
+    assert lean.get("/api/admin/section-copy?page=about&sec=s3").status_code == 403
+
+
+def test_the_new_layout_properties_are_whitelisted_like_every_other():
+    from server import design
+
+    ok = design.validate_doc({"elements": {"[data-em-sec=s1]": {"styles": {"base": {
+        "display": "flex", "gap": "24px", "justify-content": "space-between",
+        "align-items": "center", "min-height": "420px",
+        "grid-template-columns": "repeat(3, minmax(0, 1fr))",
+        "background-size": "cover", "background-position": "center"}}}}})
+    assert ok["elements"]["[data-em-sec=s1]"]["styles"]["base"]["gap"] == "24px"
+    for bad in ({"display": "url(javascript:1)"}, {"gap": "expression(1)"},
+                {"justify-content": "</style>"}, {"grid-template-columns": "1fr;}body{x"},
+                {"background-position": "url(x)"}):
+        with pytest.raises(design.DesignError):
+            design.validate_doc({"elements": {"[data-em-sec=s1]": {"styles": {"base": bad}}}})
+
+
+def test_an_element_path_is_still_a_path_and_nothing_else():
+    from server import design
+
+    good = "[data-em-sec=a1]>[data-em-el=e2]>a:nth-of-type(1)"
+    assert design.validate_doc({"elements": {good: {"styles": {"base": {"opacity": "0.5"}}}}})
+    for bad in ("[data-em-el=e1]>div",                      # must start at a section
+                "[data-em-sec=a1]>[data-em-el=e1x]",        # not an element id
+                "[data-em-sec=a1]>[data-em-el=e1]>[data-em-el=e2]"):
+        with pytest.raises(design.DesignError):
+            design.validate_doc({"elements": {bad: {"styles": {"base": {"opacity": "0.5"}}}}})
+
+
+def test_the_editor_page_still_bakes_every_shipped_page():
+    """The whole point of the guard: none of this may quietly drop content."""
+    from server import content
+
+    for page in content.PAGES:
+        baked = client.get("/admin/preview/" + page)
+        assert baked.status_code == 200, page
+        assert "</html>" in baked.text, page
+
+
+def test_the_editors_own_chrome_never_reaches_a_baked_page():
+    """The toolbar, handles and drop marker are injected into the preview by
+    the bridge. Nothing the bake produces may carry them."""
+    from server import content
+
+    for page in ("index", "about", "contact", "services"):
+        baked = client.get("/admin/preview/" + page).text
+        for chrome in ("em-bar", "em-handle", "em-drop", "em-size",
+                       "em-selected", "em-hover", "em-off", "em-dragging"):
+            assert chrome not in baked, (page, chrome)
+    assert "editor-bridge" not in content.bake_page("index")
+
+
+def test_the_old_duplicate_field_still_works_beside_the_new_one():
+    """Documents saved before this change use sections.duplicated. They must
+    keep baking exactly as they did."""
+    me = client.get("/api/admin/me").json()
+    doc = {"sections": {"duplicated": ["s3"],
+                        "added": [{"id": "a1", "template": "blank",
+                                   "children": [{"id": "e1", "template": "heading"}]}],
+                        "order": ["s0", "s1", "s2", "s3", "a1"]}}
+    assert client.post("/api/admin/design/about", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    baked = client.get("/admin/preview/about").text
+    assert baked.count("<dt>Excellence</dt>") == 2      # the in-place copy
+    assert 'data-em-sec="a1"' in baked and "A new headline" in baked
+    client.post("/api/admin/design/about", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})
+
+
+def test_a_duplicated_blank_section_is_independent_of_the_original():
+    me = client.get("/api/admin/me").json()
+    doc = {"sections": {"added": [
+        {"id": "a1", "template": "blank", "children": [{"id": "e1", "template": "heading"}]},
+        {"id": "a2", "template": "blank", "children": [{"id": "e1", "template": "heading"}]}],
+        "order": ["s0", "a1", "a2"]},
+        "elements": {"[data-em-sec=a1]>[data-em-el=e1]": {"text": "Only the first"}}}
+    assert client.post("/api/admin/design/contact", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    baked = client.get("/admin/preview/contact").text
+    assert "Only the first" in baked
+    assert baked.count("A new headline") == 1      # the copy kept the default
+    client.post("/api/admin/design/contact", json={"doc": {}}, headers={"X-CSRF": me["csrf"]})

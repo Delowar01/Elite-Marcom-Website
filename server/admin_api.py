@@ -1381,10 +1381,26 @@ async def admin_page_visual(request: Request, page: str, lang: str = "en"):
     if content.page_config(page) is None or lang not in content.LANGS:
         raise HTTPException(status_code=404, detail="Unknown page.")
     baked = content.bake_page(page, lang)
-    bridge = '<script src="/admin/assets/editor-bridge.js?v=3" defer></script></body>'
+    bridge = '<script src="/admin/assets/editor-bridge.js?v=4" defer></script></body>'
     baked = baked.replace("</body>", bridge, 1)
     return Response(content=baked, media_type="text/html; charset=utf-8",
                     headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
+@router.get("/api/admin/section-copy")
+async def admin_section_copy(request: Request, page: str, sec: str):
+    """The markup of one of our sections, restamped — what the editor shows as
+    a live preview of a pasted copy. Rendering stays server-side so the preview
+    and the published page are produced by the same code."""
+    require_perm(request, "content.edit")
+    from . import content, design
+
+    if content.page_config(page) is None:
+        raise HTTPException(status_code=404, detail="Unknown page.")
+    html = design.section_from_page(page, sec, "__ID__")
+    if not html:
+        raise HTTPException(status_code=404, detail="That section is no longer on the page.")
+    return {"html": html}
 
 
 @router.get("/api/admin/blocks")
@@ -1395,7 +1411,12 @@ async def admin_blocks(request: Request):
     # the editor needs the markup itself so an added block appears in the live
     # preview before the draft is saved; __ID__ is swapped for the section id
     return {"blocks": [{**b, "html": blocks.render_section(b["id"], "__ID__")}
-                       for b in blocks.template_list()], "max": 30}
+                       for b in blocks.template_list()],
+            # the element library for a blank section: the editor drops these
+            # in and then edits their text, picture and styling like any other
+            "elements": [{**e, "html": blocks.render_element(e["id"], "__EID__")}
+                         for e in blocks.element_list()],
+            "max": 30, "maxElements": 40}
 
 
 class NewPageBody(BaseModel):

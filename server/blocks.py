@@ -212,6 +212,18 @@ _TEMPLATES: list[dict] = [
     <p class="reveal" data-reveal="fade-up" data-reveal-delay="80">Write anything here.</p>
   </div>""",
     },
+    {
+        "id": "blank",
+        "label": "Blank section",
+        "hint": "Nothing at all — add the headings, pictures and buttons yourself.",
+        # The only template whose body is empty: elements are added into it one
+        # at a time from the editor's element library, and each one is our
+        # markup exactly like a section template is.
+        "html": """
+  <div class="container">
+    <div class="em-stack" data-em-slot="1"></div>
+  </div>""",
+    },
 ]
 
 TEMPLATES = {t["id"]: t for t in _TEMPLATES}
@@ -222,13 +234,183 @@ def template_list() -> list[dict]:
     return [{"id": t["id"], "label": t["label"], "hint": t["hint"]} for t in _TEMPLATES]
 
 
-def render_section(template_id: str, sec_id: str) -> str:
-    """One added section, stamped with the id its editor paths hang off."""
+# ---------------- elements: what goes INSIDE a blank section ----------------
+# Same rule as the section templates: every tag is written here. The editor
+# places one and then edits its text, picture, link and styling through the
+# design layer, so nothing an admin types is ever parsed as markup.
+
+_ELEMENTS: list[dict] = [
+    {
+        "id": "heading",
+        "label": "Heading",
+        "hint": "A section headline.",
+        "html": '<h2 class="reveal" data-reveal="fade-up">A new headline</h2>',
+    },
+    {
+        "id": "subheading",
+        "label": "Small heading",
+        "hint": "A smaller heading for a sub-part.",
+        "html": '<h3 class="reveal" data-reveal="fade-up">A smaller heading</h3>',
+    },
+    {
+        "id": "eyebrow",
+        "label": "Section marker",
+        "hint": "The small line that sits above a headline.",
+        "html": '<p class="section-marker reveal" data-reveal="fade-in">New section</p>',
+    },
+    {
+        "id": "text",
+        "label": "Paragraph",
+        "hint": "A block of copy.",
+        "html": ('<p class="reveal" data-reveal="fade-up">Replace this paragraph with what you '
+                 'want to say. Click it in the page to edit the words.</p>'),
+    },
+    {
+        "id": "lede",
+        "label": "Lead paragraph",
+        "hint": "A larger opening paragraph.",
+        "html": ('<p class="lede reveal" data-reveal="fade-up">A larger opening line that '
+                 'introduces what follows.</p>'),
+    },
+    {
+        "id": "image",
+        "label": "Image",
+        "hint": "One picture in the site's frame.",
+        "html": ('<figure class="media-frame media-frame--sheen reveal" data-reveal="zoom-up" '
+                 'style="aspect-ratio:16/9;">'
+                 '<img src="/assets/portfolio/aces-pavilion-live.webp" alt="Replace this image" '
+                 'width="1000" height="563" loading="lazy"></figure>'),
+    },
+    {
+        "id": "video",
+        "label": "Video",
+        "hint": "A YouTube video, played without cookies.",
+        # privacy-preserving host, and the id is replaced through the editor's
+        # validated attribute path — never by pasting an embed
+        "html": ('<div class="em-video reveal" data-reveal="fade-up">'
+                 '<iframe src="https://www.youtube-nocookie.com/embed/lFhAiGLjoMo?rel=0" '
+                 'title="Video" loading="lazy" allowfullscreen '
+                 'referrerpolicy="strict-origin-when-cross-origin" '
+                 'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; '
+                 'picture-in-picture; fullscreen"></iframe></div>'),
+    },
+    {
+        "id": "button",
+        "label": "Button",
+        "hint": "A primary call to action.",
+        "html": ('<p class="reveal" data-reveal="fade-up">'
+                 '<a class="btn btn--primary" href="/contact.html" data-magnetic>'
+                 'Start the conversation</a></p>'),
+    },
+    {
+        "id": "button-ghost",
+        "label": "Outline button",
+        "hint": "A quieter secondary button.",
+        "html": ('<p class="reveal" data-reveal="fade-up">'
+                 '<a class="btn btn--ghost" href="/projects.html">See our work</a></p>'),
+    },
+    {
+        "id": "icon",
+        "label": "Icon & line",
+        "hint": "A small icon with a line of text beside it.",
+        "html": ('<p class="em-iconline reveal" data-reveal="fade-up">'
+                 '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+                 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+                 '<path d="M20 6L9 17l-5-5"/></svg>'
+                 '<span>Something worth pointing out</span></p>'),
+    },
+    {
+        "id": "columns-2",
+        "label": "Two columns",
+        "hint": "Two side-by-side containers to put anything in.",
+        "html": ('<div class="grid-2 reveal" data-reveal="fade-up">'
+                 '<div><h3>First column</h3><p>Write the left-hand side here.</p></div>'
+                 '<div><h3>Second column</h3><p>And the right-hand side here.</p></div></div>'),
+    },
+    {
+        "id": "columns-3",
+        "label": "Three columns",
+        "hint": "Three side-by-side containers.",
+        "html": ('<div class="grid-3 reveal" data-reveal="fade-up">'
+                 '<div><h3>One</h3><p>First column.</p></div>'
+                 '<div><h3>Two</h3><p>Second column.</p></div>'
+                 '<div><h3>Three</h3><p>Third column.</p></div></div>'),
+    },
+    {
+        "id": "card",
+        "label": "Card",
+        "hint": "A titled card with a line of copy.",
+        "html": ('<article class="em-card reveal" data-reveal="fade-up">'
+                 '<h3>Card title</h3><p>One or two sentences about it.</p></article>'),
+    },
+    {
+        "id": "cards-row",
+        "label": "Row of cards",
+        "hint": "Three cards side by side.",
+        "html": ('<div class="grid-3 reveal" data-reveal="fade-up">'
+                 '<article class="em-card"><h3>First</h3><p>What this one is about.</p></article>'
+                 '<article class="em-card"><h3>Second</h3><p>What this one is about.</p></article>'
+                 '<article class="em-card"><h3>Third</h3><p>What this one is about.</p></article></div>'),
+    },
+    {
+        "id": "list",
+        "label": "Bullet list",
+        "hint": "A short list of points.",
+        "html": ('<ul class="em-ticks reveal" data-reveal="fade-up">'
+                 '<li>First point</li><li>Second point</li><li>Third point</li></ul>'),
+    },
+    {
+        "id": "divider",
+        "label": "Divider",
+        "hint": "A thin rule between two things.",
+        "html": '<hr class="em-divider">',
+    },
+    {
+        "id": "spacer-el",
+        "label": "Spacer",
+        "hint": "Empty vertical space. Set its height in the panel.",
+        "html": '<div class="em-spacer" style="height:48px;" aria-hidden="true"></div>',
+    },
+]
+
+ELEMENTS = {e["id"]: e for e in _ELEMENTS}
+
+
+def element_list() -> list[dict]:
+    """What the editor shows in its "Add element" library."""
+    return [{"id": e["id"], "label": e["label"], "hint": e["hint"]} for e in _ELEMENTS]
+
+
+def render_element(template_id: str, el_id: str) -> str:
+    """One element inside an added section, stamped with the id its editor
+    paths hang off — so styling survives the element being reordered."""
+    tpl = ELEMENTS.get(template_id)
+    if tpl is None:
+        return ""
+    html = tpl["html"]
+    close = html.index(">")
+    self_closing = html[close - 1] == "/"
+    stamp = f' data-em-el="{el_id}" data-em-elt="{template_id}"'
+    return html[:close - (1 if self_closing else 0)] + stamp + html[close - (1 if self_closing else 0):]
+
+
+_SLOT_RE = re.compile(r'(<div class="em-stack" data-em-slot="1")(></div>)')
+
+
+def render_section(template_id: str, sec_id: str, children: list[dict] | None = None) -> str:
+    """One added section, stamped with the id its editor paths hang off.
+
+    A blank section carries whatever elements were placed in it, in order.
+    """
     tpl = TEMPLATES.get(template_id)
     if tpl is None:
         return ""
+    body = tpl["html"]
+    if children:
+        inner = "".join(render_element(c["template"], c["id"]) for c in children)
+        body = _SLOT_RE.sub(lambda m: m.group(1) + ">" + inner + "</div>", body, count=1)
     return (f'<section class="section" data-em-sec="{sec_id}" data-em-block="{template_id}">'
-            f'{tpl["html"]}\n  </section>')
+            f'{body}\n  </section>')
 
 
 # ---------------- footer social links ----------------

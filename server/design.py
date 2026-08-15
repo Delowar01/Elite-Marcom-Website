@@ -58,18 +58,43 @@ STYLE_PROPS: dict[str, re.Pattern | tuple] = {
     "box-shadow": _SHADOW_RE,
     "opacity": re.compile(r"^(0|1|0?\.\d{1,3})$"),
     "gap": _LEN_RE,
+    # layout and alignment, so a container can be arranged without code
+    "min-height": _LEN_RE,
+    "align-items": ("flex-start", "center", "flex-end", "stretch", "baseline"),
+    "justify-content": ("flex-start", "center", "flex-end", "space-between",
+                        "space-around", "space-evenly"),
+    "flex-direction": ("row", "row-reverse", "column", "column-reverse"),
+    "display": ("block", "flex", "grid", "inline-block", "inline-flex", "none"),
+    "grid-template-columns": re.compile(
+        rf"^(repeat\(\d{{1,2}},\s*(minmax\(0,\s*1fr\)|1fr|{_LEN})\)"
+        rf"|((minmax\(0,\s*1fr\)|1fr|auto|{_LEN})\s*){{1,6}})$"),
+    # how a chosen background picture is painted
+    "background-size": ("cover", "contain", "auto"),
+    "background-position": ("center", "top", "bottom", "left", "right",
+                            "center top", "center bottom", "left center", "right center"),
+    "background-repeat": ("no-repeat", "repeat", "repeat-x", "repeat-y"),
+    "object-fit": ("cover", "contain", "fill", "none", "scale-down"),
+    "aspect-ratio": re.compile(r"^(auto|\d{1,2}\s*/\s*\d{1,2})$"),
 }
 
 # background-image is emitted from a validated path, never raw CSS
 _BG_KEY = "background-image"
 
+# A path is anchored to a section (or the header/footer) and then walks down by
+# tag and position. An element placed in a blank section gets its own
+# [data-em-el=…] anchor as well: reordering the elements around it would shift
+# every nth-of-type below it, and a style must not jump to a different element
+# because something above it moved.
 _PATH_RE = re.compile(
     r"^(\[data-em-sec=[sa]\d{1,3}\]|header\.site-header|footer\.site-footer|main|body)"
+    r"(>\[data-em-el=e\d{1,3}\])?"
     r"(>[a-z][a-z0-9]{0,15}(:nth-of-type\(\d{1,3}\))?){0,12}$")
 
 # s… = a section that was already in the page, a… = one the editor added
 _SEC_ID_RE = re.compile(r"^[sa]\d{1,3}$")
 _ADDED_ID_RE = re.compile(r"^a\d{1,3}$")
+# e… = an element placed inside a blank section from the element library
+_EL_ID_RE = re.compile(r"^e\d{1,3}$")
 
 # An element's replacement text is limited rich text (bold/italic/link/list),
 # sanitized on the way in by content.sanitize_rich.
@@ -182,13 +207,45 @@ def validate_doc(doc: dict, global_scope: bool = False) -> dict:
             if not isinstance(item, dict):
                 raise DesignError("Invalid added section.")
             sid = str(item.get("id") or "")
-            template = str(item.get("template") or "")
             if not _ADDED_ID_RE.match(sid) or sid in seen_ids:
                 raise DesignError("Invalid added-section id.")
+            seen_ids.add(sid)
+            source = item.get("from")
+            if isinstance(source, dict):
+                # a section copied from a page of ours: the markup still comes
+                # from git, never from the panel — we only remember which one
+                from . import content
+
+                src_page = str(source.get("page") or "")
+                src_sec = str(source.get("sec") or "")
+                if src_page not in content.all_pages():
+                    raise DesignError("That page is not one of ours.")
+                if not _SEC_ID_RE.match(src_sec):
+                    raise DesignError("Invalid copied-section id.")
+                clean_added.append({"id": sid, "from": {"page": src_page, "sec": src_sec}})
+                continue
+            template = str(item.get("template") or "")
             if template not in blocks.TEMPLATES:
                 raise DesignError(f"Unknown section block: {template[:40]}")
-            seen_ids.add(sid)
-            clean_added.append({"id": sid, "template": template})
+            entry = {"id": sid, "template": template}
+            children = item.get("children") or []
+            if not isinstance(children, list) or len(children) > 40:
+                raise DesignError("Too many elements in one section.")
+            clean_children, seen_els = [], set()
+            for child in children:
+                if not isinstance(child, dict):
+                    raise DesignError("Invalid element.")
+                eid = str(child.get("id") or "")
+                etpl = str(child.get("template") or "")
+                if not _EL_ID_RE.match(eid) or eid in seen_els:
+                    raise DesignError("Invalid element id.")
+                if etpl not in blocks.ELEMENTS:
+                    raise DesignError(f"Unknown element: {etpl[:40]}")
+                seen_els.add(eid)
+                clean_children.append({"id": eid, "template": etpl})
+            if clean_children:
+                entry["children"] = clean_children
+            clean_added.append(entry)
         if clean_added:
             clean_sec["added"] = clean_added
         for field in ("order", "removed", "duplicated"):
@@ -451,6 +508,22 @@ def _resolve_path(tree: _Tree, path: str) -> _Node | None:
     if node is None:
         return None
     for seg in segments[1:]:
+        if seg.startswith("[data-em-el="):
+            el_id = seg[len("[data-em-el="):-1]
+
+            def find_el(n):
+                for child in n.children:
+                    if child.attrs.get("data-em-el") == el_id:
+                        return child
+                    found = find_el(child)
+                    if found is not None:
+                        return found
+                return None
+
+            node = find_el(node)
+            if node is None:
+                return None
+            continue
         m = re.match(r"^([a-z][a-z0-9]*)(?::nth-of-type\((\d+)\))?$", seg)
         if not m:
             return None
@@ -480,6 +553,41 @@ def _set_attrs_in_tag(tag_text: str, changes: dict[str, str | None]) -> str:
             insert = f' {name}="{value}"'
             tag_text = re.sub(r"(/?)>$", insert + r"\1>", tag_text, count=1)
     return tag_text
+
+
+def section_from_page(page: str, sec_id: str, new_id: str) -> str:
+    """One section lifted out of a page of ours, restamped under a new id.
+
+    This is what "copy a section and paste it" means: the markup is still the
+    git-tracked page's, so nothing an admin typed is ever parsed as HTML. Ids
+    and keyed regions are stripped — the copy is edited independently of the
+    original, and two elements must never claim the same anchor.
+    """
+    from . import collections as collections_mod
+    from . import content
+
+    try:
+        raw = content.page_source(page)
+    except Exception:
+        return ""
+    raw = _apply_sections(raw, {})          # stamp s… ids the same way a bake does
+    # copy what the page actually shows today, items and all — a services
+    # section copied after an eleventh service was added must carry eleven
+    raw = collections_mod.apply_to_page(raw, page)
+    tree = _Tree(raw)
+    _main, sections = _find_main_sections(tree)
+    for node in sections:
+        if node.attrs.get("data-em-sec") != sec_id:
+            continue
+        span = raw[node.tag_start:node.end]
+        tag_text = raw[node.tag_start:node.content_start]
+        body = span[len(tag_text):]
+        body = re.sub(r'\s(data-em|data-em-sec|data-em-list|id|aria-labelledby)="[^"]*"', "", body)
+        new_tag = _set_attrs_in_tag(tag_text, {
+            "data-em-sec": new_id, "id": None, "aria-labelledby": None,
+            "data-em": None, "data-em-list": None})
+        return new_tag + body
+    return ""
 
 
 def _apply_sections(raw: str, sections_spec: dict) -> str:
@@ -522,7 +630,11 @@ def _apply_sections(raw: str, sections_spec: dict) -> str:
         else:
             trailing.setdefault(current, []).append(span)
     for item in sections_spec.get("added") or []:
-        markup = blocks.render_section(item["template"], item["id"])
+        if item.get("from"):
+            markup = section_from_page(item["from"]["page"], item["from"]["sec"], item["id"])
+        else:
+            markup = blocks.render_section(item["template"], item["id"],
+                                           item.get("children"))
         if markup:
             by_id[item["id"]] = markup
             ids.append(item["id"])
