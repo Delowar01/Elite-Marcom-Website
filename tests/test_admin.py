@@ -1240,11 +1240,18 @@ def test_design_sections_reorder_hide_duplicate():
     baked = client.get("/admin/visual/services").text
     ids = _re.findall(r'data-em-sec="(s\d+)"', baked)
     assert ids == ["s0", "s2"]  # s1 hidden; duplicate carries no data-em-sec
-    assert baked.count("<section") == 3  # s0 + s2 + duplicate of s2
+    assert baked.count('id="model-h"') == 0            # s1 really is off the page
+    assert baked.count('id="sprocess-h"') == 1         # s2 kept its ids
+    assert baked.count("Bring us the objective") == 2  # s2 plus its duplicate
+    # hiding a section must not take the content that merely sat after it —
+    # the ten service cards live in a <div> between s1 and s2
+    assert baked.count('class="sc-card ') == 10
     # clear
     client.post("/api/admin/design/services", json={"doc": {"elements": {}}},
                 headers={"X-CSRF": me["csrf"]})
-    assert client.get("/admin/visual/services").text.count("<section") == 3
+    restored = client.get("/admin/visual/services").text
+    assert _re.findall(r'data-em-sec="(s\d+)"', restored) == ["s0", "s1", "s2"]
+    assert restored.count('class="sc-card ') == 10
 
 
 def test_design_global_scope_restricted_and_hidden_ranges():
@@ -1344,6 +1351,52 @@ def test_text_override_on_a_container_wins_over_one_inside_it():
         "main>section:nth-of-type(1)>div:nth-of-type(1)>p:nth-of-type(1)": {"text": "INNER"},
     })
     assert out == "<main><section><div>OUTER</div></section></main>"
+
+
+def test_baking_never_drops_what_sits_between_two_sections():
+    """<main> holds more than <section>s — a marquee band, a request drawer, the
+    services grid. The bake replaces main's whole inner span, so anything it
+    fails to emit is deleted from the published page. This is exactly how the
+    services page published as an empty gap."""
+    from server import design
+
+    raw = ("<html><head></head><body><main>"
+           "<section class='a'>A</section>"
+           "<div class='marquee'>MARQUEE-KEPT</div>"
+           "<section class='b'>B</section>"
+           "<div class='services'>SERVICES-KEPT</div>"
+           "<section class='c'>C</section>"
+           "</main></body></html>")
+    out = design._apply_sections(raw, {})
+    assert "MARQUEE-KEPT" in out and "SERVICES-KEPT" in out
+    assert out.count("<section") == 3
+    # and it stays where it was, between the sections it was written between
+    assert out.index("MARQUEE-KEPT") < out.index("class='b'") < out.index("SERVICES-KEPT")
+
+    # taking a section off the page must not delete the content that sat after it
+    hidden = design._apply_sections(raw, {"removed": ["s1"]})
+    assert "class='b'" not in hidden
+    assert "MARQUEE-KEPT" in hidden and "SERVICES-KEPT" in hidden
+
+    # reordering carries each stray child with the section it follows
+    flipped = design._apply_sections(raw, {"order": ["s2", "s1", "s0"]})
+    assert flipped.index("SERVICES-KEPT") < flipped.index("MARQUEE-KEPT")
+    assert "MARQUEE-KEPT" in flipped and "SERVICES-KEPT" in flipped
+
+
+def test_every_shipped_page_survives_a_bake():
+    """A publish must not quietly lose an element from any page in the repo."""
+    import pathlib as _p
+    import re as _re
+
+    from server import design
+
+    for path in sorted(_p.Path("public").glob("*.html")):
+        raw = path.read_text(encoding="utf-8")
+        out = design._apply_sections(raw, {})
+        before = len(_re.findall(r"<[a-zA-Z][^>]*>", raw))
+        after = len(_re.findall(r"<[a-zA-Z][^>]*>", out))
+        assert after == before, f"{path.name}: bake dropped {before - after} elements"
 
 
 def test_section_blocks_add_reorder_hide_and_delete():

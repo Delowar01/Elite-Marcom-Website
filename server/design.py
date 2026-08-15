@@ -500,6 +500,27 @@ def _apply_sections(raw: str, sections_spec: dict) -> str:
 
     ids = [sid for sid, _ in stamped]
     by_id = dict(stamped)
+    # A page's <main> holds more than <section>s — a marquee band, a request
+    # drawer, the services grid. Only sections are addressable, but everything
+    # else has to come through the rebuild untouched: this function replaces
+    # main's whole inner span, so anything it does not emit is deleted from the
+    # published page. Each stray child is pinned to the section it follows.
+    section_starts = {node.tag_start: sid for sid, node in zip(ids, sections)}
+    leading: list[str] = []
+    trailing: dict[str, list[str]] = {}
+    kids = [c for c in main.children]
+    kids.sort(key=lambda c: c.tag_start)
+    current: str | None = None
+    for child in kids:
+        sid = section_starts.get(child.tag_start)
+        if sid is not None:
+            current = sid
+            continue
+        span = raw[child.tag_start:child.end]
+        if current is None:
+            leading.append(span)
+        else:
+            trailing.setdefault(current, []).append(span)
     for item in sections_spec.get("added") or []:
         markup = blocks.render_section(item["template"], item["id"])
         if markup:
@@ -511,17 +532,20 @@ def _apply_sections(raw: str, sections_spec: dict) -> str:
             order.append(sid)
     removed = set(sections_spec.get("removed") or [])
     duplicated = set(sections_spec.get("duplicated") or [])
-    parts = []
+    parts = list(leading)
     for sid in order:
-        if sid in removed:
-            continue
-        parts.append(by_id[sid])
-        if sid in duplicated:
-            copy = by_id[sid]
-            copy = re.sub(r'\s(data-em|data-em-sec|id|aria-labelledby)="[^"]*"', "", copy)
-            parts.append(copy)
-    prefix = raw[main.content_start:sections[0].tag_start]
-    suffix = raw[sections[-1].end:main.content_end]
+        if sid not in removed:
+            parts.append(by_id[sid])
+            if sid in duplicated:
+                copy = by_id[sid]
+                copy = re.sub(r'\s(data-em|data-em-sec|id|aria-labelledby)="[^"]*"', "", copy)
+                parts.append(copy)
+        # emitted even when the section above it was removed: taking a section
+        # off the page must not silently delete the content that sat after it
+        parts.extend(trailing.get(sid, []))
+    first, last = kids[0], kids[-1]
+    prefix = raw[main.content_start:first.tag_start]
+    suffix = raw[last.end:main.content_end]
     rebuilt = prefix + "\n\n".join(parts) + suffix
     return raw[:main.content_start] + rebuilt + raw[main.content_end:]
 
