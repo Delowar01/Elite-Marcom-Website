@@ -293,8 +293,78 @@
     window.scrollTo(0, st.y || 0);
   }
 
+  /* ---------- which layout ---------- */
+  /* Cards are the default; the toolbar's toggle switches to the list and the
+     choice is remembered, so it survives opening a product and coming back. */
+  var VIEW_KEY = "em-gifts-view";
+  var view = "grid";
+  try {
+    var stored = localStorage.getItem(VIEW_KEY);
+    if (stored === "grid" || stored === "list") view = stored;
+  } catch (e) { /* storage unavailable — cards it is */ }
+
+  function setView(next, redraw) {
+    view = next === "list" ? "list" : "grid";
+    try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* not fatal */ }
+    /* the class is set from here rather than trusted from the page, so a
+       published snapshot baked before this layout existed still lays out */
+    grid.className = view === "list" ? "catalog-list" : "catalog-grid catalog-grid--gifts";
+    document.querySelectorAll(".view-toggle [data-view]").forEach(function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-view") === view ? "true" : "false");
+    });
+    if (redraw) render();
+  }
+
   var CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
     'aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';
+
+  function cardHtml(p, group) {
+    var multi = group.length > 1;
+    var total = groupStock(group);
+    /* aggregate availability across the group's variants */
+    var av = availability(multi ? { stock: {
+      available: total,
+      incoming: Math.max.apply(null, group.map(function (g) { return (g.stock && g.stock.incoming) || 0; })),
+      incomingDate: (p.stock || {}).incomingDate
+    } } : p);
+    var inReq = findRequest(p.id);
+    var canOrder = p.stock && p.stock.available > 0;
+    var badges = "";
+    if (p.categories && p.categories.length) badges += '<span class="chip">' + EM.escapeHtml(p.categories[0]) + "</span>";
+    if (p.isNew) badges += '<span class="chip chip--violet">New</span>';
+    if (p.sustainable) badges += '<span class="chip chip--orange">Sustainable</span>';
+    var meta = multi
+      ? [p.brand, group.length + " options"].filter(Boolean).join(" · ")
+      : [p.brand, p.color].filter(Boolean).join(" · ");
+    /* slideable media with auto-hide arrows, right on the card */
+    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : [])).slice(0, 8);
+    var slides = imgs.map(function (src, i) {
+      return '<img src="' + EM.escapeHtml(src) + '" alt="" loading="lazy" width="480" height="480" draggable="false">';
+    }).join("");
+    return (
+      '<div class="product-card__media carousel">' +
+        '<div class="carousel__track">' + slides + "</div>" +
+        '<div class="product-card__badges">' + badges + "</div>" +
+      "</div>" +
+      '<div class="product-card__body">' +
+        '<span class="product-card__code"><span>' + EM.escapeHtml(p.code) + "</span><span>" + market.toUpperCase() + "</span></span>" +
+        '<h3 class="product-card__name">' + EM.escapeHtml(p.name) + "</h3>" +
+        '<span class="product-card__meta">' + EM.escapeHtml(meta) + "</span>" +
+        '<span class="availability ' + av.cls + '">' + EM.escapeHtml(av.label) + "</span>" +
+        '<div class="product-card__actions">' +
+          (multi
+            ? '<a class="btn btn--primary btn--small" href="' + productUrl(p) + '">Select options</a>'
+            : canOrder
+            ? '<div class="qty-control" aria-label="Quantity">' +
+                '<button type="button" data-qty-minus aria-label="Decrease quantity">−</button>' +
+                '<input type="number" inputmode="numeric" value="' + (inReq ? inReq.qty : 1) + '" min="1" max="' + p.stock.available + '" aria-label="Requested quantity">' +
+                '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
+              "</div>" +
+              '<button class="btn btn--primary btn--small" type="button" data-add>' + (inReq ? "Update request" : "Add request") + "</button>"
+            : '<button class="btn btn--violet btn--small" type="button" data-notify>Notify when available</button>') +
+        "</div>" +
+      "</div>");
+  }
 
   function rowHtml(p, group) {
     var multi = group.length > 1;
@@ -341,33 +411,39 @@
     grid.setAttribute("aria-busy", "false");
     var list = filtered();
     var slice = list.slice(0, visibleLimit);
-    grid.innerHTML = slice.length ? LIST_HEAD : "";
+    var isList = view === "list";
+    grid.innerHTML = isList && slice.length ? LIST_HEAD : "";
     slice.forEach(function (group) {
       var p = groupRep(group);
-      var row = document.createElement("div");
-      row.className = "lrow";
-      row.setAttribute("data-id", p.id);
-      row.setAttribute("role", "link");
-      row.setAttribute("tabindex", "0");
-      row.setAttribute("aria-label", p.name + " — open product page");
-      row.innerHTML = rowHtml(p, group);
-      bindRow(row, p);
-      /* the whole row opens the product page — except its own action */
-      row.addEventListener("click", function (e) {
+      var el = document.createElement(isList ? "div" : "article");
+      el.className = isList ? "lrow" : "product-card";
+      el.setAttribute("data-id", p.id);
+      el.setAttribute("role", "link");
+      el.setAttribute("tabindex", "0");
+      el.setAttribute("aria-label", p.name + " — open product page");
+      el.innerHTML = isList ? rowHtml(p, group) : cardHtml(p, group);
+      isList ? bindRow(el, p) : bindCard(el, p);
+      /* the whole card or row opens the product page — except its own controls */
+      el.addEventListener("click", function (e) {
+        if (e.target.closest("input, .qty-control, .carousel__btn, .carousel__dots")) return;
         var link = e.target.closest("a");
         if (e.target.closest("button") && !link) return;
         saveReturnState();
         if (link) return;   /* the options anchor navigates on its own */
         location.href = productUrl(p);
       });
-      row.addEventListener("keydown", function (e) {
-        if ((e.key === "Enter" || e.key === " ") && e.target === row) {
+      el.addEventListener("keydown", function (e) {
+        if ((e.key === "Enter" || e.key === " ") && e.target === el) {
           e.preventDefault();
           saveReturnState();
           location.href = productUrl(p);
         }
       });
-      grid.appendChild(row);
+      if (!isList) {
+        var mediaEl = el.querySelector(".product-card__media");
+        if (mediaEl && EM.carousel) EM.carousel(mediaEl);
+      }
+      grid.appendChild(el);
     });
     if (els.count) els.count.textContent = list.length + " product" + (list.length === 1 ? "" : "s");
     if (els.empty) els.empty.hidden = list.length !== 0;
@@ -379,6 +455,34 @@
       var n = activeFilterCount();
       els.activeFilters.textContent = n ? n + " filter" + (n === 1 ? "" : "s") + " active" : "";
     }
+  }
+
+  function clampQty(input, max) {
+    var v = parseInt(input.value, 10);
+    if (isNaN(v) || v < 1) v = 1;
+    if (v > max) { v = max; EM.toast("Quantity limited to available stock (" + max + ").", ""); }
+    input.value = String(v);
+    return v;
+  }
+
+  function bindCard(card, p) {
+    var qtyInput = card.querySelector(".qty-control input");
+    var max = (p.stock && p.stock.available) || 1;
+    /* live validation: a typed quantity can never exceed available stock */
+    if (qtyInput) qtyInput.addEventListener("change", function () { clampQty(qtyInput, max); });
+    card.querySelectorAll("[data-qty-minus]").forEach(function (b) {
+      b.addEventListener("click", function () { qtyInput.value = String(Math.max(1, clampQty(qtyInput, max) - 1)); });
+    });
+    card.querySelectorAll("[data-qty-plus]").forEach(function (b) {
+      b.addEventListener("click", function () { qtyInput.value = String(Math.min(max, clampQty(qtyInput, max) + 1)); });
+    });
+    var addBtn = card.querySelector("[data-add]");
+    if (addBtn) addBtn.addEventListener("click", function () {
+      addToRequest(p, clampQty(qtyInput, max));
+      addBtn.textContent = "Update request";
+    });
+    var notBtn = card.querySelector("[data-notify]");
+    if (notBtn) notBtn.addEventListener("click", function () { openNotify(p); });
   }
 
   function bindRow(row, p) {
@@ -458,6 +562,12 @@
     render();
   });
   if (els.more) els.more.addEventListener("click", function () { visibleLimit += BATCH; render(); });
+  document.querySelectorAll(".view-toggle [data-view]").forEach(function (btn) {
+    btn.addEventListener("click", function () { setView(btn.getAttribute("data-view"), true); });
+  });
+  /* applied before the first paint, so the container never carries the class
+     of a layout it is not showing */
+  setView(view, false);
 
   /* ---------- request drawer ---------- */
   var requestDrawer = EM.drawer(document.getElementById("give-request-drawer"), document.getElementById("give-request-scrim"));
