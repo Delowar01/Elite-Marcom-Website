@@ -119,6 +119,17 @@ documentation). Non-negotiable rules from it:
   would be re-fetched on every visit, which is the crawl this must never
   become. Only a validated 11-character YouTube id leaves the module; supplier
   HTML is parsed and discarded.
+- **A video's poster is a gallery photograph too.** Odoo keeps it as a
+  `product.image` record, so the feed sends it as an ordinary picture and the
+  same frame appears twice — once playable, once not. The two URLs
+  (`/web/image/product.image/8803/…` and `i.ytimg.com/vi/{id}/…`) share
+  nothing, so they are matched by **supplier record id**, never by URL and
+  never by gallery position: the page's own markup pairs a record with the
+  embed (smallest element containing both), or, failing that, one video plus
+  exactly one of our records the page never shows as a photograph. Anything
+  less certain leaves every image in place — `supplierPoster` stays empty and
+  the browser removes nothing. Showing one picture twice is a blemish;
+  deleting the wrong one loses a product photo.
 
 ## Site conventions
 

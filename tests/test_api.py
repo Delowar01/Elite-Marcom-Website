@@ -720,16 +720,42 @@ def test_manual_proxy_rejects_non_pdf_candidate(tmp_path, monkeypatch):
 # id 24246 / parent 29453 with videos: [] from the Product API, while
 # https://www.jasani.ae/shop/itgl-1291-…-29453 embeds youtube.com/embed/lFhAiGLjoMo.
 
+# Two shapes of the same gallery. In PAIRED the shop puts the video's own
+# product.image record in the same carousel cell as the embed; in UNPAIRED that
+# record is never printed, and the poster is whichever of our records the page
+# does not show as a photograph. Both are answered from supplier data.
 REAL_PAGE = """<!doctype html><html><body><div id="product_detail">
   <img src="https://www.jasani.ae/web/image/product.product/24246/image_1024">
-  <div class="o_video_container">
-    <iframe src="https://www.youtube.com/embed/lFhAiGLjoMo?rel=0" allowfullscreen></iframe>
+  <div class="carousel-item"><img src="/web/image/product.image/8801/image_1024"></div>
+  <div class="carousel-item"><img src="/web/image/product.image/8802/image_1024"></div>
+  <div class="carousel-item o_product_video">
+    <div class="ratio ratio-16x9">
+      <iframe src="https://www.youtube.com/embed/lFhAiGLjoMo?rel=0" allowfullscreen></iframe>
+    </div>
+    <img class="o_video_thumb" src="/web/image/product.image/8803/image_128">
   </div>
 </div>
 <div class="alternative_products">
   <a href="/shop/other-product-11111">Another item</a>
   <iframe src="https://www.youtube.com/embed/ZZZZZZZZZZZ"></iframe>
 </div></body></html>"""
+
+# same product, a shop that never prints the video record's id
+UNPAIRED_PAGE = """<!doctype html><html><body><div id="product_detail">
+  <img src="/web/image/product.image/8801/image_1024">
+  <img src="/web/image/product.image/8802/image_1024">
+  <div class="o_video_container">
+    <iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe>
+  </div>
+</div></body></html>"""
+
+# the supplier-hosted poster is a completely different URL from the ytimg one —
+# which is why matching on the URL could never have worked
+GALLERY = ["https://www.jasani.ae/web/image/product.product/24246/image_1024",
+           "https://www.jasani.ae/web/image/product.image/8801/image_1024",
+           "https://www.jasani.ae/web/image/product.image/8802/image_1024",
+           "https://www.jasani.ae/web/image/product.image/8803/image_1024"]
+POSTER = "https://www.jasani.ae/web/image/product.image/8803/image_1024"
 
 
 def _video_product(monkeypatch, tmp_path, **over):
@@ -738,7 +764,8 @@ def _video_product(monkeypatch, tmp_path, **over):
 
     product = {"id": "24246", "code": "ITGL 1291",
                "name": "NAPIER - MagCase Phone Cardholder - Grey",
-               "parentId": "29453", "templateId": None, "videos": []}
+               "parentId": "29453", "templateId": None, "videos": [],
+               "image": GALLERY[0], "images": list(GALLERY)}
     product.update(over)
 
     async def fake_catalog(market):
@@ -759,8 +786,12 @@ def test_the_confirmed_product_video_is_found_on_the_public_page(tmp_path, monke
 
     res = client.get("/api/giveaways/video?country=uae&product_id=24246")
     assert res.status_code == 200
-    assert res.json() == {"videos": [
-        {"youtubeId": "lFhAiGLjoMo", "thumbnail": "https://i.ytimg.com/vi/lFhAiGLjoMo/hqdefault.jpg"}]}
+    assert res.json() == {"videos": [{
+        "youtubeId": "lFhAiGLjoMo",
+        "thumbnail": "https://i.ytimg.com/vi/lFhAiGLjoMo/hqdefault.jpg",
+        # the gallery photograph that IS this video — named by supplier record
+        # id, so the page can drop it instead of showing the frame twice
+        "supplierImageId": "8803", "supplierPoster": POSTER}]}
     # the page is addressed by the template id, on the market's own host
     assert asked == ["https://www.jasani.ae/shop/"
                      "itgl-1291-napier-magcase-phone-cardholder-grey-29453"]
@@ -814,7 +845,8 @@ def test_a_declared_thumbnail_is_kept_over_the_generated_one():
             '<iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe>')
     assert sv.parse_videos(page) == [
         {"youtubeId": "lFhAiGLjoMo",
-         "thumbnail": "https://i.ytimg.com/vi/lFhAiGLjoMo/maxresdefault.jpg"}]
+         "thumbnail": "https://i.ytimg.com/vi/lFhAiGLjoMo/maxresdefault.jpg",
+         "supplierImageId": ""}]
 
 
 def test_escaped_urls_inside_inline_json_are_still_found():
@@ -843,7 +875,8 @@ def test_videos_from_the_product_api_are_served_without_any_page_request(tmp_pat
     monkeypatch.setattr(sv, "fetch_page", boom)
 
     assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {
-        "videos": [{"youtubeId": "Ab3dE5fGh7I", "thumbnail": ""}]}
+        "videos": [{"youtubeId": "Ab3dE5fGh7I", "thumbnail": "",
+                    "supplierImageId": "", "supplierPoster": ""}]}
 
 
 def test_a_positive_result_is_cached_and_the_page_is_read_once(tmp_path, monkeypatch):
@@ -898,7 +931,7 @@ def test_an_unreachable_page_is_retried_sooner_than_a_settled_verdict(tmp_path, 
     assert sv._read_cache("uae", "29453") is None
     settled = dict(meta, ok=True)
     (tmp_path / "uae-29453.json").write_text(json.dumps(settled), encoding="utf-8")
-    assert sv._read_cache("uae", "29453") == []
+    assert sv._read_cache("uae", "29453") == {"videos": [], "imageIds": []}
 
 
 def test_the_search_fallback_only_accepts_the_matching_template_id(tmp_path, monkeypatch):
@@ -1011,6 +1044,146 @@ def test_the_catalogue_and_an_unknown_product_ask_the_supplier_nothing(tmp_path,
     assert client.get("/api/giveaways/video?country=uae&product_id=999999").json() == {"videos": []}
     # the catalogue endpoint itself never reaches into video discovery
     assert client.get("/api/giveaways/products?country=uae").status_code == 200
+
+
+# --- the video's poster is a gallery photograph too, and looks nothing like it ---
+# Supplier poster:  https://www.jasani.ae/web/image/product.image/8803/image_1024
+# YouTube thumbnail: https://i.ytimg.com/vi/lFhAiGLjoMo/hqdefault.jpg
+# Two URLs, one frame. Matching on the URL can never connect them, which is why
+# the same picture appeared twice — once playable, once not.
+
+def test_the_page_pairs_the_poster_record_with_the_embed():
+    """The carousel cell holds the video AND its image record. That pairing is
+    the supplier's own; nothing here counts positions in the gallery."""
+    from server import supplier_video as sv
+
+    found = sv.parse_page(REAL_PAGE)
+    assert found["videos"][0]["supplierImageId"] == "8803"
+    assert found["imageIds"] == ["8801", "8802"]  # the poster is not an ordinary photo
+
+
+def test_a_page_that_never_prints_the_poster_record_is_answered_by_subtraction():
+    """One video, and exactly one of our image records the page does not show
+    as a photograph — that record is the poster, because the page accounts for
+    every other one."""
+    from server import supplier_video as sv
+
+    found = sv.parse_page(UNPAIRED_PAGE)
+    assert found["videos"][0]["supplierImageId"] == ""      # the page paired nothing
+    assert found["imageIds"] == ["8801", "8802"]
+    out = sv.associate_posters({"images": GALLERY}, found["videos"], found["imageIds"])
+    assert out[0]["supplierImageId"] == "8803"
+    assert out[0]["supplierPoster"] == POSTER
+
+
+def test_the_supplier_poster_reaches_the_page_for_both_confirmed_products(tmp_path, monkeypatch):
+    """ITGL 1291 (29453) and ITGL 1290 (29452) — the two products checked live."""
+    from server import jasani, supplier_video as sv
+
+    items = {"24246": ("ITGL 1291", "29453"), "24245": ("ITGL 1290", "29452")}
+    products = [{"id": pid, "code": code, "name": f"{code} NAPIER MagCase",
+                 "parentId": tid, "templateId": None, "videos": [],
+                 "image": GALLERY[0], "images": list(GALLERY)}
+                for pid, (code, tid) in items.items()]
+
+    async def fake_catalog(market):
+        return (products, "cache")
+    monkeypatch.setattr(jasani, "get_catalog", fake_catalog)
+    monkeypatch.setattr(sv, "_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(sv, "fetch_page", lambda url: _page_for(url))
+
+    async def _page_for(url):
+        return REAL_PAGE if url.endswith("-29453") else UNPAIRED_PAGE
+
+    for pid, (_code, tid) in items.items():
+        res = client.get(f"/api/giveaways/video?country=uae&product_id={pid}")
+        vids = res.json()["videos"]
+        assert len(vids) == 1, pid
+        assert vids[0]["youtubeId"] == "lFhAiGLjoMo"
+        assert vids[0]["supplierPoster"] == POSTER, pid
+        assert (tmp_path / f"uae-{tid}.json").exists()
+
+
+def test_the_poster_identity_survives_in_the_cache(tmp_path, monkeypatch):
+    """A second visit must not re-read the supplier page to know which gallery
+    image the video already is."""
+    sv, _p = _video_product(monkeypatch, tmp_path)
+    calls = {"n": 0}
+
+    async def fake_page(url):
+        calls["n"] += 1
+        return REAL_PAGE
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    first = client.get("/api/giveaways/video?country=uae&product_id=24246").json()
+    stored = json.loads((tmp_path / "uae-29453.json").read_text(encoding="utf-8"))
+    assert stored["videos"][0]["supplierImageId"] == "8803"
+    assert stored["imageIds"] == ["8801", "8802"]
+    again = client.get("/api/giveaways/video?country=uae&product_id=24246").json()
+    assert again == first and calls["n"] == 1
+
+
+def test_an_ambiguous_page_leaves_every_photograph_in_place():
+    """Two image records in the same cell as the embed, or two of ours missing
+    from the page: either way the poster is unknown. Showing one picture twice
+    is a blemish; deleting the wrong one loses a product photo."""
+    from server import supplier_video as sv
+
+    two_in_a_cell = ("""<div id="product_detail"><div class="carousel-item">"""
+                     """<img src="/web/image/product.image/8803/image_128">"""
+                     """<img src="/web/image/product.image/8804/image_128">"""
+                     """<iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe>"""
+                     """</div></div>""")
+    found = sv.parse_page(two_in_a_cell)
+    assert found["videos"][0]["supplierImageId"] == ""
+    out = sv.associate_posters({"images": GALLERY}, found["videos"], found["imageIds"])
+    assert out[0]["supplierPoster"] == "" and out[0]["supplierImageId"] == ""
+
+    # two of ours unaccounted for — subtraction has no single answer either
+    thin = sv.parse_page("""<div id="product_detail">"""
+                         """<img src="/web/image/product.image/8801/image_1024">"""
+                         """<div><iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe></div>"""
+                         """</div>""")
+    out = sv.associate_posters({"images": GALLERY}, thin["videos"], thin["imageIds"])
+    assert out[0]["supplierPoster"] == ""
+
+
+def test_a_poster_id_we_do_not_hold_removes_nothing():
+    """An id from the page that is not in this product's gallery identifies no
+    image to drop, so it must not travel to the browser as if it did."""
+    from server import supplier_video as sv
+
+    out = sv.associate_posters(
+        {"images": GALLERY},
+        [{"youtubeId": "lFhAiGLjoMo", "thumbnail": "", "supplierImageId": "999999"}],
+        ["8801", "8802", "8803"])
+    assert out[0]["supplierImageId"] == "" and out[0]["supplierPoster"] == ""
+
+
+def test_two_videos_never_borrow_each_others_poster():
+    from server import supplier_video as sv
+
+    page = ("""<div id="product_detail">"""
+            """<div class="cell"><iframe src="https://www.youtube.com/embed/AAAAAAAAAAA"></iframe>"""
+            """<img src="/web/image/product.image/8803/image_128"></div>"""
+            """<div class="cell"><iframe src="https://www.youtube.com/embed/BBBBBBBBBBB"></iframe>"""
+            """<img src="/web/image/product.image/8804/image_128"></div>"""
+            """<img src="/web/image/product.image/8801/image_1024"></div>""")
+    found = sv.parse_page(page)
+    assert [v["supplierImageId"] for v in found["videos"]] == ["8803", "8804"]
+    assert found["imageIds"] == ["8801"]
+    # with more than one video, subtraction is not attempted at all
+    out = sv.associate_posters({"images": GALLERY}, [dict(v, supplierImageId="")
+                                                     for v in found["videos"]], ["8801"])
+    assert [v["supplierPoster"] for v in out] == ["", ""]
+
+
+def test_image_ids_are_read_from_the_gallery_urls_we_already_hold():
+    from server import supplier_video as sv
+
+    assert sv.image_ids(GALLERY) == ["8801", "8802", "8803"]  # product.product is not one
+    assert sv.image_ids(["https://evil.example/web/image/product.image/1/x"]) == ["1"]
+    assert sv.image_ids([]) == [] and sv.image_ids(None) == []
 
 
 def _fake_area_image() -> bytes:

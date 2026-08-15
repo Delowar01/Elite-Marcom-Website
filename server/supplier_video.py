@@ -37,6 +37,7 @@ import json
 import re
 import time
 import urllib.parse
+from html.parser import HTMLParser
 from pathlib import Path
 
 import httpx
@@ -93,28 +94,183 @@ def _region(page: str) -> str:
     return page[start:end]
 
 
-def parse_videos(page: str) -> list[dict]:
-    """Validated YouTube entries in document order — supplier HTML in, ids out."""
+# Odoo serves every gallery picture from a product.image record, and the record
+# id is in the URL: /web/image/product.image/8801/image_1024. That id is the
+# only reliable identity shared between the public page and the API feed, which
+# hands us the same URLs — the two never agree on anything else. The poster of
+# a video is a product.image record like any other, which is why it arrives in
+# the feed as an ordinary photo and shows up twice in the gallery.
+_IMG_RE = re.compile(r"/web/image/product\.image/(\d{1,12})", re.I)
+
+# Elements that never wrap anything, so they never open a scope.
+_VOID = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input",
+                   "link", "meta", "param", "source", "track", "wbr"))
+
+
+class _Elements(HTMLParser):
+    """Byte spans of every element in the page.
+
+    A video's poster is identified by the markup that CONTAINS both of them —
+    the carousel cell, the gallery figure, whatever the shop calls it. That is
+    the supplier's own association. Measuring in characters instead would make
+    the answer depend on how much unrelated markup happens to sit nearby, and
+    reading it off gallery order would be a guess.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._open: list[tuple[str, int]] = []
+        self.spans: list[tuple[int, int]] = []
+        self._lines: list[int] = []
+
+    def _at(self) -> int:
+        line, col = self.getpos()
+        return (self._lines[line - 1] if 0 < line <= len(self._lines) else 0) + col
+
+    def parse(self, text: str) -> list[tuple[int, int]]:
+        offset = 0
+        for chunk in text.split("\n"):
+            self._lines.append(offset)
+            offset += len(chunk) + 1
+        try:
+            self.feed(text)
+            self.close()
+        except Exception:
+            pass  # a half-parsed page still yields usable spans
+        end = len(text)
+        self.spans.extend((at, end) for _tag, at in self._open)
+        return self.spans
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in _VOID:
+            self._open.append((tag, self._at()))
+
+    def handle_endtag(self, tag):
+        for i in range(len(self._open) - 1, -1, -1):
+            if self._open[i][0] == tag:
+                close = self._at() + len(tag) + 3
+                # everything opened inside an element closes with it
+                for _t, at in self._open[i:]:
+                    self.spans.append((at, close))
+                del self._open[i:]
+                return
+
+
+def _paired_ids(text: str, at: int, imgs: list[tuple[int, str]]) -> set[str]:
+    """product.image ids in the smallest element that holds BOTH this video and
+    at least one image — the supplier's own pairing, or {} when there is none."""
+    if not imgs:
+        return set()
+    spans = [s for s in _Elements().parse(text) if s[0] <= at < s[1]]
+    spans.sort(key=lambda s: s[1] - s[0])
+    for lo, hi in spans:
+        near = {iid for pos, iid in imgs if lo <= pos < hi}
+        if near:
+            return near
+    return set()
+
+
+def parse_page(page: str) -> dict:
+    """What the supplier's public product page says about videos.
+
+    Returns ``{"videos": [...], "imageIds": [...]}`` where ``imageIds`` are the
+    product.image records the page shows as ORDINARY photographs. That list is
+    the second half of the identification: an id our feed has and the page does
+    not show as a photograph is the video's poster record.
+
+    Each video carries ``supplierImageId`` when the page itself pairs exactly
+    one image record with the embed. Two candidates in the same cell is an
+    ambiguity, not a coin toss — the field stays empty and the gallery keeps
+    every photograph.
+    """
     if not page:
-        return []
-    # escaped slashes inside inline JSON (https:\/\/…) hide the URL from the
-    # pattern; the page is scanned as text, so undo that first
-    text = _region(page.replace("\\/", "/"))
-    text = html_mod.unescape(text)
+        return {"videos": [], "imageIds": []}
+    # escaped slashes in inline JSON (https:\/\/…) and &amp; in href attributes
+    # both hide a URL from the pattern. Neither substitution can disturb the
+    # markup, so element offsets stay aligned with the text being searched —
+    # a full HTML unescape could turn &lt;div&gt; in a description into a tag.
+    text = _region(page.replace("\\/", "/").replace("&amp;", "&"))
     thumbs: dict[str, str] = {}
     for m in _THUMB_RE.finditer(text):
         thumbs.setdefault(m.group(1), m.group(0))
-    out: list[dict] = []
+    imgs = [(m.start(), m.group(1)) for m in _IMG_RE.finditer(text)]
+
+    videos: list[dict] = []
     seen: set[str] = set()
+    paired: set[str] = set()
     for m in _YT_RE.finditer(text):
         vid = m.group(1) or m.group(2) or m.group(3)
         if not vid or vid in seen:
             continue
         seen.add(vid)
-        out.append({"youtubeId": vid,
-                    "thumbnail": thumbs.get(vid, f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")})
-        if len(out) >= MAX_VIDEOS:
+        near = _paired_ids(text, m.start(), imgs)
+        pair = near.pop() if len(near) == 1 else ""
+        if pair:
+            paired.add(pair)
+        videos.append({
+            "youtubeId": vid,
+            "thumbnail": thumbs.get(vid, f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"),
+            "supplierImageId": pair,
+        })
+        if len(videos) >= MAX_VIDEOS:
             break
+
+    ordinary: list[str] = []
+    for _pos, iid in imgs:
+        if iid not in paired and iid not in ordinary:
+            ordinary.append(iid)
+    return {"videos": videos, "imageIds": ordinary}
+
+
+def parse_videos(page: str) -> list[dict]:
+    """Validated YouTube entries in document order — supplier HTML in, ids out."""
+    return parse_page(page)["videos"]
+
+
+def image_ids(urls) -> list[str]:
+    """product.image record ids from gallery URLs, in order, de-duplicated."""
+    out: list[str] = []
+    for url in urls or []:
+        m = _IMG_RE.search(str(url))
+        if m and m.group(1) not in out:
+            out.append(m.group(1))
+    return out
+
+
+def associate_posters(product: dict, videos: list[dict], page_image_ids: list[str]) -> list[dict]:
+    """Point each video at the product.image record the feed sent us as a photo.
+
+    Two ways in, both from supplier data and neither from gallery position:
+
+    1. the page paired an id with the embed (``supplierImageId``);
+    2. otherwise, the set difference — one video, and exactly one of our image
+       records missing from the page's ordinary photographs. That missing
+       record is the poster, because the page accounts for every other one.
+
+    Anything less certain than that leaves the video without a poster and the
+    gallery untouched: deleting the wrong photograph is far worse than showing
+    one image twice.
+    """
+    mine = image_ids(product.get("images") or [])
+    by_id = {}
+    for url in product.get("images") or []:
+        m = _IMG_RE.search(str(url))
+        if m:
+            by_id.setdefault(m.group(1), str(url))
+
+    out = [dict(v) for v in videos]
+    known = {v.get("supplierImageId") for v in out if v.get("supplierImageId")}
+    if len(out) == 1 and not out[0].get("supplierImageId") and page_image_ids:
+        missing = [i for i in mine if i not in set(page_image_ids) | known]
+        if len(missing) == 1:
+            out[0]["supplierImageId"] = missing[0]
+
+    for v in out:
+        iid = v.get("supplierImageId") or ""
+        # an id we do not actually hold identifies nothing to remove
+        v["supplierPoster"] = by_id.get(iid, "")
+        if not v["supplierPoster"]:
+            v["supplierImageId"] = iid if iid in by_id else ""
     return out
 
 
@@ -262,7 +418,8 @@ def _cache_path(market: str, tid: str) -> Path:
     return _CACHE_DIR / f"{market}-{safe}.json"
 
 
-def _read_cache(market: str, tid: str) -> list[dict] | None:
+def _read_cache(market: str, tid: str) -> dict | None:
+    """The stored verdict for one template, or None when it has expired."""
     try:
         meta = json.loads(_cache_path(market, tid).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -278,48 +435,63 @@ def _read_cache(market: str, tid: str) -> list[dict] | None:
         ttl = config.VIDEO_MISS_CACHE_DAYS * 86400
     if time.time() - float(meta.get("checkedAt") or 0) > ttl:
         return None
-    return videos
+    ids = [str(i) for i in meta.get("imageIds") or [] if str(i).isdigit()]
+    return {"videos": videos, "imageIds": ids}
 
 
-def _write_cache(market: str, tid: str, videos: list[dict], ok: bool) -> None:
+def _write_cache(market: str, tid: str, found: dict, ok: bool) -> None:
+    """Persist the verdict, the page's own poster pairing and the ids it showed
+    as ordinary photographs — so a later visit needs no second page read to
+    work out which gallery image the video already is."""
     try:
         _cache_path(market, tid).write_text(json.dumps({
-            "checkedAt": int(time.time()), "ok": ok, "videos": videos}), encoding="utf-8")
+            "checkedAt": int(time.time()), "ok": ok,
+            "videos": found.get("videos") or [],
+            "imageIds": found.get("imageIds") or []}), encoding="utf-8")
     except OSError:
         pass  # a cache we cannot write is a slower answer, never a failed one
 
 
-async def _discover(market: str, product: dict, tid: str) -> tuple[list[dict], bool]:
-    """(videos, reached) — reached=False means the supplier page never loaded,
-    which is a retry-sooner verdict rather than 'this product has no video'."""
+async def _discover(market: str, product: dict, tid: str) -> tuple[dict, bool]:
+    """(page findings, reached) — reached=False means the supplier page never
+    loaded, which is a retry-sooner verdict rather than 'this has no video'."""
     for url in page_urls(market, product):
         page = await fetch_page(url)
         if page is not None:
-            return parse_videos(page), True
+            return parse_page(page), True
     listing = await fetch_page(search_url(market, product))
     if listing is not None:
         link = link_for_template(listing, market, tid)
         if link:
             page = await fetch_page(link)
             if page is not None:
-                return parse_videos(page), True
-    return [], False
+                return parse_page(page), True
+    return {"videos": [], "imageIds": []}, False
 
 
 async def videos_for(market: str, product: dict) -> list[dict]:
     """Videos for one catalogue product, from the API feed if it carried any,
-    else from the supplier's public page — cached either way."""
-    existing = [{"youtubeId": v["youtubeId"], "thumbnail": v.get("thumbnail") or ""}
+    else from the supplier's public page — cached either way.
+
+    Each entry may carry ``supplierImageId`` / ``supplierPoster``: the gallery
+    photograph that IS this video's poster, so the page can drop it instead of
+    showing the same frame twice, once playable and once not. The pairing is
+    resolved against this product's own image list on every call, so a variant
+    with a different gallery gets its own answer from one cached page read.
+    """
+    existing = [{"youtubeId": v["youtubeId"], "thumbnail": v.get("thumbnail") or "",
+                 "supplierImageId": "", "supplierPoster": ""}
                 for v in (product.get("videos") or [])
                 if isinstance(v, dict) and v.get("youtubeId")]
     if existing:
+        # a feed-supplied video already keeps its poster out of images
         return existing
     tid = template_id(product)
     if not tid:
         return []
     cached = _read_cache(market, tid)
     if cached is not None:
-        return cached
+        return associate_posters(product, cached["videos"], cached["imageIds"])
     st = _state()
     key = f"{market}:{tid}"
     lock = st["keys"].get(key)
@@ -329,12 +501,12 @@ async def videos_for(market: str, product: dict) -> list[dict]:
         # a concurrent request for the same template may have just filled it
         cached = _read_cache(market, tid)
         if cached is not None:
-            return cached
-        videos, reached = await _discover(market, product, tid)
-        _write_cache(market, tid, videos, reached)
+            return associate_posters(product, cached["videos"], cached["imageIds"])
+        found, reached = await _discover(market, product, tid)
+        _write_cache(market, tid, found, reached)
         if len(st["keys"]) > 500:
             st["keys"].clear()
-        return videos
+        return associate_posters(product, found["videos"], found["imageIds"])
 
 
 def cache_status() -> dict:

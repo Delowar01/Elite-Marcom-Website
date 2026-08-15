@@ -266,14 +266,26 @@
     els.carousel.classList.remove("carousel--single");
     els.thumbs.innerHTML = "";
 
-    var thumbSrcs = vids.map(videoThumb);
-    /* a poster that is also in the product photos would otherwise show twice —
-       once as the video, once as a still nobody can play */
+    /* The video's poster arrives in the feed as an ordinary photograph too, so
+       without this the same frame appears twice — once playable, once not. The
+       server identifies it by supplier record id (/web/image/product.image/N/),
+       never by gallery position, and leaves it unset when it cannot be sure;
+       an unset poster means every photograph stays. Both the carousel and the
+       thumbnail strip are built from imgs, so removing it here removes it from
+       both. */
+    var drop = {};
+    vids.forEach(function (v) {
+      if (v.supplierPoster) drop[v.supplierPoster] = 1;
+      if (v.thumbnail) drop[v.thumbnail] = 1;
+    });
+    var dropIds = {};
+    vids.forEach(function (v) { if (v.supplierImageId) dropIds[String(v.supplierImageId)] = 1; });
     var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : []))
       .filter(function (src) {
-        return thumbSrcs.indexOf(src) === -1 && !vids.some(function (v) {
-          return src.indexOf("/vi/" + v.youtubeId + "/") !== -1;
-        });
+        if (drop[src]) return false;
+        var rec = /\/web\/image\/product\.image\/(\d+)/.exec(src);
+        if (rec && dropIds[rec[1]]) return false;
+        return !vids.some(function (v) { return src.indexOf("/vi/" + v.youtubeId + "/") !== -1; });
       });
 
     els.track.innerHTML = imgs.map(function (src, i) {
