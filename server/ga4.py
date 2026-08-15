@@ -239,6 +239,11 @@ async def _call(endpoint: str, body: dict) -> dict:
         raise _Unavailable("Google refused the request — check that the service account "
                            "has read access to this property.",
                            f"{res.status_code}: {res.text[:300]}")
+    if res.status_code == 400:
+        # a dimension or metric Google will not accept: it will fail the same
+        # way in an hour, so it must not read as a passing glitch
+        raise _Unavailable("Google could not run this report.",
+                           f"400: {res.text[:400]}")
     if res.status_code == 429:
         raise _Unavailable("Google's reporting quota is exhausted for now.",
                            f"429: {res.text[:200]}")
@@ -336,6 +341,20 @@ def _dim(row: dict, i: int) -> str:
     return dims[i] if i < len(dims) else ""
 
 
+UNKNOWN = "Unknown"
+
+
+def _named(value: str) -> str:
+    """What GA4 sends when it could not resolve a dimension, in our words.
+
+    These rows are kept rather than dropped: they are real users, and removing
+    them would leave every percentage beside them describing a subset while
+    looking like a share of the whole.
+    """
+    value = (value or "").strip()
+    return UNKNOWN if not value or value in ("(not set)", "(none)", "(other)") else value
+
+
 def _share(rows: list[dict], key: str = "users") -> list[dict]:
     """Add each row's percentage of the total, rounded once so a column of
     shares adds up to something an admin can read."""
@@ -419,8 +438,11 @@ async def overview(start: str, end: str) -> dict:
 
 
 async def series(start: str, end: str) -> dict:
-    """Daily users and sessions — what the sparklines and the trend draw."""
-    body = _report(["date"], ["activeUsers", "sessions", "screenPageViews"],
+    """The daily figures behind the sparklines and the trend chart, including
+    the engagement metrics the trend can switch to — one report, not four."""
+    body = _report(["date"], ["activeUsers", "sessions", "screenPageViews",
+                              "engagementRate", "userEngagementDuration",
+                              "engagedSessions"],
                    start, end, limit=400, keep_empty=True)
     body["orderBys"] = [{"dimension": {"dimensionName": "date"}}]
     data = await _cached("series", "runReport", body, config.GA4_CACHE_TTL_S)
@@ -431,9 +453,14 @@ async def series(start: str, end: str) -> dict:
         raw = _dim(row, 0)
         if len(raw) != 8 or not raw.isdigit():
             continue
+        sessions = _num(row, 1)
         out.append({"day": f"{raw[:4]}-{raw[4:6]}-{raw[6:]}",
-                    "users": int(_num(row, 0)), "sessions": int(_num(row, 1)),
-                    "views": int(_num(row, 2))})
+                    "users": int(_num(row, 0)), "sessions": int(sessions),
+                    "views": int(_num(row, 2)),
+                    "engagementRate": round(_num(row, 3) * 100, 1),
+                    "engagedSessions": int(_num(row, 5)),
+                    "avgEngagementSeconds": round(_num(row, 4) / sessions, 1)
+                                            if sessions else 0.0})
     return {"ok": True, "series": out}
 
 
@@ -452,7 +479,7 @@ async def countries(start: str, end: str, limit: int = 10) -> dict:
     data = await _ranked("countries", ["country"], start, end, limit)
     if not data.get("ok"):
         return {"ok": False, "reason": GEO_UNAVAILABLE}
-    rows = [{"label": _dim(r, 0) or "(not set)", "users": int(_num(r, 0))}
+    rows = [{"label": _named(_dim(r, 0)), "users": int(_num(r, 0))}
             for r in data["rows"]]
     return {"ok": True, "rows": _share(rows)}
 
@@ -465,11 +492,9 @@ async def cities(start: str, end: str, limit: int = 10) -> dict:
         return {"ok": False, "reason": GEO_UNAVAILABLE}
     rows = []
     for r in data["rows"]:
-        city, country = _dim(r, 0), _dim(r, 1)
-        if not city or city == "(not set)":
-            continue
+        city, country = _named(_dim(r, 0)), _named(_dim(r, 1))
         rows.append({"label": city, "country": country,
-                     "display": f"{city} — {country}" if country else city,
+                     "display": f"{city} — {country}" if country != UNKNOWN else city,
                      "users": int(_num(r, 0))})
     return {"ok": True, "rows": _share(rows)}
 
@@ -480,11 +505,9 @@ async def regions(start: str, end: str, limit: int = 8) -> dict:
         return {"ok": False, "reason": GEO_UNAVAILABLE}
     rows = []
     for r in data["rows"]:
-        region, country = _dim(r, 0), _dim(r, 1)
-        if not region or region == "(not set)":
-            continue
+        region, country = _named(_dim(r, 0)), _named(_dim(r, 1))
         rows.append({"label": region, "country": country,
-                     "display": f"{region} — {country}" if country else region,
+                     "display": f"{region} — {country}" if country != UNKNOWN else region,
                      "users": int(_num(r, 0))})
     return {"ok": True, "rows": _share(rows)}
 
@@ -494,7 +517,7 @@ async def channels(start: str, end: str) -> dict:
                          ["sessions", "activeUsers"])
     if not data.get("ok"):
         return data
-    rows = [{"label": _dim(r, 0) or "Unassigned", "sessions": int(_num(r, 0)),
+    rows = [{"label": _named(_dim(r, 0)), "sessions": int(_num(r, 0)),
              "users": int(_num(r, 1))} for r in data["rows"]]
     return {"ok": True, "rows": _share(rows, "sessions")}
 
@@ -504,7 +527,10 @@ async def sources(start: str, end: str, limit: int = 10) -> dict:
                          ["sessions", "activeUsers"])
     if not data.get("ok"):
         return data
-    rows = [{"label": f"{_dim(r, 0) or '(direct)'} / {_dim(r, 1) or '(none)'}",
+    def part(value: str, direct: str) -> str:
+        value = (value or "").strip()
+        return direct if not value or value == "(not set)" else value
+    rows = [{"label": f"{part(_dim(r, 0), '(direct)')} / {part(_dim(r, 1), '(none)')}",
              "sessions": int(_num(r, 0)), "users": int(_num(r, 1))}
             for r in data["rows"]]
     return {"ok": True, "rows": _share(rows, "sessions")}
@@ -518,7 +544,9 @@ async def pages(start: str, end: str, limit: int = 12) -> dict:
     rows = []
     for r in data["rows"]:
         views = int(_num(r, 0))
-        rows.append({"label": _dim(r, 0), "title": _dim(r, 1),
+        path = (_dim(r, 0) or "").strip()
+        rows.append({"label": path if path and path != "(not set)" else UNKNOWN,
+                     "title": _named(_dim(r, 1)),
                      "views": views, "users": int(_num(r, 1)),
                      "avgSeconds": round(_num(r, 2) / views, 1) if views else 0.0})
     return {"ok": True, "rows": rows}
@@ -529,7 +557,10 @@ async def landing_pages(start: str, end: str, limit: int = 10) -> dict:
                          ["sessions", "activeUsers", "engagementRate"])
     if not data.get("ok"):
         return data
-    rows = [{"label": _dim(r, 0) or "/", "sessions": int(_num(r, 0)),
+    def path(value: str) -> str:
+        value = (value or "").strip()
+        return value if value and value != "(not set)" else UNKNOWN
+    rows = [{"label": path(_dim(r, 0)), "sessions": int(_num(r, 0)),
              "users": int(_num(r, 1)), "engagementRate": round(_num(r, 2) * 100, 1)}
             for r in data["rows"]]
     return {"ok": True, "rows": rows}
@@ -539,7 +570,7 @@ async def devices(start: str, end: str) -> dict:
     data = await _ranked("devices", ["deviceCategory"], start, end, 6)
     if not data.get("ok"):
         return data
-    rows = [{"label": (_dim(r, 0) or "unknown").title(), "users": int(_num(r, 0))}
+    rows = [{"label": _named(_dim(r, 0)).title(), "users": int(_num(r, 0))}
             for r in data["rows"]]
     return {"ok": True, "rows": _share(rows)}
 
@@ -551,23 +582,24 @@ async def technology(start: str, end: str) -> dict:
     def shape(payload: dict) -> dict:
         if not payload.get("ok"):
             return payload
-        rows = [{"label": _dim(r, 0) or "unknown", "users": int(_num(r, 0))}
+        rows = [{"label": _named(_dim(r, 0)), "users": int(_num(r, 0))}
                 for r in payload["rows"]]
         return {"ok": True, "rows": _share(rows)}
     return {"browsers": shape(browsers), "systems": shape(systems)}
 
 
-async def new_vs_returning(start: str, end: str) -> dict:
-    data = await _ranked("newReturning", ["newVsReturning"], start, end, 6)
-    if not data.get("ok"):
-        return data
-    rows = []
-    for r in data["rows"]:
-        key = _dim(r, 0)
-        if not key or key == "(not set)":
-            continue
-        rows.append({"label": "New" if key == "new" else "Returning",
-                     "users": int(_num(r, 0))})
+def new_vs_returning(overview_payload: dict) -> dict:
+    """Split straight out of the overview totals rather than from its own
+    report: activeUsers − newUsers is what "returning" means, and deriving it
+    twice from two different reports is how one screen ends up showing two
+    different numbers for the same thing."""
+    if not overview_payload.get("ok"):
+        return {"ok": False, "reason": overview_payload.get("reason") or UNAVAILABLE}
+    t = overview_payload.get("totals") or {}
+    rows = [{"label": "New", "users": int(t.get("newUsers") or 0)},
+            {"label": "Returning", "users": int(t.get("returningUsers") or 0)}]
+    if not sum(r["users"] for r in rows):
+        return {"ok": True, "rows": []}
     return {"ok": True, "rows": _share(rows)}
 
 
@@ -607,11 +639,12 @@ async def realtime() -> dict:
             return []
         out = []
         for r in _rows(payload):
-            label = _dim(r, 0)
-            if join and _dim(r, 1):
-                label = f"{label} — {_dim(r, 1)}"
-            if label:
-                out.append({"label": label, "users": int(_num(r, 0))})
+            label = _named(_dim(r, 0))
+            if join:
+                country = _named(_dim(r, 1))
+                if country != UNKNOWN:
+                    label = f"{label} — {country}"
+            out.append({"label": label, "users": int(_num(r, 0))})
         return out
     return {
         "ok": True,
@@ -632,18 +665,17 @@ async def dashboard(start: str, end: str) -> dict:
     ok/reason, so one broken report leaves the others readable."""
     if not configured():
         return {"configured": False, "reason": NOT_CONFIGURED}
-    (over, ser, ctry, city, regs, chan, srcs, pgs, land, dev, tech, nvr,
+    (over, ser, ctry, city, regs, chan, srcs, pgs, land, dev, tech,
      keys) = await asyncio.gather(
         overview(start, end), series(start, end), countries(start, end),
         cities(start, end), regions(start, end), channels(start, end),
         sources(start, end), pages(start, end), landing_pages(start, end),
-        devices(start, end), technology(start, end), new_vs_returning(start, end),
-        key_events(start, end))
+        devices(start, end), technology(start, end), key_events(start, end))
     return {"configured": True, "start": start, "end": end,
             "overview": over, "series": ser, "countries": ctry, "cities": city,
             "regions": regs, "channels": chan, "sources": srcs, "pages": pgs,
             "landingPages": land, "devices": dev, "technology": tech,
-            "newVsReturning": nvr, "keyEvents": keys}
+            "newVsReturning": new_vs_returning(over), "keyEvents": keys}
 
 
 # ---------------- connection status ----------------

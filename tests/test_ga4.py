@@ -222,8 +222,36 @@ def test_a_city_is_always_shown_with_its_country(monkeypatch, tmp_path):
     with fake_google(monkeypatch, tmp_path, google):
         out = run(ga4.cities("2026-02-01", "2026-02-28"))
     assert [r["display"] for r in out["rows"]] == [
-        "Riyadh — Saudi Arabia", "Dubai — United Arab Emirates"]
+        "Riyadh — Saudi Arabia", "Dubai — United Arab Emirates",
+        "Unknown — Saudi Arabia"]
     assert google.calls[0]["body"]["dimensions"] == [{"name": "city"}, {"name": "country"}]
+
+
+def test_a_city_google_cannot_resolve_is_kept_and_named(monkeypatch, tmp_path):
+    """GA4 fails to resolve a city for a good share of traffic. Dropping those
+    rows would delete real visitors and leave every percentage beside them
+    describing a subset while looking like a share of the whole."""
+    google = FakeGoogle({"runReport": {"rows": [
+        row(["Riyadh", "Saudi Arabia"], [30]),
+        row(["(not set)", "(not set)"], [70])]}})
+    with fake_google(monkeypatch, tmp_path, google):
+        out = run(ga4.cities("2026-02-01", "2026-02-28"))
+    assert [(r["display"], r["users"], r["share"]) for r in out["rows"]] == [
+        ("Riyadh — Saudi Arabia", 30, 30.0), ("Unknown", 70, 70.0)]
+    # and the shares are of everyone, so they still add to a hundred
+    assert sum(r["share"] for r in out["rows"]) == 100.0
+
+
+def test_an_unresolved_country_or_channel_is_named_not_left_as_googles_token(
+        monkeypatch, tmp_path):
+    google = FakeGoogle({"runReport": {"rows": [
+        row(["Saudi Arabia"], [60]), row(["(not set)"], [40])]}})
+    with fake_google(monkeypatch, tmp_path, google):
+        ctry = run(ga4.countries("2026-02-01", "2026-02-28"))
+        regs = run(ga4.regions("2026-02-01", "2026-02-28"))
+    assert [r["label"] for r in ctry["rows"]] == ["Saudi Arabia", "Unknown"]
+    assert [r["share"] for r in ctry["rows"]] == [60.0, 40.0]
+    assert "Unknown" in [r["label"] for r in regs["rows"]]
 
 
 def test_geography_failing_says_so_in_the_words_the_screen_shows(monkeypatch, tmp_path):
@@ -276,24 +304,47 @@ def test_devices_and_technology(monkeypatch, tmp_path):
     assert tech["browsers"]["ok"] is True and tech["systems"]["ok"] is True
 
 
-def test_new_versus_returning(monkeypatch, tmp_path):
-    google = FakeGoogle({"runReport": {"rows": [
-        row(["new"], [80]), row(["returning"], [20]), row(["(not set)"], [3])]}})
+def test_new_versus_returning_is_the_same_split_the_kpis_show(monkeypatch, tmp_path):
+    """It comes out of the overview totals, not its own report: derived twice
+    from two reports, the KPI card and the donut would disagree about how many
+    people came back — and one of them would be wrong."""
+    answers = [OVERVIEW_NOW, OVERVIEW_PREV]
+    google = FakeGoogle({"runReport": lambda body, n: answers[min(n, 2) - 1]})
     with fake_google(monkeypatch, tmp_path, google):
-        out = run(ga4.new_vs_returning("2026-02-01", "2026-02-28"))
-    assert [(r["label"], r["users"], r["share"]) for r in out["rows"]] == [
-        ("New", 80, 80.0), ("Returning", 20, 20.0)]
+        over = run(ga4.overview("2026-02-01", "2026-02-28"))
+    split = ga4.new_vs_returning(over)
+    assert [(r["label"], r["users"]) for r in split["rows"]] == [
+        ("New", 80), ("Returning", 40)]
+    # exactly the figures the KPI cards render
+    assert split["rows"][0]["users"] == over["totals"]["newUsers"]
+    assert split["rows"][1]["users"] == over["totals"]["returningUsers"]
+    assert sum(r["share"] for r in split["rows"]) == 100.0
+    # and it carries the overview's failure rather than inventing a split
+    assert ga4.new_vs_returning({"ok": False, "reason": "nope"})["ok"] is False
+    # a property with no users yet has no split to draw, and says so
+    assert ga4.new_vs_returning(
+        {"ok": True, "totals": {"newUsers": 0, "returningUsers": 0}})["rows"] == []
 
 
-def test_the_daily_series_turns_ga4_dates_into_real_ones(monkeypatch, tmp_path):
+def test_the_daily_series_carries_volume_and_engagement(monkeypatch, tmp_path):
+    """One report feeds the sparklines and every metric the trend switches
+    between, so changing the trend metric costs no extra Google call."""
     google = FakeGoogle({"runReport": {"rows": [
-        row(["20260201"], [10, 12, 30]), row(["20260202"], [14, 15, 44]),
-        row(["nonsense"], [1, 1, 1])]}})
+        row(["20260201"], [10, 12, 30, 0.5, 600, 6]),
+        row(["20260202"], [14, 15, 44, 0.8, 1500, 12]),
+        row(["nonsense"], [1, 1, 1, 1, 1, 1])]}})
     with fake_google(monkeypatch, tmp_path, google):
         out = run(ga4.series("2026-02-01", "2026-02-28"))
     assert out["series"] == [
-        {"day": "2026-02-01", "users": 10, "sessions": 12, "views": 30},
-        {"day": "2026-02-02", "users": 14, "sessions": 15, "views": 44}]
+        {"day": "2026-02-01", "users": 10, "sessions": 12, "views": 30,
+         "engagementRate": 50.0, "engagedSessions": 6, "avgEngagementSeconds": 50.0},
+        {"day": "2026-02-02", "users": 14, "sessions": 15, "views": 44,
+         "engagementRate": 80.0, "engagedSessions": 12, "avgEngagementSeconds": 100.0}]
+    # a day with no sessions must not divide by zero
+    google2 = FakeGoogle({"runReport": {"rows": [row(["20260203"], [0, 0, 0, 0, 0, 0])]}})
+    with fake_google(monkeypatch, tmp_path, google2):
+        zero = run(ga4.series("2026-02-03", "2026-02-03"))
+    assert zero["series"][0]["avgEngagementSeconds"] == 0.0
 
 
 def test_realtime_returns_a_live_block(monkeypatch, tmp_path):
@@ -318,6 +369,21 @@ def test_realtime_returns_a_live_block(monkeypatch, tmp_path):
     assert [(d["label"], d["share"]) for d in out["devices"]] == [
         ("Mobile", 71.4), ("Desktop", 28.6)]
     assert all(c["endpoint"] == "runRealtimeReport" for c in google.calls)
+
+
+def test_a_report_google_refuses_outright_does_not_read_as_a_glitch(monkeypatch, tmp_path):
+    """A 400 means a dimension or metric Google will not accept. It will fail
+    the same way in an hour, so "temporarily unavailable" would send an admin
+    to wait for a recovery that is never coming."""
+    google = FakeGoogle({"runReport": httpx.Response(
+        400, text='{"error":{"message":"Field landingPage is not a valid dimension."}}')})
+    with fake_google(monkeypatch, tmp_path, google):
+        out = run(ga4.landing_pages("2026-02-01", "2026-02-28"))
+        state = ga4.status()
+    assert out["reason"] == "Google could not run this report."
+    assert "temporarily" not in out["reason"]
+    # and Google's own wording stays server-side
+    assert "landingPage is not a valid" not in json.dumps(state)
 
 
 # ---------------- bad answers ----------------
@@ -345,7 +411,7 @@ def test_a_malformed_response_is_skipped_row_by_row(monkeypatch, tmp_path):
         out = run(ga4.countries("2026-02-01", "2026-02-28"))
     assert out["ok"] is True
     assert [(r["label"], r["users"]) for r in out["rows"]] == [
-        ("(not set)", 0), ("Saudi Arabia", 0), ("Oman", 5)]
+        ("Unknown", 0), ("Saudi Arabia", 0), ("Oman", 5)]
 
 
 def test_a_response_that_is_not_json_does_not_raise(monkeypatch, tmp_path):

@@ -526,10 +526,15 @@
   function trendChart(series, metric) {
     if (!series || !series.length) return widgetNote("Data will appear as visitors browse the site.");
     var key = metric || "users";
+    var spec = TREND_METRICS.filter(function (m) { return m[0] === key; })[0] ||
+               TREND_METRICS[0];
     var values = series.map(function (p) { return p[key] || 0; });
     if (!values.some(function (v) { return v > 0; })) {
-      return widgetNote("No " + (key === "views" ? "page views" : key) +
-                        " recorded in this period yet.");
+      return widgetNote("No " + spec[1].toLowerCase() + " recorded in this period yet.");
+    }
+    function fmtTrend(v) {
+      return spec[2] === "percent" ? Math.round(v) + "%"
+           : spec[2] === "seconds" ? fmtSeconds(v) : fmtNum(v);
     }
     var w = 720, h = 190, pad = 6;
     var max = Math.max.apply(null, values.concat([1]));
@@ -542,14 +547,15 @@
     return '<svg class="chart chart--trend" viewBox="0 0 ' + w + " " + h +
       '" preserveAspectRatio="none" role="img" aria-label="Daily ' + esc(key) + '">' +
       '<defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0%" stop-color="var(--orange)" stop-opacity="0.42"/>' +
-      '<stop offset="100%" stop-color="var(--orange)" stop-opacity="0.02"/></linearGradient></defs>' +
+      '<stop offset="0%" stop-color="var(--orange)" stop-opacity="0.26"/>' +
+      '<stop offset="100%" stop-color="var(--orange)" stop-opacity="0.01"/></linearGradient></defs>' +
       '<polygon points="' + area + '" fill="url(#tg)"></polygon>' +
       '<polyline points="' + pts + '" fill="none" stroke="var(--orange-2)" stroke-width="2.4" ' +
       'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"></polyline>' +
       "</svg>" +
       '<div class="chart-caption"><span>' + esc(when(dayStamp(series[0].day))) + "</span>" +
-      "<span>peak " + esc(fmtNum(max)) + "/day</span>" +
+      "<span>" + esc(spec[1]) + " · peak " + esc(fmtTrend(max)) +
+      (spec[2] === "count" ? "/day" : "") + "</span>" +
       "<span>" + esc(when(dayStamp(series[series.length - 1].day))) + "</span></div>";
   }
 
@@ -575,6 +581,15 @@
 
   var INSIGHT_RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"],
                         [90, "90 days"], [365, "12 months"], [0, "Year to date"]];
+  /* Engagement lives in the same widget as volume rather than in three more
+     charts down the page. All six come from the one daily report, so
+     switching between them costs nothing. */
+  var TREND_METRICS = [
+    ["users", "Users", "count"], ["sessions", "Sessions", "count"],
+    ["views", "Views", "count"], ["engagementRate", "Engagement rate", "percent"],
+    ["avgEngagementSeconds", "Avg. engagement", "seconds"],
+    ["engagedSessions", "Engaged sessions", "count"]
+  ];
 
   function insightsShell(rng) {
     function seg() {
@@ -623,10 +638,10 @@
 
       '<div class="admin-panel"><div class="panel-head"><h2>Traffic trend</h2>' +
       '<span class="jz-seg jz-seg--mini" role="group" aria-label="Metric">' +
-      '<button type="button" data-trend="users" aria-pressed="true">Users</button>' +
-      '<button type="button" data-trend="sessions" aria-pressed="false">Sessions</button>' +
-      '<button type="button" data-trend="views" aria-pressed="false">Views</button>' +
-      "</span></div><div id=\"ins-trend\">" + skeleton(5) + "</div></div>" +
+      TREND_METRICS.map(function (m, i) {
+        return '<button type="button" data-trend="' + m[0] + '" aria-pressed="' +
+          (i ? "false" : "true") + '">' + esc(m[1]) + "</button>";
+      }).join("") + "</span></div><div id=\"ins-trend\">" + skeleton(5) + "</div></div>" +
 
       /* --- geography --- */
       '<h2 class="ins-section">Where visitors are<span class="src-tag src-tag--ga4">Google Analytics</span></h2>' +
@@ -817,9 +832,15 @@
 
   function renderInsightsSettings(d, s) {
     var g = lastGa4Status || d.ga4Status || {};
-    function line(label, value, state) {
-      return '<div class="svc-row svc-row--' + (state || "ok") + '"><i class="svc-dot"></i>' +
-        "<b>" + esc(label) + "</b><small>" + esc(value) + "</small></div>";
+    /* `wrap` puts the value on its own line and lets it break: a service
+       account address is 50-odd characters and has nowhere to wrap in the
+       middle, so beside its label it either overflowed the card or squeezed
+       the label to nothing. */
+    function line(label, value, state, wrap) {
+      return '<div class="svc-row svc-row--' + (state || "ok") +
+        (wrap ? " svc-row--stack" : "") + '"><i class="svc-dot"></i>' +
+        "<b>" + esc(label) + "</b><small" + (wrap ? ' class="svc-val--break"' : "") + ">" +
+        esc(value) + "</small></div>";
     }
     var connected = g.configured && g.lastSuccessAt;
     fill("ins-settings-box",
@@ -834,10 +855,13 @@
            !g.configured ? "warn" : (connected ? "ok" : (g.lastError ? "bad" : "warn"))) +
       line("Property id", g.propertyId || "Not set on the server", g.propertyId ? "ok" : "warn") +
       line("Service account", g.serviceAccount ||
-           "No credential file found on the server", g.serviceAccount ? "ok" : "warn") +
+           "No credential file found on the server", g.serviceAccount ? "ok" : "warn",
+           !!g.serviceAccount) +
       line("Last successful report", g.lastSuccessAt ? when(g.lastSuccessAt) : "Never",
            g.lastSuccessAt ? "ok" : "warn") +
-      (g.lastError ? line("Last error", g.lastError + (g.lastErrorAt ? " · " + when(g.lastErrorAt) : ""), "bad") : "") +
+      (g.lastError ? line("Last error",
+                          g.lastError + (g.lastErrorAt ? " · " + when(g.lastErrorAt) : ""),
+                          "bad", true) : "") +
       '<p class="admin-inline-note" style="margin-top:12px;">The property id and the credential ' +
       'file path are set on the server, not here — the private key never passes through the ' +
       'panel, an API response or the browser.</p>' +
