@@ -716,55 +716,85 @@ def test_manual_proxy_rejects_non_pdf_candidate(tmp_path, monkeypatch):
 
 
 # ---------------- product videos from the supplier's public page ----------------
-# Confirmed live example: ITGL 1291 NAPIER — MagCase Phone Cardholder — Grey is
-# id 24246 / parent 29453 with videos: [] from the Product API, while
-# https://www.jasani.ae/shop/itgl-1291-…-29453 embeds youtube.com/embed/lFhAiGLjoMo.
+# Confirmed live example: ITGL 1290 (parentId 29452) on www.jasani.ae. The
+# Product API returns videos: []; the public page embeds
+# youtube.com/embed/lFhAiGLjoMo as carousel slide 9, and the indicator list
+# carries the pairing outright:
+#
+#   <li data-bs-slide-to="9" class="… o_product_video_thumb">
+#     <img src="/web/image/product.image/20045/image_128">
+#
+# So product.image/20045 is the video's poster, not a photograph of the product
+# — even though the feed hands it to us as an ordinary gallery image.
+VIDEO_ID = "lFhAiGLjoMo"
+POSTER_ID = "20045"
+_PHOTO_IDS = [str(20036 + i) for i in range(9)]
 
-# Two shapes of the same gallery. In PAIRED the shop puts the video's own
-# product.image record in the same carousel cell as the embed; in UNPAIRED that
-# record is never printed, and the poster is whichever of our records the page
-# does not show as a photograph. Both are answered from supplier data.
-REAL_PAGE = """<!doctype html><html><body><div id="product_detail">
-  <img src="https://www.jasani.ae/web/image/product.product/24246/image_1024">
-  <div class="carousel-item"><img src="/web/image/product.image/8801/image_1024"></div>
-  <div class="carousel-item"><img src="/web/image/product.image/8802/image_1024"></div>
-  <div class="carousel-item o_product_video">
-    <div class="ratio ratio-16x9">
-      <iframe src="https://www.youtube.com/embed/lFhAiGLjoMo?rel=0" allowfullscreen></iframe>
-    </div>
-    <img class="o_video_thumb" src="/web/image/product.image/8803/image_128">
-  </div>
-</div>
-<div class="alternative_products">
-  <a href="/shop/other-product-11111">Another item</a>
-  <iframe src="https://www.youtube.com/embed/ZZZZZZZZZZZ"></iframe>
-</div></body></html>"""
 
-# same product, a shop that never prints the video record's id
-UNPAIRED_PAGE = """<!doctype html><html><body><div id="product_detail">
-  <img src="/web/image/product.image/8801/image_1024">
-  <img src="/web/image/product.image/8802/image_1024">
-  <div class="o_video_container">
-    <iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe>
-  </div>
-</div></body></html>"""
+def _odoo_page(photo_ids, video_slide=True, marker=True, extra=""):
+    """The real Odoo product gallery: a carousel of slides and a separate
+    indicator list that numbers them."""
+    slides = "".join(
+        f'<div class="carousel-item{" active" if i == 0 else ""}">'
+        f'<img src="/web/image/product.image/{iid}/image_1024"></div>'
+        for i, iid in enumerate(photo_ids))
+    if video_slide:
+        slides += ('<div class="carousel-item"><div class="ratio ratio-16x9">'
+                   f'<iframe src="https://www.youtube.com/embed/{VIDEO_ID}?rel=0"'
+                   ' allowfullscreen></iframe></div></div>')
+    inds = "".join(
+        f'<li data-bs-slide-to="{i}" class="o_indicators_item">'
+        f'<img src="/web/image/product.image/{iid}/image_128"></li>'
+        for i, iid in enumerate(photo_ids))
+    if video_slide:
+        cls = "o_indicators_item o_product_video_thumb" if marker else "o_indicators_item"
+        inds += (f'<li data-bs-slide-to="{len(photo_ids)}" class="{cls}">'
+                 f'<img src="/web/image/product.image/{POSTER_ID}/image_128"></li>')
+    return ('<!doctype html><html><body><div id="product_detail">'
+            '<div id="o-carousel-product" class="carousel slide">'
+            f'<div class="carousel-inner">{slides}</div>'
+            f'<ul class="carousel-indicators">{inds}</ul>'
+            f'</div></div>{extra}</body></html>')
 
-# the supplier-hosted poster is a completely different URL from the ytimg one —
-# which is why matching on the URL could never have worked
-GALLERY = ["https://www.jasani.ae/web/image/product.product/24246/image_1024",
-           "https://www.jasani.ae/web/image/product.image/8801/image_1024",
-           "https://www.jasani.ae/web/image/product.image/8802/image_1024",
-           "https://www.jasani.ae/web/image/product.image/8803/image_1024"]
-POSTER = "https://www.jasani.ae/web/image/product.image/8803/image_1024"
 
+# the live structure, plus the "you may also like" strip Odoo prints below it
+REAL_PAGE = _odoo_page(_PHOTO_IDS, extra=(
+    '<div class="alternative_products"><a href="/shop/other-product-11111">Another item</a>'
+    '<iframe src="https://www.youtube.com/embed/ZZZZZZZZZZZ"></iframe></div>'))
+
+# a shop that numbers no slides but keeps the poster in the video's own cell
+PAIRED_PAGE = ('<!doctype html><html><body><div id="product_detail">'
+               f'<div class="carousel-item"><img src="/web/image/product.image/{_PHOTO_IDS[0]}/image_1024"></div>'
+               f'<div class="carousel-item"><img src="/web/image/product.image/{_PHOTO_IDS[1]}/image_1024"></div>'
+               '<div class="carousel-item o_product_video"><div class="ratio">'
+               f'<iframe src="https://www.youtube.com/embed/{VIDEO_ID}"></iframe></div>'
+               f'<img class="o_video_thumb" src="/web/image/product.image/{POSTER_ID}/image_128">'
+               '</div></div></body></html>')
+
+# a shop that never prints the video record's id at all
+UNPAIRED_PAGE = ('<!doctype html><html><body><div id="product_detail">'
+                 f'<img src="/web/image/product.image/{_PHOTO_IDS[0]}/image_1024">'
+                 f'<img src="/web/image/product.image/{_PHOTO_IDS[1]}/image_1024">'
+                 '<div class="o_video_container">'
+                 f'<iframe src="https://www.youtube.com/embed/{VIDEO_ID}"></iframe>'
+                 '</div></div></body></html>')
+
+# What the Product API sends us: nine photographs, the poster among them as if
+# it were a tenth. The supplier-hosted poster URL and the ytimg thumbnail share
+# nothing, which is why matching on the URL could never have worked.
+HOST = "https://www.jasani.ae"
+GALLERY = ([f"{HOST}/web/image/product.product/24245/image_1024"]
+           + [f"{HOST}/web/image/product.image/{i}/image_1024" for i in _PHOTO_IDS]
+           + [f"{HOST}/web/image/product.image/{POSTER_ID}/image_1024"])
+POSTER = f"{HOST}/web/image/product.image/{POSTER_ID}/image_1024"
 
 def _video_product(monkeypatch, tmp_path, **over):
     """A catalogue of one product, with the video cache pointed at tmp_path."""
     from server import jasani, supplier_video
 
-    product = {"id": "24246", "code": "ITGL 1291",
-               "name": "NAPIER - MagCase Phone Cardholder - Grey",
-               "parentId": "29453", "templateId": None, "videos": [],
+    product = {"id": "24245", "code": "ITGL 1290",
+               "name": "NAPIER - MagCase Phone Cardholder",
+               "parentId": "29452", "templateId": None, "videos": [],
                "image": GALLERY[0], "images": list(GALLERY)}
     product.update(over)
 
@@ -784,17 +814,17 @@ def test_the_confirmed_product_video_is_found_on_the_public_page(tmp_path, monke
         return REAL_PAGE
     monkeypatch.setattr(sv, "fetch_page", fake_page)
 
-    res = client.get("/api/giveaways/video?country=uae&product_id=24246")
+    res = client.get("/api/giveaways/video?country=uae&product_id=24245")
     assert res.status_code == 200
     assert res.json() == {"videos": [{
         "youtubeId": "lFhAiGLjoMo",
         "thumbnail": "https://i.ytimg.com/vi/lFhAiGLjoMo/hqdefault.jpg",
         # the gallery photograph that IS this video — named by supplier record
         # id, so the page can drop it instead of showing the frame twice
-        "supplierImageId": "8803", "supplierPoster": POSTER}]}
+        "supplierImageId": POSTER_ID, "supplierPoster": POSTER}]}
     # the page is addressed by the template id, on the market's own host
     assert asked == ["https://www.jasani.ae/shop/"
-                     "itgl-1291-napier-magcase-phone-cardholder-grey-29453"]
+                     "itgl-1290-napier-magcase-phone-cardholder-29452"]
     assert res.headers["cache-control"] == "no-store"
 
 
@@ -863,7 +893,7 @@ def test_a_product_without_a_parent_id_never_asks_the_supplier(tmp_path, monkeyp
         raise AssertionError("no page request may be made without a template id")
     monkeypatch.setattr(sv, "fetch_page", boom)
 
-    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {"videos": []}
+    assert client.get("/api/giveaways/video?country=uae&product_id=24245").json() == {"videos": []}
 
 
 def test_videos_from_the_product_api_are_served_without_any_page_request(tmp_path, monkeypatch):
@@ -874,7 +904,7 @@ def test_videos_from_the_product_api_are_served_without_any_page_request(tmp_pat
         raise AssertionError("the feed already carried the video")
     monkeypatch.setattr(sv, "fetch_page", boom)
 
-    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {
+    assert client.get("/api/giveaways/video?country=uae&product_id=24245").json() == {
         "videos": [{"youtubeId": "Ab3dE5fGh7I", "thumbnail": "",
                     "supplierImageId": "", "supplierPoster": ""}]}
 
@@ -889,10 +919,10 @@ def test_a_positive_result_is_cached_and_the_page_is_read_once(tmp_path, monkeyp
     monkeypatch.setattr(sv, "fetch_page", fake_page)
 
     for _ in range(3):
-        res = client.get("/api/giveaways/video?country=uae&product_id=24246")
+        res = client.get("/api/giveaways/video?country=uae&product_id=24245")
         assert [v["youtubeId"] for v in res.json()["videos"]] == ["lFhAiGLjoMo"]
     assert calls["n"] == 1
-    assert (tmp_path / "uae-29453.json").exists()
+    assert (tmp_path / "uae-29452.json").exists()
 
 
 def test_a_product_with_no_video_is_negative_cached(tmp_path, monkeypatch):
@@ -907,7 +937,7 @@ def test_a_product_with_no_video_is_negative_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(sv, "fetch_page", fake_page)
 
     for _ in range(3):
-        assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {"videos": []}
+        assert client.get("/api/giveaways/video?country=uae&product_id=24245").json() == {"videos": []}
     assert calls["n"] == 1
     assert sv.cache_status() == {"withVideo": 0, "withoutVideo": 1, "entries": 1}
 
@@ -921,17 +951,17 @@ def test_an_unreachable_page_is_retried_sooner_than_a_settled_verdict(tmp_path, 
         return None  # 404 / timeout / non-HTML — all the same to the caller
     monkeypatch.setattr(sv, "fetch_page", dead_page)
 
-    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json() == {"videos": []}
-    meta = json.loads((tmp_path / "uae-29453.json").read_text(encoding="utf-8"))
+    assert client.get("/api/giveaways/video?country=uae&product_id=24245").json() == {"videos": []}
+    meta = json.loads((tmp_path / "uae-29452.json").read_text(encoding="utf-8"))
     assert meta["ok"] is False and meta["videos"] == []
 
     # a miss is held for VIDEO_MISS_CACHE_DAYS; an outage only for hours
     meta["checkedAt"] = int(meta["checkedAt"] - config.VIDEO_ERROR_CACHE_HOURS * 3600 - 60)
-    (tmp_path / "uae-29453.json").write_text(json.dumps(meta), encoding="utf-8")
-    assert sv._read_cache("uae", "29453") is None
+    (tmp_path / "uae-29452.json").write_text(json.dumps(meta), encoding="utf-8")
+    assert sv._read_cache("uae", "29452") is None
     settled = dict(meta, ok=True)
-    (tmp_path / "uae-29453.json").write_text(json.dumps(settled), encoding="utf-8")
-    assert sv._read_cache("uae", "29453") == {"videos": [], "imageIds": []}
+    (tmp_path / "uae-29452.json").write_text(json.dumps(settled), encoding="utf-8")
+    assert sv._read_cache("uae", "29452") == {"videos": [], "imageIds": []}
 
 
 def test_the_search_fallback_only_accepts_the_matching_template_id(tmp_path, monkeypatch):
@@ -939,21 +969,21 @@ def test_the_search_fallback_only_accepts_the_matching_template_id(tmp_path, mon
     ends in this product's template id, never a neighbouring result."""
     sv, product = _video_product(monkeypatch, tmp_path)
     listing = ('<a href="/shop/some-other-item-11111">x</a>'
-               '<a href="/shop/itgl-1291-napier-magcase-phone-cardholder-grey-29453">this one</a>')
+               '<a href="/shop/itgl-1290-napier-magcase-phone-cardholder-29452">this one</a>')
     seen = []
 
     async def fake_page(url):
         seen.append(url)
         if "/shop?search=" in url:
             return listing
-        if url.endswith("-29453") and len(seen) > 1:
+        if url.endswith("-29452") and len(seen) > 1:
             return REAL_PAGE
         return None  # the guessed slug URL did not resolve
     monkeypatch.setattr(sv, "fetch_page", fake_page)
 
-    res = client.get("/api/giveaways/video?country=uae&product_id=24246")
+    res = client.get("/api/giveaways/video?country=uae&product_id=24245")
     assert [v["youtubeId"] for v in res.json()["videos"]] == ["lFhAiGLjoMo"]
-    assert seen[1] == "https://www.jasani.ae/shop?search=ITGL%201291"
+    assert seen[1] == "https://www.jasani.ae/shop?search=ITGL%201290"
     assert sv.link_for_template(listing, "uae", "11111") == \
         "https://www.jasani.ae/shop/some-other-item-11111"
     assert sv.link_for_template(listing, "uae", "99999") == ""
@@ -976,7 +1006,7 @@ def test_video_discovery_never_spends_a_supplier_api_call(tmp_path, monkeypatch)
     monkeypatch.setattr(jasani, "_fetch", no_calls)
     monkeypatch.setattr(jasani, "_budget_ok", no_calls)
 
-    assert client.get("/api/giveaways/video?country=uae&product_id=24246").json()["videos"]
+    assert client.get("/api/giveaways/video?country=uae&product_id=24245").json()["videos"]
 
 
 def test_a_page_request_leaves_the_supplier_hosts_only(monkeypatch):
@@ -1047,66 +1077,97 @@ def test_the_catalogue_and_an_unknown_product_ask_the_supplier_nothing(tmp_path,
 
 
 # --- the video's poster is a gallery photograph too, and looks nothing like it ---
-# Supplier poster:  https://www.jasani.ae/web/image/product.image/8803/image_1024
+# Supplier poster:   https://www.jasani.ae/web/image/product.image/20045/image_1024
 # YouTube thumbnail: https://i.ytimg.com/vi/lFhAiGLjoMo/hqdefault.jpg
-# Two URLs, one frame. Matching on the URL can never connect them, which is why
-# the same picture appeared twice — once playable, once not.
+# Two URLs, one frame. Nothing in either can be matched against the other,
+# which is why the same picture appeared twice — once playable, once not.
 
-def test_the_page_pairs_the_poster_record_with_the_embed():
-    """The carousel cell holds the video AND its image record. That pairing is
-    the supplier's own; nothing here counts positions in the gallery."""
+def test_odoo_slide_numbering_names_the_poster_outright():
+    """The live structure for ITGL 1290: the video is carousel slide 9, and
+    <li data-bs-slide-to="9"> carries o_product_video_thumb and image 20045.
+    Nothing here is inferred — the shop states the pairing."""
     from server import supplier_video as sv
 
     found = sv.parse_page(REAL_PAGE)
-    assert found["videos"][0]["supplierImageId"] == "8803"
-    assert found["imageIds"] == ["8801", "8802"]  # the poster is not an ordinary photo
+    assert [v["youtubeId"] for v in found["videos"]] == [VIDEO_ID]
+    assert found["videos"][0]["supplierImageId"] == POSTER_ID == "20045"
+    # all nine photographs stay; the poster is not one of them
+    assert found["imageIds"] == _PHOTO_IDS
+    assert POSTER_ID not in found["imageIds"]
 
 
-def test_a_page_that_never_prints_the_poster_record_is_answered_by_subtraction():
-    """One video, and exactly one of our image records the page does not show
-    as a photograph — that record is the poster, because the page accounts for
-    every other one."""
+def test_an_indicator_without_odoo_s_video_marker_pairs_nothing():
+    """Slide numbers lining up is not evidence on its own: without
+    o_product_video_thumb the cell is an ordinary photograph, and an ordinary
+    photograph must never be deleted."""
+    from server import supplier_video as sv
+
+    found = sv.parse_page(_odoo_page(_PHOTO_IDS, marker=False))
+    assert found["videos"][0]["supplierImageId"] == ""
+    # nothing was claimed, so every id the page showed stays an ordinary photo
+    assert POSTER_ID in found["imageIds"]
+
+
+def test_a_second_carousel_does_not_shift_the_first_ones_numbering():
+    """Slides are counted inside their own carousel. A related-products slider
+    higher up the page must not move slide 9 to slide 12."""
+    from server import supplier_video as sv
+
+    decoy = ('<div class="carousel-inner">'
+             '<div class="carousel-item"><img src="/web/image/product.image/70001/image_128"></div>'
+             '<div class="carousel-item"><img src="/web/image/product.image/70002/image_128"></div>'
+             '</div>')
+    found = sv.parse_page(REAL_PAGE.replace('<div id="o-carousel-product"',
+                                            decoy + '<div id="o-carousel-product"'))
+    assert found["videos"][0]["supplierImageId"] == POSTER_ID
+
+
+def test_containment_still_answers_a_shop_that_numbers_no_slides():
+    """Fallback: one image record in the same cell as the embed."""
+    from server import supplier_video as sv
+
+    found = sv.parse_page(PAIRED_PAGE)
+    assert found["videos"][0]["supplierImageId"] == POSTER_ID
+    assert found["imageIds"] == _PHOTO_IDS[:2]
+
+
+def test_subtraction_still_answers_a_page_that_prints_no_poster_record():
+    """Last fallback: one video, and exactly one of our image records the page
+    never shows as a photograph. The page accounts for every other one."""
     from server import supplier_video as sv
 
     found = sv.parse_page(UNPAIRED_PAGE)
     assert found["videos"][0]["supplierImageId"] == ""      # the page paired nothing
-    assert found["imageIds"] == ["8801", "8802"]
-    out = sv.associate_posters({"images": GALLERY}, found["videos"], found["imageIds"])
-    assert out[0]["supplierImageId"] == "8803"
-    assert out[0]["supplierPoster"] == POSTER
+    assert found["imageIds"] == _PHOTO_IDS[:2]
+    gallery = [f"{HOST}/web/image/product.image/{i}/image_1024"
+               for i in _PHOTO_IDS[:2] + [POSTER_ID]]
+    out = sv.associate_posters({"images": gallery}, found["videos"], found["imageIds"])
+    assert out[0]["supplierImageId"] == POSTER_ID
+    assert out[0]["supplierPoster"].endswith(f"/product.image/{POSTER_ID}/image_1024")
 
 
-def test_the_supplier_poster_reaches_the_page_for_both_confirmed_products(tmp_path, monkeypatch):
-    """ITGL 1291 (29453) and ITGL 1290 (29452) — the two products checked live."""
-    from server import jasani, supplier_video as sv
+def test_the_poster_reaches_the_browser_for_the_confirmed_product(tmp_path, monkeypatch):
+    """End to end on ITGL 1290 / 29452: one video, its poster named by supplier
+    record id, and every genuine photograph still in the list."""
+    sv, _p = _video_product(monkeypatch, tmp_path)
 
-    items = {"24246": ("ITGL 1291", "29453"), "24245": ("ITGL 1290", "29452")}
-    products = [{"id": pid, "code": code, "name": f"{code} NAPIER MagCase",
-                 "parentId": tid, "templateId": None, "videos": [],
-                 "image": GALLERY[0], "images": list(GALLERY)}
-                for pid, (code, tid) in items.items()]
+    async def fake_page(url):
+        return REAL_PAGE
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
 
-    async def fake_catalog(market):
-        return (products, "cache")
-    monkeypatch.setattr(jasani, "get_catalog", fake_catalog)
-    monkeypatch.setattr(sv, "_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(sv, "fetch_page", lambda url: _page_for(url))
-
-    async def _page_for(url):
-        return REAL_PAGE if url.endswith("-29453") else UNPAIRED_PAGE
-
-    for pid, (_code, tid) in items.items():
-        res = client.get(f"/api/giveaways/video?country=uae&product_id={pid}")
-        vids = res.json()["videos"]
-        assert len(vids) == 1, pid
-        assert vids[0]["youtubeId"] == "lFhAiGLjoMo"
-        assert vids[0]["supplierPoster"] == POSTER, pid
-        assert (tmp_path / f"uae-{tid}.json").exists()
+    vids = client.get("/api/giveaways/video?country=uae&product_id=24245").json()["videos"]
+    assert len(vids) == 1
+    assert vids[0]["youtubeId"] == VIDEO_ID
+    assert vids[0]["supplierImageId"] == POSTER_ID
+    assert vids[0]["supplierPoster"] == POSTER
+    # the poster is named once, so the browser removes one image and no more
+    assert sum(1 for u in GALLERY if u == vids[0]["supplierPoster"]) == 1
+    assert len([u for u in GALLERY if u != POSTER]) == 10  # nine photos + the main image
 
 
 def test_the_poster_identity_survives_in_the_cache(tmp_path, monkeypatch):
-    """A second visit must not re-read the supplier page to know which gallery
-    image the video already is."""
+    """A revisit must not re-read the supplier page to know which gallery image
+    the video already is."""
     sv, _p = _video_product(monkeypatch, tmp_path)
     calls = {"n": 0}
 
@@ -1115,12 +1176,54 @@ def test_the_poster_identity_survives_in_the_cache(tmp_path, monkeypatch):
         return REAL_PAGE
     monkeypatch.setattr(sv, "fetch_page", fake_page)
 
-    first = client.get("/api/giveaways/video?country=uae&product_id=24246").json()
-    stored = json.loads((tmp_path / "uae-29453.json").read_text(encoding="utf-8"))
-    assert stored["videos"][0]["supplierImageId"] == "8803"
-    assert stored["imageIds"] == ["8801", "8802"]
-    again = client.get("/api/giveaways/video?country=uae&product_id=24246").json()
+    first = client.get("/api/giveaways/video?country=uae&product_id=24245").json()
+    stored = json.loads((tmp_path / "uae-29452.json").read_text(encoding="utf-8"))
+    assert stored["schemaVersion"] == sv.CACHE_SCHEMA
+    assert stored["videos"][0]["supplierImageId"] == POSTER_ID
+    assert stored["imageIds"] == _PHOTO_IDS
+    again = client.get("/api/giveaways/video?country=uae&product_id=24245").json()
     assert again == first and calls["n"] == 1
+
+
+def test_a_cache_entry_from_an_older_parser_is_rebuilt_not_trusted(tmp_path, monkeypatch):
+    """Every entry written before the poster work holds a video whose poster
+    was never identified — the duplicate this exists to remove. A parser fix
+    must land without anyone deleting files by hand."""
+    sv, _p = _video_product(monkeypatch, tmp_path)
+    calls = {"n": 0}
+
+    async def fake_page(url):
+        calls["n"] += 1
+        return REAL_PAGE
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    import time as _time
+
+    stale = {"checkedAt": int(_time.time()), "ok": True,
+             "videos": [{"youtubeId": VIDEO_ID,
+                         "thumbnail": f"https://i.ytimg.com/vi/{VIDEO_ID}/hqdefault.jpg"}]}
+    (tmp_path / "uae-29452.json").write_text(json.dumps(stale), encoding="utf-8")
+    assert sv._read_cache("uae", "29452") is None  # no schemaVersion → not trusted
+
+    got = client.get("/api/giveaways/video?country=uae&product_id=24245").json()
+    assert got["videos"][0]["supplierImageId"] == POSTER_ID
+    assert calls["n"] == 1  # rediscovered once, then cached under the new schema
+    rewritten = json.loads((tmp_path / "uae-29452.json").read_text(encoding="utf-8"))
+    assert rewritten["schemaVersion"] == sv.CACHE_SCHEMA
+
+    # a future bump has the same effect, without a hand-edited cache directory
+    monkeypatch.setattr(sv, "CACHE_SCHEMA", sv.CACHE_SCHEMA + 1)
+    assert sv._read_cache("uae", "29452") is None
+
+
+def test_a_product_with_no_video_keeps_every_image(tmp_path, monkeypatch):
+    sv, _p = _video_product(monkeypatch, tmp_path)
+
+    async def fake_page(url):
+        return _odoo_page(_PHOTO_IDS, video_slide=False)
+    monkeypatch.setattr(sv, "fetch_page", fake_page)
+
+    assert client.get("/api/giveaways/video?country=uae&product_id=24245").json() == {"videos": []}
 
 
 def test_an_ambiguous_page_leaves_every_photograph_in_place():
@@ -1129,21 +1232,21 @@ def test_an_ambiguous_page_leaves_every_photograph_in_place():
     is a blemish; deleting the wrong one loses a product photo."""
     from server import supplier_video as sv
 
-    two_in_a_cell = ("""<div id="product_detail"><div class="carousel-item">"""
-                     """<img src="/web/image/product.image/8803/image_128">"""
-                     """<img src="/web/image/product.image/8804/image_128">"""
-                     """<iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe>"""
-                     """</div></div>""")
+    two_in_a_cell = ('<div id="product_detail"><div class="carousel-item">'
+                     f'<img src="/web/image/product.image/{POSTER_ID}/image_128">'
+                     '<img src="/web/image/product.image/20046/image_128">'
+                     f'<iframe src="https://www.youtube.com/embed/{VIDEO_ID}"></iframe>'
+                     "</div></div>")
     found = sv.parse_page(two_in_a_cell)
     assert found["videos"][0]["supplierImageId"] == ""
     out = sv.associate_posters({"images": GALLERY}, found["videos"], found["imageIds"])
     assert out[0]["supplierPoster"] == "" and out[0]["supplierImageId"] == ""
 
     # two of ours unaccounted for — subtraction has no single answer either
-    thin = sv.parse_page("""<div id="product_detail">"""
-                         """<img src="/web/image/product.image/8801/image_1024">"""
-                         """<div><iframe src="https://www.youtube.com/embed/lFhAiGLjoMo"></iframe></div>"""
-                         """</div>""")
+    thin = sv.parse_page('<div id="product_detail">'
+                         f'<img src="/web/image/product.image/{_PHOTO_IDS[0]}/image_1024">'
+                         f'<div><iframe src="https://www.youtube.com/embed/{VIDEO_ID}"></iframe></div>'
+                         "</div>")
     out = sv.associate_posters({"images": GALLERY}, thin["videos"], thin["imageIds"])
     assert out[0]["supplierPoster"] == ""
 
@@ -1155,35 +1258,53 @@ def test_a_poster_id_we_do_not_hold_removes_nothing():
 
     out = sv.associate_posters(
         {"images": GALLERY},
-        [{"youtubeId": "lFhAiGLjoMo", "thumbnail": "", "supplierImageId": "999999"}],
-        ["8801", "8802", "8803"])
+        [{"youtubeId": VIDEO_ID, "thumbnail": "", "supplierImageId": "999999"}],
+        list(_PHOTO_IDS))
     assert out[0]["supplierImageId"] == "" and out[0]["supplierPoster"] == ""
+
+
+def test_the_poster_resolves_against_each_variants_own_images():
+    """One cached page read serves every colour of the template, and each
+    variant's poster URL comes from that variant's own gallery."""
+    from server import supplier_video as sv
+
+    found = sv.parse_page(REAL_PAGE)
+    grey = {"images": [f"{HOST}/web/image/product.image/{POSTER_ID}/image_1024"]}
+    navy = {"images": [f"{HOST}/web/image/product.image/{POSTER_ID}/image_256"]}
+    assert sv.associate_posters(grey, found["videos"], found["imageIds"])[0]["supplierPoster"] \
+        == f"{HOST}/web/image/product.image/{POSTER_ID}/image_1024"
+    assert sv.associate_posters(navy, found["videos"], found["imageIds"])[0]["supplierPoster"] \
+        == f"{HOST}/web/image/product.image/{POSTER_ID}/image_256"
+    # a variant whose gallery never held the poster loses no image
+    assert sv.associate_posters({"images": []}, found["videos"], found["imageIds"])[0]["supplierPoster"] == ""
 
 
 def test_two_videos_never_borrow_each_others_poster():
     from server import supplier_video as sv
 
-    page = ("""<div id="product_detail">"""
-            """<div class="cell"><iframe src="https://www.youtube.com/embed/AAAAAAAAAAA"></iframe>"""
-            """<img src="/web/image/product.image/8803/image_128"></div>"""
-            """<div class="cell"><iframe src="https://www.youtube.com/embed/BBBBBBBBBBB"></iframe>"""
-            """<img src="/web/image/product.image/8804/image_128"></div>"""
-            """<img src="/web/image/product.image/8801/image_1024"></div>""")
+    page = ('<div id="product_detail">'
+            '<div class="cell"><iframe src="https://www.youtube.com/embed/AAAAAAAAAAA"></iframe>'
+            f'<img src="/web/image/product.image/{POSTER_ID}/image_128"></div>'
+            '<div class="cell"><iframe src="https://www.youtube.com/embed/BBBBBBBBBBB"></iframe>'
+            '<img src="/web/image/product.image/20046/image_128"></div>'
+            f'<img src="/web/image/product.image/{_PHOTO_IDS[0]}/image_1024"></div>')
     found = sv.parse_page(page)
-    assert [v["supplierImageId"] for v in found["videos"]] == ["8803", "8804"]
-    assert found["imageIds"] == ["8801"]
+    assert [v["supplierImageId"] for v in found["videos"]] == [POSTER_ID, "20046"]
+    assert found["imageIds"] == [_PHOTO_IDS[0]]
     # with more than one video, subtraction is not attempted at all
-    out = sv.associate_posters({"images": GALLERY}, [dict(v, supplierImageId="")
-                                                     for v in found["videos"]], ["8801"])
+    out = sv.associate_posters({"images": GALLERY},
+                               [dict(v, supplierImageId="") for v in found["videos"]],
+                               [_PHOTO_IDS[0]])
     assert [v["supplierPoster"] for v in out] == ["", ""]
 
 
 def test_image_ids_are_read_from_the_gallery_urls_we_already_hold():
     from server import supplier_video as sv
 
-    assert sv.image_ids(GALLERY) == ["8801", "8802", "8803"]  # product.product is not one
+    assert sv.image_ids(GALLERY) == _PHOTO_IDS + [POSTER_ID]  # product.product is not one
     assert sv.image_ids(["https://evil.example/web/image/product.image/1/x"]) == ["1"]
     assert sv.image_ids([]) == [] and sv.image_ids(None) == []
+
 
 
 def _fake_area_image() -> bytes:

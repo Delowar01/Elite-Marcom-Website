@@ -106,28 +106,36 @@ _IMG_RE = re.compile(r"/web/image/product\.image/(\d{1,12})", re.I)
 _VOID = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input",
                    "link", "meta", "param", "source", "track", "wbr"))
 
+# Odoo's own marker on the indicator cell of a video slide. Its presence is
+# what makes the slide-index association a fact rather than an inference, so it
+# is required, not merely preferred.
+VIDEO_THUMB_MARKER = "o_product_video_thumb"
 
-class _Elements(HTMLParser):
-    """Byte spans of every element in the page.
+# An indicator cell is a thumbnail, not a document. A span longer than this
+# means the element was never closed and we are looking at the rest of the
+# page, where any image id we found would belong to something else.
+_INDICATOR_MAX = 4000
 
-    A video's poster is identified by the markup that CONTAINS both of them —
-    the carousel cell, the gallery figure, whatever the shop calls it. That is
-    the supplier's own association. Measuring in characters instead would make
-    the answer depend on how much unrelated markup happens to sit nearby, and
-    reading it off gallery order would be a guess.
+
+class _Nodes(HTMLParser):
+    """Every element in the page with its span, class, slide index and parent.
+
+    Enough structure to answer two different questions from one pass: which
+    element contains both a video and an image, and which carousel slide a
+    video is — the second being the one the shop states outright.
     """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
-        self._open: list[tuple[str, int]] = []
-        self.spans: list[tuple[int, int]] = []
+        self.nodes: list[dict] = []
+        self._stack: list[int] = []
         self._lines: list[int] = []
 
     def _at(self) -> int:
         line, col = self.getpos()
         return (self._lines[line - 1] if 0 < line <= len(self._lines) else 0) + col
 
-    def parse(self, text: str) -> list[tuple[int, int]]:
+    def parse(self, text: str) -> list[dict]:
         offset = 0
         for chunk in text.split("\n"):
             self._lines.append(offset)
@@ -136,33 +144,96 @@ class _Elements(HTMLParser):
             self.feed(text)
             self.close()
         except Exception:
-            pass  # a half-parsed page still yields usable spans
-        end = len(text)
-        self.spans.extend((at, end) for _tag, at in self._open)
-        return self.spans
+            pass  # a half-parsed page still yields usable structure
+        for node in self.nodes:
+            if node["end"] < 0:
+                node["end"] = len(text)
+        return self.nodes
 
     def handle_starttag(self, tag, attrs):
+        at = dict(attrs)
+        idx = len(self.nodes)
+        self.nodes.append({
+            "tag": tag,
+            "cls": (at.get("class") or "").split(),
+            "slide": at.get("data-bs-slide-to") or at.get("data-slide-to") or "",
+            "start": self._at(),
+            "end": self._at() if tag in _VOID else -1,
+            "parent": self._stack[-1] if self._stack else -1,
+        })
         if tag not in _VOID:
-            self._open.append((tag, self._at()))
+            self._stack.append(idx)
 
     def handle_endtag(self, tag):
-        for i in range(len(self._open) - 1, -1, -1):
-            if self._open[i][0] == tag:
+        for i in range(len(self._stack) - 1, -1, -1):
+            if self.nodes[self._stack[i]]["tag"] == tag:
                 close = self._at() + len(tag) + 3
                 # everything opened inside an element closes with it
-                for _t, at in self._open[i:]:
-                    self.spans.append((at, close))
-                del self._open[i:]
+                for k in self._stack[i:]:
+                    if self.nodes[k]["end"] < 0:
+                        self.nodes[k]["end"] = close
+                del self._stack[i:]
                 return
 
 
-def _paired_ids(text: str, at: int, imgs: list[tuple[int, str]]) -> set[str]:
+def slide_posters(text: str, nodes: list[dict]) -> dict[int, str]:
+    """{offset of a video → product.image id} from Odoo's own slide numbering.
+
+    The shop states the relationship outright and we read it, rather than
+    inferring anything:
+
+        <div class="carousel-item">…<iframe src="…/embed/lFhAiGLjoMo">…</div>
+                       ↑ tenth carousel item of its carousel, so slide 9
+        <li data-bs-slide-to="9" class="… o_product_video_thumb">
+            <img src="/web/image/product.image/20045/image_128">
+
+    The indicator must carry Odoo's video marker: without it the cell is an
+    ordinary photograph and the numbers lining up would mean nothing. Slides
+    are counted within their own carousel, so a second carousel on the page
+    cannot shift the numbering of the first.
+    """
+    indicators: dict[int, str] = {}
+    for node in nodes:
+        idx = node["slide"]
+        if not idx.isdigit() or node["end"] <= node["start"]:
+            continue
+        seg = text[node["start"]:node["end"]]
+        if len(seg) > _INDICATOR_MAX or VIDEO_THUMB_MARKER not in seg:
+            continue
+        m = _IMG_RE.search(seg)
+        if m:
+            indicators.setdefault(int(idx), m.group(1))
+    if not indicators:
+        return {}
+
+    groups: dict[int, list[dict]] = {}
+    for node in nodes:
+        if "carousel-item" in node["cls"]:
+            groups.setdefault(node["parent"], []).append(node)
+
+    out: dict[int, str] = {}
+    for items in groups.values():
+        items.sort(key=lambda n: n["start"])
+        for i, item in enumerate(items):
+            iid = indicators.get(i)
+            if not iid:
+                continue
+            for m in _YT_RE.finditer(text[item["start"]:item["end"]]):
+                out[item["start"] + m.start()] = iid
+    return out
+
+
+def _paired_ids(nodes: list[dict], at: int, imgs: list[tuple[int, str]]) -> set[str]:
     """product.image ids in the smallest element that holds BOTH this video and
-    at least one image — the supplier's own pairing, or {} when there is none."""
+    at least one image — the supplier's own pairing, or {} when there is none.
+
+    The fallback for shops that put the poster in the same cell as the embed
+    instead of numbering their slides.
+    """
     if not imgs:
         return set()
-    spans = [s for s in _Elements().parse(text) if s[0] <= at < s[1]]
-    spans.sort(key=lambda s: s[1] - s[0])
+    spans = sorted(((n["start"], n["end"]) for n in nodes if n["start"] <= at < n["end"]),
+                   key=lambda s: s[1] - s[0])
     for lo, hi in spans:
         near = {iid for pos, iid in imgs if lo <= pos < hi}
         if near:
@@ -174,14 +245,20 @@ def parse_page(page: str) -> dict:
     """What the supplier's public product page says about videos.
 
     Returns ``{"videos": [...], "imageIds": [...]}`` where ``imageIds`` are the
-    product.image records the page shows as ORDINARY photographs. That list is
-    the second half of the identification: an id our feed has and the page does
-    not show as a photograph is the video's poster record.
+    product.image records the page shows as ORDINARY photographs — the second
+    half of the identification, since a record our feed has and the page never
+    shows as a photograph is the video's poster.
 
-    Each video carries ``supplierImageId`` when the page itself pairs exactly
-    one image record with the embed. Two candidates in the same cell is an
-    ambiguity, not a coin toss — the field stays empty and the gallery keeps
-    every photograph.
+    ``supplierImageId`` is filled by the first method that answers:
+
+    1. **Odoo's slide numbering** — the video is carousel slide N and the
+       indicator ``data-bs-slide-to="N"`` carries ``o_product_video_thumb``
+       and a product.image id. The shop states the pairing; we read it.
+    2. **Containment** — one image record in the smallest element that also
+       holds the embed, for shops that keep the two together.
+
+    Two candidates and neither method answers: the field stays empty and every
+    photograph stays in the gallery.
     """
     if not page:
         return {"videos": [], "imageIds": []}
@@ -194,6 +271,8 @@ def parse_page(page: str) -> dict:
     for m in _THUMB_RE.finditer(text):
         thumbs.setdefault(m.group(1), m.group(0))
     imgs = [(m.start(), m.group(1)) for m in _IMG_RE.finditer(text)]
+    nodes = _Nodes().parse(text) if _YT_RE.search(text) else []
+    by_slide = slide_posters(text, nodes)
 
     videos: list[dict] = []
     seen: set[str] = set()
@@ -203,8 +282,10 @@ def parse_page(page: str) -> dict:
         if not vid or vid in seen:
             continue
         seen.add(vid)
-        near = _paired_ids(text, m.start(), imgs)
-        pair = near.pop() if len(near) == 1 else ""
+        pair = by_slide.get(m.start(), "")
+        if not pair:
+            near = _paired_ids(nodes, m.start(), imgs)
+            pair = near.pop() if len(near) == 1 else ""
         if pair:
             paired.add(pair)
         videos.append({
@@ -412,6 +493,15 @@ async def fetch_page(url: str) -> str | None:
 
 # ---------------- persistent verdict cache ----------------
 
+# Bump whenever a parser change means a stored verdict could be improved on.
+# An entry written under an older number is treated as absent: it is discovered
+# again from the public page and rewritten. Schema 1 predates supplierImageId
+# and imageIds, so every one of those entries holds a video whose poster was
+# never identified — exactly the duplicate this is meant to remove. Nobody
+# should ever have to delete cache files by hand for a parser fix to land.
+CACHE_SCHEMA = 2
+
+
 def _cache_path(market: str, tid: str) -> Path:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^0-9A-Za-z_-]", "", str(tid))[:40]
@@ -426,6 +516,12 @@ def _read_cache(market: str, tid: str) -> dict | None:
         return None
     if not isinstance(meta, dict):
         return None
+    try:
+        written_with = int(meta.get("schemaVersion") or 0)
+    except (TypeError, ValueError):
+        written_with = 0
+    if written_with < CACHE_SCHEMA:
+        return None  # written by an older parser — rediscover, do not trust
     videos = [v for v in meta.get("videos") or [] if isinstance(v, dict) and v.get("youtubeId")]
     if not meta.get("ok", True):
         ttl = config.VIDEO_ERROR_CACHE_HOURS * 3600
@@ -445,6 +541,7 @@ def _write_cache(market: str, tid: str, found: dict, ok: bool) -> None:
     work out which gallery image the video already is."""
     try:
         _cache_path(market, tid).write_text(json.dumps({
+            "schemaVersion": CACHE_SCHEMA,
             "checkedAt": int(time.time()), "ok": ok,
             "videos": found.get("videos") or [],
             "imageIds": found.get("imageIds") or []}), encoding="utf-8")
@@ -521,6 +618,8 @@ def cache_status() -> dict:
             meta = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if int(meta.get("schemaVersion") or 0) < CACHE_SCHEMA:
+            continue  # awaiting rediscovery — not a verdict yet
         if meta.get("videos"):
             hits += 1
         else:

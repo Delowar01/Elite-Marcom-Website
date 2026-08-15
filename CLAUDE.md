@@ -124,12 +124,21 @@ documentation). Non-negotiable rules from it:
   same frame appears twice — once playable, once not. The two URLs
   (`/web/image/product.image/8803/…` and `i.ytimg.com/vi/{id}/…`) share
   nothing, so they are matched by **supplier record id**, never by URL and
-  never by gallery position: the page's own markup pairs a record with the
-  embed (smallest element containing both), or, failing that, one video plus
-  exactly one of our records the page never shows as a photograph. Anything
-  less certain leaves every image in place — `supplierPoster` stays empty and
-  the browser removes nothing. Showing one picture twice is a blemish;
-  deleting the wrong one loses a product photo.
+  never by gallery position. Three methods, first one to answer wins:
+  **Odoo's own slide numbering** (the video is carousel slide N and
+  `<li data-bs-slide-to="N">` carries `o_product_video_thumb` plus a
+  `product.image` id — confirmed live on ITGL 1290, slide 9 → image 20045);
+  then containment (one record in the smallest element that also holds the
+  embed); then subtraction (one video, one of our records the page never shows
+  as a photograph). The video marker is **required** for the first — slide
+  numbers lining up prove nothing on their own. Anything less certain leaves
+  every image in place: `supplierPoster` stays empty and the browser removes
+  nothing. Showing one picture twice is a blemish; deleting the wrong one
+  loses a product photo.
+- **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
+  whenever a parser change means a stored answer could be improved on; an
+  entry written under a lower number is treated as absent and rediscovered.
+  Nobody should ever delete cache files by hand for a parser fix to land.
 
 ## Site conventions
 
