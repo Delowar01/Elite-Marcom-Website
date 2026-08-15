@@ -78,15 +78,15 @@
       <img src="/assets/logo.svg" alt="Elite Marcom" width="140" height="47" class="logo-light-only">
     </a>
     <nav class="site-nav" aria-label="Primary">
-      <ul>
-        <li><a href="/" data-em="nav.home">Home</a></li>
-        <li><a href="/about.html" data-em="nav.about">About</a></li>
-        <li><a href="/services.html" data-em="nav.services">Services</a></li>
-        <li><a href="/projects.html" aria-current="page" data-em="nav.projects">Projects</a></li>
-        <li><a href="/giveaways.html" data-em="nav.gifts">Corporate Gifts</a></li>
-        <li><a href="/rental.html" data-em="nav.rental">Rental</a></li>
-        <li><a href="/careers.html" data-em="nav.careers">Careers</a></li>
-        <li><a href="/contact.html" data-em="nav.contact">Contact</a></li>
+      <ul data-em-list="header-nav">
+        <li><a href="/">Home</a></li>
+        <li><a href="/about.html">About</a></li>
+        <li><a href="/services.html">Services</a></li>
+        <li><a href="/projects.html" aria-current="page">Projects</a></li>
+        <li><a href="/giveaways.html">Corporate Gifts</a></li>
+        <li><a href="/rental.html">Rental</a></li>
+        <li><a href="/careers.html">Careers</a></li>
+        <li><a href="/contact.html">Contact</a></li>
       </ul>
     </nav>
     <div class="site-header__side">
@@ -112,7 +112,7 @@
     </button>
   </div>
   <nav aria-label="Menu">
-    <ol>
+    <ol data-em-list="header-menu">
       <li><a href="/"><span class="num">01</span>Home</a></li>
       <li><a href="/about.html"><span class="num">02</span>About Us</a></li>
       <li><a href="/services.html"><span class="num">03</span>Services</a></li>
@@ -143,7 +143,7 @@
             <span class="mask-clip"><span class="reveal accent-i" data-reveal="mask-title" data-reveal-delay="120" data-em="hero.title2">remembered.</span></span>
           </h1>
           <p class="lede reveal" data-reveal="fade-up" data-reveal-delay="220" data-em="hero.lead">Exhibitions, interiors, events and brand environments — designed, produced and delivered by one team.</p>
-          <div class="hero__caps reveal" data-reveal="fade-up" data-reveal-delay="300" style="display:flex;flex-wrap:wrap;gap:10px;list-style:none;padding:0;margin-top:30px;">
+          <div class="hero__caps reveal" data-reveal="fade-up" data-reveal-delay="300" style="display:flex;flex-wrap:wrap;gap:10px;list-style:none;padding:0;margin-top:30px;" data-em-list="projects-caps">
             <span class="chip chip--orange">Exhibitions</span>
             <span class="chip chip--violet">Interiors</span>
             <span class="chip">Events</span>
@@ -159,7 +159,7 @@
     </div>
     <div class="marquee" data-speed="55" aria-label="Project disciplines" style="margin-top:56px;">
       <div class="marquee__track">
-        <div class="marquee__group">
+        <div class="marquee__group" data-em-list="projects-marquee">
           <span class="marquee__item">Exhibitions</span>
           <span class="marquee__item">Interiors</span>
           <span class="marquee__item">Events</span>
@@ -179,7 +179,7 @@
           <h2 id="intro-h" class="reveal" data-reveal="fade-up">Ideas become <span class="accent-i">environments</span>. Environments become experiences.</h2>
           <p class="reveal" data-reveal="fade-up" data-reveal-delay="80">The portfolio spans creative direction and real-world production — concepts taken from first sketch through fabrication to live delivery on the show floor, in the venue and on site.</p>
         </div>
-        <dl class="stat-row reveal" data-reveal="fade-up" data-reveal-delay="160">
+        <dl class="stat-row reveal" data-reveal="fade-up" data-reveal-delay="160" data-em-list="projects-stats">
           <div class="stat"><dt class="stat__num">360°</dt><dd class="stat__label">End-to-end delivery</dd></div>
           <div class="stat"><dt class="stat__num">KSA + UAE</dt><dd class="stat__label">Regional production</dd></div>
           <div class="stat"><dt class="stat__num">One team</dt><dd class="stat__label">Connected responsibility</dd></div>
@@ -193,7 +193,7 @@
     <div class="container">
       <p class="section-marker reveal" data-reveal="fade-in">02 — Featured transformations</p>
       <h2 id="cases-h" class="reveal" data-reveal="fade-up">Three briefs. Three <span class="accent-i">environments</span>.</h2>
-      <div class="case-grid">
+      <div class="case-grid" data-em-list="projects-cases">
 
         <article class="case" id="virgo-acp" aria-labelledby="case-virgo-h">
           <div class="case__media">
@@ -292,7 +292,7 @@
       <h2 id="pclose-h" class="reveal" data-reveal="fade-up">Creative ambition. Operational <span class="accent-i">precision</span>.</h2>
       <div class="process reveal" data-reveal="fade-in" data-reveal-delay="100">
         <div class="process__line" aria-hidden="true"></div>
-        <ol class="process__grid" style="list-style:none;margin:0;padding:0;">
+        <ol class="process__grid" style="list-style:none;margin:0;padding:0;" data-em-list="projects-process">
           <li class="process__step"><span class="process__dot" aria-hidden="true"></span><span class="process__num">01</span><h3>Understand the brief</h3><p>Objectives, audience and constraints before pencils move.</p></li>
           <li class="process__step"><span class="process__dot" aria-hidden="true"></span><span class="process__num">02</span><h3>Shape the experience</h3><p>Creative and spatial direction agreed with you.</p></li>
           <li class="process__step"><span class="process__dot" aria-hidden="true"></span><span class="process__num">03</span><h3>Produce with control</h3><p>Fabrication and content under one production plan.</p></li>
@@ -326,7 +326,7 @@
       </div>
       <nav aria-label="Footer — pages">
         <h3>Pages</h3>
-        <ul>
+        <ul data-em-list="footer-pages">
           <li><a href="/">Home</a></li>
           <li><a href="/about.html">About Us</a></li>
           <li><a href="/services.html">Services</a></li>
@@ -335,7 +335,7 @@
       </nav>
       <nav aria-label="Footer — more">
         <h3>More</h3>
-        <ul>
+        <ul data-em-list="footer-more">
           <li><a href="/giveaways.html">Corporate Gifts</a></li>
           <li><a href="/rental.html">Items for Rental</a></li>
           <li><a href="/careers.html">Careers</a></li>

@@ -338,6 +338,415 @@ _PRESENCE_FIELDS = [
 ]
 
 
+
+# ---------------- shared renderers (one shape used by several pages) ----------------
+# A stat row, a marquee, a process ladder and a set of assurance cards appear on
+# more than one page with identical markup. One render/parse pair each, pointed
+# at by several schemas, so the four copies can never drift apart.
+
+# A product page and a rental item page are not in the menu; they belong to
+# the section they were opened from, and that is the link that should read as
+# the current one.
+NAV_PARENT = {"product": "giveaways", "rental-item": "rental"}
+
+
+def page_href(page: str) -> str:
+    """The address a page is reached at — what a menu link must match to be
+    marked as the current one."""
+    from . import content
+
+    page = NAV_PARENT.get(page, page)
+    if not page or page in GLOBAL_PAGES:
+        return ""
+    if page == "index":
+        return "/"
+    cfg = content.all_pages().get(page) or {}
+    return "/" + (cfg.get("file") or f"{page}.html")
+
+
+def _is_current(link: str, page: str) -> str:
+    here = page_href(page)
+    return ' aria-current="page"' if here and (link or "/") == here else ""
+
+
+def _render_nav_link(v: dict, i: int, page: str = "") -> str:
+    href = v.get("link") or "/"
+    return (f'<li><a href="{esc(href)}"{_is_current(href, page)}>'
+            f'{esc(v.get("label", ""))}</a></li>')
+
+
+def _render_footer_link(v: dict, i: int) -> str:
+    return f'<li><a href="{esc(v.get("link") or "/")}">{esc(v.get("label", ""))}</a></li>'
+
+
+def _parse_nav_link(raw: str) -> dict:
+    return {"label": tag_text(raw, "a"), "link": tag_attr(raw, "a", "href")}
+
+
+_NAV_FIELDS = [
+    {"key": "label", "label": "Label", "type": "text", "max": 60, "required": True},
+    {"key": "link", "label": "Link", "type": "link", "max": 300, "required": True},
+]
+
+
+def _render_menu_link(v: dict, i: int, page: str = "") -> str:
+    """The slide-in panel: same links, numbered, and the numbering is ours."""
+    href = v.get("link") or "/"
+    return (f'<li><a href="{esc(href)}"{_is_current(href, page)}>'
+            f'<span class="num">{i + 1:02d}</span>{esc(v.get("label", ""))}</a></li>')
+
+
+def _parse_menu_link(raw: str) -> dict:
+    label = inner_text(re.sub(r'<span class="num">.*?</span>', "", raw, flags=re.S))
+    return {"label": label, "link": tag_attr(raw, "a", "href")}
+
+
+def _render_stat(v: dict, i: int) -> str:
+    return (f'<div class="stat"><dt class="stat__num">{esc(v.get("value", ""))}</dt>'
+            f'<dd class="stat__label">{esc(v.get("label", ""))}</dd></div>')
+
+
+def _parse_stat(raw: str) -> dict:
+    return {"value": text_of(raw, "stat__num"), "label": text_of(raw, "stat__label")}
+
+
+_STAT_FIELDS = [
+    {"key": "value", "label": "Figure", "type": "text", "max": 40, "required": True,
+     "hint": "The large line — 360°, KSA + UAE, 1 team."},
+    {"key": "label", "label": "What it means", "type": "text", "max": 90},
+]
+
+
+def _render_marquee_item(v: dict, i: int) -> str:
+    return f'<span class="marquee__item">{esc(v.get("text", ""))}</span>'
+
+
+def _parse_marquee_item(raw: str) -> dict:
+    return {"text": inner_text(raw)}
+
+
+_MARQUEE_FIELDS = [
+    {"key": "text", "label": "Word", "type": "text", "max": 60, "required": True},
+]
+
+
+def _render_process_step(v: dict, i: int) -> str:
+    return (f'<li class="process__step"><span class="process__dot" aria-hidden="true"></span>'
+            f'<span class="process__num">{esc(v.get("num", ""))}</span>'
+            f'<h3>{esc(v.get("title", ""))}</h3>'
+            f'<p>{esc(v.get("text", ""))}</p></li>')
+
+
+def _parse_process_step(raw: str) -> dict:
+    return {"num": text_of(raw, "process__num"), "title": tag_text(raw, "h3"),
+            "text": tag_text(raw, "p")}
+
+
+_PROCESS_FIELDS = [
+    {"key": "num", "label": "Stage label", "type": "text", "max": 24, "required": True,
+     "hint": "Written out, so it can read 01 or STAGE 01."},
+    {"key": "title", "label": "Title", "type": "text", "max": 80, "required": True},
+    {"key": "text", "label": "What happens", "type": "textarea", "max": 400},
+]
+
+
+def _render_assurance(v: dict, i: int) -> str:
+    delay = f' data-reveal-delay="{i * 80}"' if i else ""
+    num = v.get("num") or f"{i + 1:02d}"
+    return (f'<article class="assure reveal" data-reveal="fade-up"{delay}>'
+            f'<span class="assure__num">{esc(num)}</span>'
+            f'<h3>{esc(v.get("title", ""))}</h3>'
+            f'<p>{esc(v.get("text", ""))}</p></article>')
+
+
+def _parse_assurance(raw: str) -> dict:
+    return {"num": text_of(raw, "assure__num"), "title": tag_text(raw, "h3"),
+            "text": tag_text(raw, "p")}
+
+
+_ASSURE_FIELDS = [
+    {"key": "num", "label": "Step number", "type": "text", "max": 8,
+     "hint": "Leave empty to number automatically."},
+    {"key": "title", "label": "Title", "type": "text", "max": 80, "required": True},
+    {"key": "text", "label": "Description", "type": "textarea", "max": 400},
+]
+
+
+def _chip_class(tone: str) -> str:
+    tone = tone if tone in _CHIP_TONES else "chip"
+    return "chip" if tone == "chip" else f"chip {tone}"
+
+
+_CHIP_TONE_FIELD = {
+    "key": "tone", "label": "Colour", "type": "select", "max": 20,
+    "options": [{"value": "chip", "label": "Neutral"},
+                {"value": "chip--orange", "label": "Orange"},
+                {"value": "chip--violet", "label": "Violet"}],
+}
+
+
+def _render_chip(v: dict, i: int) -> str:
+    """A plain badge, or a link when one is given."""
+    cls = _chip_class(v.get("tone", ""))
+    if v.get("link"):
+        return f'<li><a class="{esc(cls)}" href="{esc(v["link"])}">{esc(v.get("label", ""))}</a></li>'
+    return f'<span class="{esc(cls)}">{esc(v.get("label", ""))}</span>'
+
+
+def _parse_chip(raw: str) -> dict:
+    node = _first(raw, "chip")
+    tone = "chip"
+    if node:
+        for cls in (node["attrs"].get("class") or "").split():
+            if cls in _CHIP_TONES and cls != "chip":
+                tone = cls
+    return {"label": inner_text(node["html"]) if node else inner_text(raw),
+            "link": tag_attr(raw, "a", "href"), "tone": tone}
+
+
+_CHIP_FIELDS = [
+    {"key": "label", "label": "Label", "type": "text", "max": 60, "required": True},
+    {"key": "link", "label": "Link", "type": "link", "max": 300,
+     "hint": "Leave empty for a badge that is not clickable."},
+    _CHIP_TONE_FIELD,
+]
+
+
+def _render_work_card(v: dict, i: int) -> str:
+    delay = f' data-reveal-delay="{i * 70}"' if i else ""
+    tall = " work-card--tall" if v.get("tall") == "yes" else ""
+    img = v.get("image") or ""
+    media = (f'\n            <figure class="media-frame media-frame--sheen" data-parallax="0.05">'
+             f'\n              <img src="{esc(img)}" alt="{esc(v.get("imageAlt") or v.get("title", ""))}" '
+             f'{_dims(v)}loading="lazy">\n            </figure>' if img else "")
+    chip = (f'\n              <span class="{esc(_chip_class(v.get("tone", "")))}">{esc(v["chip"])}</span>'
+            if v.get("chip") else "")
+    return (f'<a class="work-card{tall} reveal" data-reveal="zoom-up"{delay} '
+            f'href="{esc(v.get("link") or "#")}">{media}'
+            f'\n            <div class="work-card__meta">{chip}'
+            f'\n              <h3>{esc(v.get("title", ""))}</h3>'
+            f'\n              <p>{esc(v.get("text", ""))}</p>'
+            f"\n            </div>\n          </a>")
+
+
+def _dims(v: dict, w: str = "width", h: str = "height") -> str:
+    """The picture's own width and height when the page had them — a fixed pair
+    would put every image in the wrong aspect box."""
+    out = ""
+    if str(v.get(w) or "").isdigit():
+        out += f'width="{esc(str(v[w]))}" '
+    if str(v.get(h) or "").isdigit():
+        out += f'height="{esc(str(v[h]))}" '
+    return out
+
+
+def _parse_work_card(raw: str) -> dict:
+    node = _first(raw, "work-card")
+    classes = (node["attrs"].get("class") or "").split() if node else []
+    chip_node = _first(raw, "chip")
+    tone = "chip"
+    if chip_node:
+        for cls in (chip_node["attrs"].get("class") or "").split():
+            if cls in _CHIP_TONES and cls != "chip":
+                tone = cls
+    return {"title": tag_text(raw, "h3"), "text": tag_text(raw, "p"),
+            "chip": text_of(raw, "chip"), "tone": tone,
+            "image": tag_attr(raw, "img", "src"), "imageAlt": tag_attr(raw, "img", "alt"),
+            "width": tag_attr(raw, "img", "width"), "height": tag_attr(raw, "img", "height"),
+            "link": tag_attr(raw, "a", "href"),
+            "tall": "yes" if "work-card--tall" in classes else "no"}
+
+
+_WORK_FIELDS = [
+    {"key": "title", "label": "Project name", "type": "text", "max": 90, "required": True},
+    {"key": "text", "label": "One-line description", "type": "textarea", "max": 300},
+    {"key": "chip", "label": "Badge", "type": "text", "max": 40},
+    _CHIP_TONE_FIELD,
+    {"key": "image", "label": "Image", "type": "image", "max": 240},
+    {"key": "imageAlt", "label": "Image description", "type": "text", "max": 240},
+    {"key": "link", "label": "Link", "type": "link", "max": 300},
+    {"key": "tall", "label": "Feature this one", "type": "select", "max": 4,
+     "hint": "A featured card fills two rows of the grid.",
+     "options": [{"value": "no", "label": "No"}, {"value": "yes", "label": "Yes"}]},
+]
+
+
+def _render_model_card(v: dict, i: int) -> str:
+    delay = f' data-reveal-delay="{i * 90}"' if i else ""
+    return (f'<article class="model-card reveal" data-reveal="fade-up"{delay}>'
+            f'\n          <span class="model-card__num">{esc(v.get("mark", ""))}</span>'
+            f'\n          <h3>{esc(v.get("title", ""))}</h3>'
+            f'\n          <p>{esc(v.get("text", ""))}</p>\n        </article>')
+
+
+def _parse_model_card(raw: str) -> dict:
+    return {"mark": text_of(raw, "model-card__num"), "title": tag_text(raw, "h3"),
+            "text": tag_text(raw, "p")}
+
+
+_MODEL_FIELDS = [
+    {"key": "mark", "label": "Letter", "type": "text", "max": 8, "required": True},
+    {"key": "title", "label": "Title", "type": "text", "max": 80, "required": True},
+    {"key": "text", "label": "Description", "type": "textarea", "max": 500},
+]
+
+
+def _render_diff(v: dict, i: int) -> str:
+    delay = f' data-reveal-delay="{i * 70}"' if i else ""
+    return (f'<div class="diff reveal" data-reveal="fade-up"{delay}>'
+            f'\n            <h3>{esc(v.get("title", ""))}</h3>'
+            f'\n            <p>{esc(v.get("text", ""))}</p>\n          </div>')
+
+
+def _parse_diff(raw: str) -> dict:
+    return {"title": tag_text(raw, "h3"), "text": tag_text(raw, "p")}
+
+
+_DIFF_FIELDS = [
+    {"key": "title", "label": "Title", "type": "text", "max": 80, "required": True},
+    {"key": "text", "label": "Description", "type": "textarea", "max": 600},
+]
+
+
+def _render_office(v: dict, i: int) -> str:
+    delay = f' data-reveal-delay="{i * 90}"' if i else ""
+    chip = (f'\n          <span class="{esc(_chip_class(v.get("tone", "")))}">{esc(v["chip"])}</span>'
+            if v.get("chip") else "")
+    address = "<br>".join(esc(ln) for ln in _lines(v.get("address", "")))
+    reach = []
+    for line in _lines(v.get("contacts", "")):
+        label, href = _split_fact(line)
+        if not label or not href:
+            continue
+        out = f'href="{esc(href)}"'
+        if href.startswith("http"):
+            out += ' rel="noopener" target="_blank"'
+        reach.append(f"<a {out}>{esc(label)}</a>")
+    contact = (f'\n          <p style="margin-top:10px;">{"<br>".join(reach)}</p>' if reach else "")
+    return (f'<article class="presence-card reveal" data-reveal="fade-up"{delay}>{chip}'
+            f'\n          <h3>{esc(v.get("title", ""))}</h3>'
+            f'\n          <p>{address}</p>{contact}\n        </article>')
+
+
+def _parse_office(raw: str) -> dict:
+    node = _first(raw, "chip")
+    tone = "chip"
+    if node:
+        for cls in (node["attrs"].get("class") or "").split():
+            if cls in _CHIP_TONES and cls != "chip":
+                tone = cls
+    paras = re.findall(r"<p\b[^>]*>(.*?)</p>", raw, re.S)
+    address = inner_text(re.sub(r"<br\s*/?>", "\n", paras[0])) if paras else ""
+    tail = paras[1] if len(paras) > 1 else ""
+    links = re.findall(r'<a\b[^>]*href="([^"]*)"[^>]*>(.*?)</a>', tail, re.S)
+    return {"chip": text_of(raw, "chip"), "tone": tone, "title": tag_text(raw, "h3"),
+            "address": "\n".join(ln.strip() for ln in address.split("\n") if ln.strip()),
+            "contacts": "\n".join(f"{inner_text(lbl)} | {href}" for href, lbl in links)}
+
+
+_OFFICE_FIELDS = [
+    {"key": "title", "label": "City", "type": "text", "max": 80, "required": True},
+    {"key": "chip", "label": "Badge", "type": "text", "max": 60},
+    _CHIP_TONE_FIELD,
+    {"key": "address", "label": "Address", "type": "lines", "max": 400,
+     "hint": "One line per line of the address."},
+    {"key": "contacts", "label": "Ways to reach this office", "type": "lines", "max": 600,
+     "hint": "One per line, as “+966 59 925 5995 | tel:+966599255995”."},
+]
+
+
+def _render_case(v: dict, i: int) -> str:
+    anchor = v.get("anchor") or f"case{i + 1}"
+    hid = f"case-{anchor}-h"
+    def frame(src, alt, dims, extra, reveal, delay, parallax):
+        if not src:
+            return ""
+        cls = f"media-frame {extra}".strip()
+        d = f' data-reveal-delay="{delay}"' if delay else ""
+        return (f'\n            <figure class="{cls} reveal" data-reveal="{reveal}"{d} '
+                f'data-parallax="{parallax}">'
+                f'\n              <img src="{esc(src)}" alt="{esc(alt)}" {dims}'
+                f'loading="lazy">\n            </figure>')
+    media = (frame(v.get("image"), v.get("imageAlt") or v.get("title", ""), _dims(v),
+                   "media-frame--sheen", "zoom-up", 0, "0.05") +
+             frame(v.get("image2"), v.get("image2Alt") or v.get("title", ""),
+                   _dims(v, "width2", "height2"), "case__inset",
+                   v.get("inset") if v.get("inset") in ("slide-left", "slide-right")
+                   else "slide-right", 140, "0.1"))
+    facts = "".join(
+        f"\n              <div><dt>{esc(a)}</dt><dd>{esc(b)}</dd></div>"
+        for a, b in (_split_fact(ln) for ln in _lines(v.get("facts", ""))) if a)
+    fact_block = (f'\n            <dl class="case__facts reveal" data-reveal="fade-up" '
+                  f'data-reveal-delay="130">{facts}\n            </dl>' if facts else "")
+    chip = (f'\n            <span class="{esc(_chip_class(v.get("tone", "")))} reveal" '
+            f'data-reveal="fade-in">{esc(v["chip"])}</span>' if v.get("chip") else "")
+    open_id = v.get("openId") or anchor
+    button = (f'\n            <button class="link-arrow reveal" data-reveal="fade-up" '
+              f'data-reveal-delay="180" type="button" data-open-project="{esc(open_id)}">'
+              f'{esc(v.get("buttonLabel") or "View project details")}</button>'
+              if v.get("buttonLabel") or open_id else "")
+    return (f'<article class="case" id="{esc(anchor)}" aria-labelledby="{esc(hid)}">'
+            f'\n          <div class="case__media">{media}\n          </div>'
+            f"\n          <div>{chip}"
+            f'\n            <h3 id="{esc(hid)}" class="service-title reveal" data-reveal="fade-up" '
+            f'style="margin-top:14px;">{esc(v.get("title", ""))}</h3>'
+            f'\n            <p class="reveal" data-reveal="fade-up" data-reveal-delay="70">'
+            f'{esc(v.get("text", ""))}</p>{fact_block}{button}'
+            f"\n          </div>\n        </article>")
+
+
+def _split_fact(line: str) -> tuple[str, str]:
+    left, _, right = line.partition("|")
+    return left.strip(), right.strip()
+
+
+def _parse_case(raw: str) -> dict:
+    node = _first(raw, "chip")
+    tone = "chip"
+    if node:
+        for cls in (node["attrs"].get("class") or "").split():
+            if cls in _CHIP_TONES and cls != "chip":
+                tone = cls
+    imgs = re.findall(r'<img\b[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*width="(\d*)"'
+                      r'[^>]*height="(\d*)"', raw)
+    facts = re.findall(r"<dt>(.*?)</dt>\s*<dd>(.*?)</dd>", raw, re.S)
+    return {
+        "anchor": tag_attr(raw, "article", "id"),
+        "chip": text_of(raw, "chip"), "tone": tone,
+        "title": text_of(raw, "service-title"),
+        "text": tag_text(raw, "p"),
+        "image": imgs[0][0] if imgs else "", "imageAlt": imgs[0][1] if imgs else "",
+        "width": imgs[0][2] if imgs else "", "height": imgs[0][3] if imgs else "",
+        "image2": imgs[1][0] if len(imgs) > 1 else "",
+        "image2Alt": imgs[1][1] if len(imgs) > 1 else "",
+        "width2": imgs[1][2] if len(imgs) > 1 else "",
+        "height2": imgs[1][3] if len(imgs) > 1 else "",
+        "facts": "\n".join(f"{inner_text(a)} | {inner_text(b)}" for a, b in facts),
+        "buttonLabel": text_of(raw, "link-arrow"),
+        "openId": tag_attr(raw, "button", "data-open-project"),
+        "inset": (_first(raw, "case__inset") or {}).get("attrs", {}).get("data-reveal", ""),
+    }
+
+
+_CASE_FIELDS = [
+    {"key": "title", "label": "Project name", "type": "text", "max": 90, "required": True},
+    {"key": "chip", "label": "Badge", "type": "text", "max": 60},
+    _CHIP_TONE_FIELD,
+    {"key": "text", "label": "Description", "type": "textarea", "max": 900},
+    {"key": "image", "label": "Main image", "type": "image", "max": 240},
+    {"key": "imageAlt", "label": "Main image description", "type": "text", "max": 240},
+    {"key": "image2", "label": "Inset image", "type": "image", "max": 240},
+    {"key": "image2Alt", "label": "Inset image description", "type": "text", "max": 240},
+    {"key": "facts", "label": "Facts", "type": "lines", "max": 900,
+     "hint": "One per line, as “Scope | Design · Fabrication”."},
+    {"key": "buttonLabel", "label": "Button label", "type": "text", "max": 60},
+    {"key": "openId", "label": "Project id it opens", "type": "slug", "max": 60,
+     "hint": "Must match an id in the projects data, or the button opens nothing."},
+    {"key": "anchor", "label": "Anchor id", "type": "slug", "max": 60,
+     "hint": "Used by links like /projects.html#virgo-acp."},
+]
+
+
 # ---------------- the managed lists ----------------
 # Adding another one is this table plus a data-em-list attribute on the page.
 
@@ -348,7 +757,98 @@ def _service_list(name: str, label: str, hint: str) -> dict:
             "titleField": "name", "imageField": "image"}
 
 
+def _shared(page: str, label: str, hint: str, kind: str, **extra) -> dict:
+    """One of the shapes several pages share. `source` is where the shipped
+    markup is read from — the same as `page` unless the list is global."""
+    base = {
+        "stat": {"itemLabel": "figure", "itemClass": "stat", "fields": _STAT_FIELDS,
+                 "render": _render_stat, "parse": _parse_stat, "titleField": "value"},
+        "marquee": {"itemLabel": "word", "itemClass": "marquee__item",
+                    "fields": _MARQUEE_FIELDS, "render": _render_marquee_item,
+                    "parse": _parse_marquee_item, "titleField": "text"},
+        "process": {"itemLabel": "step", "itemClass": "process__step",
+                    "fields": _PROCESS_FIELDS, "render": _render_process_step,
+                    "parse": _parse_process_step, "titleField": "title"},
+        "assure": {"itemLabel": "step", "itemClass": "assure", "fields": _ASSURE_FIELDS,
+                   "render": _render_assurance, "parse": _parse_assurance,
+                   "titleField": "title"},
+        "value": {"itemLabel": "value", "itemClass": "value", "fields": _VALUE_FIELDS,
+                  "render": _render_value, "parse": _parse_value, "titleField": "title"},
+        "chip": {"itemLabel": "badge", "itemClass": "chip", "fields": _CHIP_FIELDS,
+                 "render": _render_chip, "parse": _parse_chip, "titleField": "label"},
+        "nav": {"itemLabel": "link", "itemClass": "", "fields": _NAV_FIELDS,
+                "render": _render_nav_link, "parse": _parse_nav_link, "titleField": "label",
+                "renderTakesPage": True},
+        "footerlink": {"itemLabel": "link", "itemClass": "", "fields": _NAV_FIELDS,
+                       "render": _render_footer_link, "parse": _parse_nav_link,
+                       "titleField": "label"},
+        "menu": {"itemLabel": "link", "itemClass": "", "fields": _NAV_FIELDS,
+                 "render": _render_menu_link, "parse": _parse_menu_link, "titleField": "label",
+                 "renderTakesPage": True},
+    }[kind]
+    return {"label": label, "page": page, "hint": hint, "imageField": "", **base, **extra}
+
+
+# Header and footer are not a page — they are on every page. They are read from
+# the home page's markup and baked into all of them, and they get their own
+# groups on the panel because that is how an admin thinks about them.
+HEADER = "_header"
+FOOTER = "_footer"
+GLOBAL_PAGES = {HEADER: "Header", FOOTER: "Footer"}
+_GLOBAL_SOURCE = "index"
+
 SCHEMAS: dict[str, dict] = {
+    # ---- header (every page) ----
+    "header-nav": _shared(HEADER, "Header — main menu",
+                          "The links along the top bar of every page. Pages you add in the "
+                          "panel are appended automatically.",
+                          "nav", itemClass="", source=_GLOBAL_SOURCE, listTag="li"),
+    "header-menu": _shared(HEADER, "Header — slide-in menu",
+                           "The full-screen menu behind the ☰ button. Numbering is automatic.",
+                           "menu", source=_GLOBAL_SOURCE, listTag="li"),
+    # ---- footer (every page) ----
+    "footer-pages": _shared(FOOTER, "Footer — Pages column",
+                            "The first column of links in the footer.",
+                            "footerlink", source=_GLOBAL_SOURCE, listTag="li"),
+    "footer-more": _shared(FOOTER, "Footer — More column",
+                           "The second column of footer links. Pages you add in the panel "
+                           "are appended here automatically.",
+                           "footerlink", source=_GLOBAL_SOURCE, listTag="li"),
+    # ---- home ----
+    "home-hero-stats": _shared("index", "Home — hero figures",
+                               "The three figures under the hero headline.", "stat"),
+    "home-hero-caps": _shared("index", "Home — hero badges",
+                              "The row of capability badges below the hero.",
+                              "chip", listTag="li"),
+    "home-marquee": _shared("index", "Home — scrolling words",
+                            "The band of words that scrolls across the page.", "marquee"),
+    "home-about-stats": _shared("index", "Home — about figures",
+                                "The figures beside the About preview.", "stat"),
+    "home-services": {
+        "label": "Home — what we do", "page": "index",
+        "hint": "The numbered list of services on the home page. Numbering is automatic.",
+        "itemLabel": "row", "itemClass": "service-row", "fields": _SERVICE_ROW_FIELDS,
+        "render": _render_service_row, "parse": _parse_service_row,
+        "titleField": "name", "imageField": "preview"},
+    "home-work": {
+        "label": "Home — selected work", "page": "index",
+        "hint": "The project cards on the home page.",
+        "itemLabel": "card", "itemClass": "work-card", "fields": _WORK_FIELDS,
+        "render": _render_work_card, "parse": _parse_work_card,
+        "titleField": "title", "imageField": "image", "carry": ("width", "height")},
+    "home-process": _shared("index", "Home — how we work",
+                            "The numbered stages on the home page.", "process"),
+    # ---- services ----
+    "services-stats": _shared("services", "Services — hero figures",
+                              "The figures under the Services headline.", "stat"),
+    "services-marquee": _shared("services", "Services — scrolling words",
+                                "The band of words that scrolls across the page.", "marquee"),
+    "services-models": {
+        "label": "Services — think, build, deliver", "page": "services",
+        "hint": "The three cards describing how an engagement is structured.",
+        "itemLabel": "card", "itemClass": "model-card", "fields": _MODEL_FIELDS,
+        "render": _render_model_card, "parse": _parse_model_card,
+        "titleField": "title", "imageField": ""},
     "services-spaces": _service_list(
         "services-spaces", "Services — Spaces & fit-out",
         "The service cards in the first chapter of the Services page."),
@@ -358,17 +858,33 @@ SCHEMAS: dict[str, dict] = {
     "services-brand": _service_list(
         "services-brand", "Services — Brand & media",
         "The service cards in the third chapter of the Services page."),
-    "home-services": {
-        "label": "Home — what we do", "page": "index",
-        "hint": "The numbered list of services on the home page. Numbering is automatic.",
-        "itemLabel": "row", "itemClass": "service-row", "fields": _SERVICE_ROW_FIELDS,
-        "render": _render_service_row, "parse": _parse_service_row,
-        "titleField": "name", "imageField": "preview"},
-    "about-values": {
-        "label": "About — mission & values", "page": "about",
-        "hint": "The values listed on the About page.",
-        "itemLabel": "value", "itemClass": "value", "fields": _VALUE_FIELDS,
-        "render": _render_value, "parse": _parse_value,
+    "services-process": _shared("services", "Services — how we work",
+                                "The numbered stages on the Services page.", "process"),
+    # ---- projects ----
+    "projects-caps": _shared("projects", "Projects — hero badges",
+                             "The badges under the Projects headline.", "chip"),
+    "projects-stats": _shared("projects", "Projects — hero figures",
+                              "The figures under the Projects headline.", "stat"),
+    "projects-marquee": _shared("projects", "Projects — scrolling words",
+                                "The band of words that scrolls across the page.", "marquee"),
+    "projects-cases": {
+        "label": "Projects — featured case studies", "page": "projects",
+        "hint": "The long-form projects at the top of the page. The rest of the grid is "
+                "the projects data file.",
+        "itemLabel": "case study", "itemClass": "case", "fields": _CASE_FIELDS,
+        "render": _render_case, "parse": _parse_case,
+        "titleField": "title", "imageField": "image",
+        "carry": ("width", "height", "width2", "height2"), "carryText": ("inset",)},
+    "projects-process": _shared("projects", "Projects — how we work",
+                                "The numbered stages on the Projects page.", "process"),
+    # ---- about ----
+    "about-values": _shared("about", "About — mission & values",
+                            "The values listed on the About page.", "value"),
+    "about-diff": {
+        "label": "About — what sets us apart", "page": "about",
+        "hint": "The four points beside the About page's difference section.",
+        "itemLabel": "point", "itemClass": "diff", "fields": _DIFF_FIELDS,
+        "render": _render_diff, "parse": _parse_diff,
         "titleField": "title", "imageField": ""},
     "about-presence": {
         "label": "About — where we work", "page": "about",
@@ -376,7 +892,66 @@ SCHEMAS: dict[str, dict] = {
         "itemLabel": "location", "itemClass": "presence-card", "fields": _PRESENCE_FIELDS,
         "render": _render_presence, "parse": _parse_presence,
         "titleField": "title", "imageField": ""},
+    "about-process": _shared("about", "About — how we work",
+                             "The numbered stages on the About page.", "process"),
+    # ---- contact ----
+    "contact-offices": {
+        "label": "Contact — offices", "page": "contact",
+        "hint": "The address cards on the Contact page.",
+        "itemLabel": "office", "itemClass": "presence-card", "fields": _OFFICE_FIELDS,
+        "render": _render_office, "parse": _parse_office,
+        "titleField": "title", "imageField": ""},
+    # ---- corporate gifts ----
+    "gifts-assurances": _shared("giveaways", "Corporate Gifts — how it works",
+                                "The numbered steps on the Corporate Gifts page.", "assure"),
+    # ---- rental ----
+    "rental-assurances": _shared("rental", "Rental — how it works",
+                                 "The numbered steps on the Rental page.", "assure"),
+    # ---- careers ----
+    "careers-values": _shared("careers", "Careers — how we work together",
+                              "The values listed on the Careers page.", "value"),
 }
+
+
+def source_page(name: str) -> str:
+    """Where a list's shipped markup is read from."""
+    spec = schema(name)
+    return spec.get("source") or spec["page"]
+
+
+def pages() -> list[dict]:
+    """Every page that has managed lists, in the order the panel shows them:
+    the two global groups first, then the site's own pages."""
+    from . import content
+
+    order = list(GLOBAL_PAGES) + list(content.all_pages())
+    seen, out = set(), []
+    for page in order:
+        if page in seen:
+            continue
+        seen.add(page)
+        names = [n for n, sp in SCHEMAS.items() if sp["page"] == page]
+        if names:
+            out.append({"page": page, "label": page_label(page), "lists": names})
+    return out
+
+
+def page_groups() -> list[dict]:
+    """The same grouping with the counts the page picker shows, so a screen
+    that is page-first can be drawn from one request."""
+    counts = {}
+    for name in SCHEMAS:
+        rows = items(name)
+        counts[name] = (len(rows), sum(1 for r in rows if r["hidden"]),
+                        is_managed(name))
+    out = []
+    for group in pages():
+        total = sum(counts[n][0] for n in group["lists"])
+        out.append({**group, "items": total,
+                    "hidden": sum(counts[n][1] for n in group["lists"]),
+                    "managed": any(counts[n][2] for n in group["lists"]),
+                    "global": group["page"] in GLOBAL_PAGES})
+    return out
 
 
 def schema(name: str) -> dict:
@@ -389,6 +964,8 @@ def schema(name: str) -> dict:
 def page_label(page: str) -> str:
     from . import content
 
+    if page in GLOBAL_PAGES:
+        return GLOBAL_PAGES[page]
     cfg = content.all_pages().get(page) or {}
     return cfg.get("label") or page
 
@@ -398,6 +975,7 @@ def public_schema(name: str) -> dict:
     spec = schema(name)
     return {"id": name, "label": spec["label"], "page": spec["page"],
             "pageLabel": page_label(spec["page"]),
+            "global": spec["page"] in GLOBAL_PAGES,
             "hint": spec.get("hint", ""), "itemLabel": spec.get("itemLabel", "item"),
             "fields": spec["fields"], "titleField": spec.get("titleField", ""),
             "imageField": spec.get("imageField", "")}
@@ -438,7 +1016,7 @@ def shipped_items(name: str) -> list[dict]:
 
     spec = schema(name)
     try:
-        raw = content.page_source(spec["page"])
+        raw = content.page_source(source_page(name))
     except Exception:
         return []
     box = _container(raw, name)
@@ -446,10 +1024,19 @@ def shipped_items(name: str) -> list[dict]:
         return []
     inner = raw[box["contentStart"]:box["contentEnd"]]
     out = []
-    for i, node in enumerate(elements_with_class(inner, spec["itemClass"])):
-        values = spec["parse"](node.get("html", ""))
-        out.append({"id": f"d{i + 1}", "hidden": False, "shipped": True, "values": values})
+    for i, html in enumerate(_shipped_spans(inner, spec)):
+        out.append({"id": f"d{i + 1}", "hidden": False, "shipped": True,
+                    "values": spec["parse"](html)})
     return out
+
+
+def _shipped_spans(inner: str, spec: dict) -> list[str]:
+    """The markup of each item inside a container. Most lists mark their items
+    with a class; a menu is bare <li>s, so those are taken by tag instead."""
+    tag = spec.get("listTag")
+    if tag and not spec.get("itemClass"):
+        return re.findall(rf"<{tag}\b.*?</{tag}\s*>", inner, re.S | re.I)
+    return [node.get("html", "") for node in elements_with_class(inner, spec["itemClass"])]
 
 
 # ---------------- storage (admin.db) ----------------
@@ -521,6 +1108,10 @@ def _clean_values(name: str, values: dict) -> dict:
     out = {}
     for field in spec["fields"]:
         out[field["key"]] = clean_value(field, values.get(field["key"], ""))
+    for key in spec.get("carry", ()):
+        out[key] = re.sub(r"[^0-9]", "", str(values.get(key) or ""))[:6]
+    for key in spec.get("carryText", ()):
+        out[key] = re.sub(r"[^a-z-]", "", str(values.get(key) or "").lower())[:24]
     if spec.get("titleField") and not out.get(spec["titleField"]):
         raise CollectionError("Give the item a name before saving it.")
     return out
@@ -664,9 +1255,15 @@ def last_edit_ts() -> int:
 
 # ---------------- bake ----------------
 
-def render_list(name: str) -> str:
+def render_list(name: str, page: str = "") -> str:
+    """`page` is the page being baked — a menu link needs it to know whether it
+    is the current one, and it is the page's own address that decides, not
+    anything stored on the item."""
     spec = schema(name)
     visible = [r for r in items(name) if not r["hidden"]]
+    if spec.get("renderTakesPage"):
+        return "\n          ".join(spec["render"](r["values"], i, page)
+                                   for i, r in enumerate(visible))
     return "\n          ".join(spec["render"](r["values"], i) for i, r in enumerate(visible))
 
 
@@ -692,12 +1289,12 @@ def apply_to_page(raw: str, page: str) -> str:
     offset after it.
     """
     for name, spec in SCHEMAS.items():
-        if spec["page"] != page:
+        if spec["page"] != page and spec["page"] not in GLOBAL_PAGES:
             continue
         boxes = _containers(raw, name)
         if not boxes:
             continue
-        markup = render_list(name)
+        markup = render_list(name, page)
         body = f"\n          {markup}\n        " if markup else ""
         for box in reversed(boxes):
             raw = raw[:box["contentStart"]] + body + raw[box["contentEnd"]:]

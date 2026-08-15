@@ -78,15 +78,15 @@
       <img src="/assets/logo.svg" alt="Elite Marcom" width="140" height="47" class="logo-light-only">
     </a>
     <nav class="site-nav" aria-label="Primary">
-      <ul>
-        <li><a href="/" data-em="nav.home">Home</a></li>
-        <li><a href="/about.html" aria-current="page" data-em="nav.about">About</a></li>
-        <li><a href="/services.html" data-em="nav.services">Services</a></li>
-        <li><a href="/projects.html" data-em="nav.projects">Projects</a></li>
-        <li><a href="/giveaways.html" data-em="nav.gifts">Corporate Gifts</a></li>
-        <li><a href="/rental.html" data-em="nav.rental">Rental</a></li>
-        <li><a href="/careers.html" data-em="nav.careers">Careers</a></li>
-        <li><a href="/contact.html" data-em="nav.contact">Contact</a></li>
+      <ul data-em-list="header-nav">
+        <li><a href="/">Home</a></li>
+        <li><a href="/about.html" aria-current="page">About</a></li>
+        <li><a href="/services.html">Services</a></li>
+        <li><a href="/projects.html">Projects</a></li>
+        <li><a href="/giveaways.html">Corporate Gifts</a></li>
+        <li><a href="/rental.html">Rental</a></li>
+        <li><a href="/careers.html">Careers</a></li>
+        <li><a href="/contact.html">Contact</a></li>
       </ul>
     </nav>
     <div class="site-header__side">
@@ -112,7 +112,7 @@
     </button>
   </div>
   <nav aria-label="Menu">
-    <ol>
+    <ol data-em-list="header-menu">
       <li><a href="/"><span class="num">01</span>Home</a></li>
       <li><a href="/about.html" aria-current="page"><span class="num">02</span>About Us</a></li>
       <li><a href="/services.html"><span class="num">03</span>Services</a></li>
@@ -190,7 +190,7 @@
       <p class="lede reveal" data-reveal="fade-up" data-reveal-delay="80">Creative and operational disciplines talk to each other continuously — your project never passes through a wall.</p>
       <div class="process reveal" data-reveal="fade-in" data-reveal-delay="120">
         <div class="process__line" aria-hidden="true"></div>
-        <ol class="process__grid" style="list-style:none;margin:0;padding:0;">
+        <ol class="process__grid" style="list-style:none;margin:0;padding:0;" data-em-list="about-process">
           <li class="process__step"><span class="process__dot" aria-hidden="true"></span>
             <span class="process__num">STEP 01</span><h3>Understand the objective</h3>
             <p>What must this experience achieve, for whom, where and by when.</p></li>
@@ -248,7 +248,7 @@
             <img src="/assets/about/hospitality-catering.webp" alt="Curated hospitality and catering presentation at an Elite Marcom event" width="626" height="417" loading="lazy">
           </figure>
         </div>
-        <div class="diff-list">
+        <div class="diff-list" data-em-list="about-diff">
           <div class="diff reveal" data-reveal="fade-up">
             <h3>Expertise</h3>
             <p>Exhibition construction, event operations and media production are our daily work — you get answers grounded in real build experience, not estimates.</p>
@@ -324,7 +324,7 @@
       </div>
       <nav aria-label="Footer — pages">
         <h3>Pages</h3>
-        <ul>
+        <ul data-em-list="footer-pages">
           <li><a href="/">Home</a></li>
           <li><a href="/about.html">About Us</a></li>
           <li><a href="/services.html">Services</a></li>
@@ -333,7 +333,7 @@
       </nav>
       <nav aria-label="Footer — more">
         <h3>More</h3>
-        <ul>
+        <ul data-em-list="footer-more">
           <li><a href="/giveaways.html">Corporate Gifts</a></li>
           <li><a href="/rental.html">Items for Rental</a></li>
           <li><a href="/careers.html">Careers</a></li>

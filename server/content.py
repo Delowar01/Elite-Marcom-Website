@@ -23,15 +23,11 @@ SITE_ORIGIN = "https://www.elitemarcom.com"
 
 # ---------------- schema ----------------
 
+# The menu labels used to live here as eight fixed keys, which could rename a
+# link but never add, remove or reorder one. They are a managed list now
+# (Sections & items -> Header), so the menu has one owner rather than a text
+# field here and a list there disagreeing about what a link says.
 GLOBAL_REGIONS = [
-    {"key": "nav.home", "label": "Menu — Home", "kind": "text"},
-    {"key": "nav.about", "label": "Menu — About", "kind": "text"},
-    {"key": "nav.services", "label": "Menu — Services", "kind": "text"},
-    {"key": "nav.projects", "label": "Menu — Projects", "kind": "text"},
-    {"key": "nav.gifts", "label": "Menu — Corporate Gifts", "kind": "text"},
-    {"key": "nav.rental", "label": "Menu — Rental", "kind": "text"},
-    {"key": "nav.careers", "label": "Menu — Careers", "kind": "text"},
-    {"key": "nav.contact", "label": "Menu — Contact", "kind": "text"},
     {"key": "header.cities", "label": "Header — cities line", "kind": "text"},
     {"key": "header.cta", "label": "Header — button (main pages)", "kind": "text"},
     {"key": "footer.about", "label": "Footer — about paragraph", "kind": "multiline"},

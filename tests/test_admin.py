@@ -1073,7 +1073,10 @@ def test_pages_list_and_editor_originals():
     assert "Elite Marcom" in seo["seo.title"]["original"]
     glob = client.get("/api/admin/pages/_global").json()
     gfields = {f["key"]: f for f in glob["regions"]}
-    assert gfields["nav.about"]["original"] == "About"
+    # the menu labels moved to a managed list; what is left here is the text
+    # around the menu, and it still reads its default out of the shipped page
+    assert "nav.about" not in gfields
+    assert gfields["header.cities"]["original"] == "Riyadh · Dubai · Worldwide"
     assert gfields["footer.email"]["original"] == "info@elitemarcom.com"
 
 
@@ -1119,15 +1122,26 @@ def test_content_save_preview_publish_and_rollback():
 def test_global_header_footer_bake_applies_everywhere():
     me = client.get("/api/admin/me").json()
     ok = client.post("/api/admin/pages/_global",
-                     json={"lang": "en", "values": {"nav.about": "Our Story",
-                                                    "footer.email": "hello@elitemarcom.com"}},
+                     json={"lang": "en", "values": {"footer.email": "hello@elitemarcom.com"}},
                      headers={"X-CSRF": me["csrf"]})
     assert ok.status_code == 200, ok.text
+    # the menu is a managed list now, not eight fixed keys — renaming a link is
+    # an edit to the Header list and it has to reach every page
+    from server import collections as co
+
+    about_link = [i for i in co.items("header-nav") if i["values"]["link"] == "/about.html"][0]
+    renamed = client.post("/api/admin/collections/header-nav/items/" + about_link["id"],
+                          headers={"X-CSRF": me["csrf"]},
+                          json={"values": dict(about_link["values"], label="Our Story")})
+    assert renamed.status_code == 200, renamed.text
     client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
     about = client.get("/about.html").text
     assert ">Our Story</a>" in about
     assert 'href="mailto:hello@elitemarcom.com"' in about
     assert ">hello@elitemarcom.com</a>" in about
+    # and it is on a page that is not the one the list was read from
+    assert ">Our Story</a>" in client.get("/services.html").text
+    co.reset("header-nav", "test")
     # unknown fields are rejected
     bad = client.post("/api/admin/pages/_global",
                       json={"lang": "en", "values": {"nav.evil": "x"}},
@@ -2307,6 +2321,80 @@ def test_an_untouched_list_is_whatever_the_shipped_page_says():
         assert item["values"]["image"] in baked
 
 
+def test_every_page_of_the_site_is_managed_section_by_section():
+    """The screen is page-first: every page the site has, with the repeatable
+    parts it owns. Header and footer are their own groups because they are on
+    every page rather than belonging to one."""
+    from server import collections as co
+    from server import content
+
+    res = client.get("/api/admin/collections")
+    assert res.status_code == 200, res.text
+    groups = {g["page"]: g for g in res.json()["pages"]}
+
+    # the header and the footer come first and are marked as site-wide
+    assert list(groups)[:2] == ["_header", "_footer"]
+    assert groups["_header"]["label"] == "Header" and groups["_header"]["global"] is True
+    assert groups["_footer"]["label"] == "Footer" and groups["_footer"]["global"] is True
+
+    # every page a visitor can reach and that has repeatable parts is there
+    for page in ("index", "about", "services", "projects", "giveaways",
+                 "rental", "careers", "contact"):
+        assert page in groups, page
+        assert groups[page]["lists"], page
+        assert groups[page]["items"] > 0, page
+        assert groups[page]["global"] is False
+
+    # a group's lists are exactly the schemas that claim that page, and each
+    # one really is in that page's markup
+    for page, group in groups.items():
+        assert set(group["lists"]) == {n for n, sp in co.SCHEMAS.items()
+                                       if sp["page"] == page}
+        raw = content.page_source(co.source_page(group["lists"][0]))
+        for name in group["lists"]:
+            assert co._container(raw, name) is not None, (page, name)
+
+    # and every list the site defines belongs to exactly one group
+    assert sorted(n for g in groups.values() for n in g["lists"]) == sorted(co.SCHEMAS)
+    assert len(content.PAGES) - len(groups) + 2 == 3   # privacy, product, rental-item
+
+
+def test_the_menu_is_one_list_baked_into_every_page():
+    """Header and footer are not a page. They are read from one page's markup
+    and baked into all of them, and only the header marks where you are."""
+    import re
+
+    from server import collections as co
+    from server import content
+
+    in_menu = {i["values"]["link"] for i in co.items("header-nav")}
+    for page in content.PAGES:
+        out = co.apply_to_page(content.page_source(page), page)
+        # the same links on every page...
+        assert out.count('<li><a href="/about.html"') >= 2, page
+        # ...and where the page is in the menu, the bar and the slide-in panel
+        # both say you are here — nothing else does, and the privacy page,
+        # which is not a menu destination, is marked nowhere
+        current = re.findall(r'<li><a href="([^"]*)"[^>]*aria-current="page"', out)
+        want = co.page_href(page)
+        assert current == ([want, want] if want in in_menu else []), (page, current)
+        # a footer link never claims to be the current page: the header has
+        # already said so and a second announcement is noise
+        footer = out[out.index("<footer"):]
+        assert 'aria-current="page"' not in footer, page
+
+
+def test_a_page_group_only_ever_shows_that_page_s_lists():
+    """The failure this guards against is a list appearing under the wrong page,
+    which would have an admin editing the About values from the Contact screen."""
+    from server import collections as co
+
+    for group in co.page_groups():
+        for name in group["lists"]:
+            assert co.public_schema(name)["page"] == group["page"], name
+            assert co.public_schema(name)["pageLabel"] == group["label"], name
+
+
 def test_every_shipped_list_survives_a_round_trip_through_the_renderer():
     """render(parse(page)) has to reproduce the page field for field, or the
     first edit to any list would silently rewrite the ones beside it."""
@@ -2314,13 +2402,12 @@ def test_every_shipped_list_survives_a_round_trip_through_the_renderer():
     from server import content
 
     for name, spec in co.SCHEMAS.items():
-        raw = content.page_source(spec["page"])
-        out = co.apply_to_page(raw, spec["page"])
+        page = co.source_page(name)
+        out = co.apply_to_page(content.page_source(page), page)
         box = co._container(out, name)
         assert box is not None, name
         inner = out[box["contentStart"]:box["contentEnd"]]
-        after = [spec["parse"](n["html"])
-                 for n in co.elements_with_class(inner, spec["itemClass"])]
+        after = [spec["parse"](html) for html in co._shipped_spans(inner, spec)]
         assert after == [i["values"] for i in co.shipped_items(name)], name
         assert after, name
 
@@ -2444,7 +2531,9 @@ def test_every_managed_list_takes_the_same_operations():
             elif f["type"] == "select":
                 values[f["key"]] = f["options"][0]["value"]
             else:
-                values[f["key"]] = "Probe item"
+                # some fields are deliberately short (a one-letter marker,
+                # a step number), so the probe has to fit the field
+                values[f["key"]] = "Probe item"[:int(f.get("max") or 300)]
         added = client.post(f"/api/admin/collections/{name}/items",
                             headers=_csrf(), json={"values": values})
         assert added.status_code == 200, (name, added.text)
@@ -2456,14 +2545,12 @@ def test_every_managed_list_takes_the_same_operations():
         rows = client.get(f"/api/admin/collections/{name}").json()["items"]
         assert client.post(f"/api/admin/collections/{name}/order", headers=_csrf(),
                            json={"order": [r["id"] for r in reversed(rows)]}).status_code == 200
-        baked = client.get(f"/admin/preview/{spec['page']}").text
-        assert "Probe item" in baked                       # the copy is visible
-        for r in rows:
-            if r["id"] == item_id:
-                continue
+        page = co.source_page(name)
+        baked = client.get(f"/admin/preview/{page}").text
+        assert "Probe" in baked                            # the copy is visible
         assert client.post(f"/api/admin/collections/{name}/reset",
                            headers=_csrf()).status_code == 200, name
-        assert "Probe item" not in client.get(f"/admin/preview/{spec['page']}").text
+        assert "Probe" not in client.get(f"/admin/preview/{page}").text
 
 
 def test_a_hidden_item_leaves_the_page_but_not_the_panel():

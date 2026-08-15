@@ -78,15 +78,15 @@
       <img src="/assets/logo.svg" alt="Elite Marcom" width="140" height="47" class="logo-light-only">
     </a>
     <nav class="site-nav" aria-label="Primary">
-      <ul>
-        <li><a href="/" data-em="nav.home">Home</a></li>
-        <li><a href="/about.html" data-em="nav.about">About</a></li>
-        <li><a href="/services.html" aria-current="page" data-em="nav.services">Services</a></li>
-        <li><a href="/projects.html" data-em="nav.projects">Projects</a></li>
-        <li><a href="/giveaways.html" data-em="nav.gifts">Corporate Gifts</a></li>
-        <li><a href="/rental.html" data-em="nav.rental">Rental</a></li>
-        <li><a href="/careers.html" data-em="nav.careers">Careers</a></li>
-        <li><a href="/contact.html" data-em="nav.contact">Contact</a></li>
+      <ul data-em-list="header-nav">
+        <li><a href="/">Home</a></li>
+        <li><a href="/about.html">About</a></li>
+        <li><a href="/services.html" aria-current="page">Services</a></li>
+        <li><a href="/projects.html">Projects</a></li>
+        <li><a href="/giveaways.html">Corporate Gifts</a></li>
+        <li><a href="/rental.html">Rental</a></li>
+        <li><a href="/careers.html">Careers</a></li>
+        <li><a href="/contact.html">Contact</a></li>
       </ul>
     </nav>
     <div class="site-header__side">
@@ -112,7 +112,7 @@
     </button>
   </div>
   <nav aria-label="Menu">
-    <ol>
+    <ol data-em-list="header-menu">
       <li><a href="/"><span class="num">01</span>Home</a></li>
       <li><a href="/about.html"><span class="num">02</span>About Us</a></li>
       <li><a href="/services.html" aria-current="page"><span class="num">03</span>Services</a></li>
@@ -143,7 +143,7 @@
             <span class="mask-clip"><span class="reveal accent-i" data-reveal="mask-title" data-reveal-delay="120" data-em="hero.title2">One standard.</span></span>
           </h1>
           <p class="lede reveal" data-reveal="fade-up" data-reveal-delay="220" data-em="hero.lead">Ten capabilities, one accountable team. Appoint us for a single service or connect the complete journey from first idea to final handover.</p>
-          <dl class="stat-row reveal" data-reveal="fade-up" data-reveal-delay="300" style="margin-top:34px;">
+          <dl class="stat-row reveal" data-reveal="fade-up" data-reveal-delay="300" style="margin-top:34px;" data-em-list="services-stats">
             <div class="stat"><dt class="stat__num">10</dt><dd class="stat__label">Core services</dd></div>
             <div class="stat"><dt class="stat__num">360°</dt><dd class="stat__label">End-to-end delivery</dd></div>
             <div class="stat"><dt class="stat__num">KSA + UAE</dt><dd class="stat__label">Regional presence</dd></div>
@@ -158,7 +158,7 @@
     </div>
     <div class="marquee" data-speed="60" aria-label="Services ticker" style="margin-top:56px;">
       <div class="marquee__track">
-        <div class="marquee__group">
+        <div class="marquee__group" data-em-list="services-marquee">
           <span class="marquee__item">Exhibition Stands</span>
           <span class="marquee__item">Fit-Out / Interior</span>
           <span class="marquee__item">Corporate Events</span>
@@ -179,7 +179,7 @@
     <div class="container">
       <p class="section-marker reveal" data-reveal="fade-in">Connected delivery model</p>
       <h2 id="model-h" class="reveal" data-reveal="fade-up" style="max-width:22ch;">Choose one capability. Or connect the <span class="accent-i">complete journey</span>.</h2>
-      <div class="model-grid">
+      <div class="model-grid" data-em-list="services-models">
         <article class="model-card reveal" data-reveal="fade-up">
           <span class="model-card__num">A</span>
           <h3>Think</h3>
@@ -464,7 +464,7 @@
       <h2 id="sprocess-h" class="reveal" data-reveal="fade-up">Discover → Design → Produce → <span class="accent-i">Deliver</span></h2>
       <div class="process reveal" data-reveal="fade-in" data-reveal-delay="100">
         <div class="process__line" aria-hidden="true"></div>
-        <ol class="process__grid" style="list-style:none;margin:0;padding:0;">
+        <ol class="process__grid" style="list-style:none;margin:0;padding:0;" data-em-list="services-process">
           <li class="process__step"><span class="process__dot" aria-hidden="true"></span><span class="process__num">01</span><h3>Discover</h3><p>Objective, audience, environment, timing, constraints.</p></li>
           <li class="process__step"><span class="process__dot" aria-hidden="true"></span><span class="process__num">02</span><h3>Design</h3><p>Creative and spatial direction with a route to reality.</p></li>
           <li class="process__step"><span class="process__dot" aria-hidden="true"></span><span class="process__num">03</span><h3>Produce</h3><p>Fabrication, content, equipment, people, logistics.</p></li>
@@ -489,7 +489,7 @@
       </div>
       <nav aria-label="Footer — pages">
         <h3>Pages</h3>
-        <ul>
+        <ul data-em-list="footer-pages">
           <li><a href="/">Home</a></li>
           <li><a href="/about.html">About Us</a></li>
           <li><a href="/services.html">Services</a></li>
@@ -498,7 +498,7 @@
       </nav>
       <nav aria-label="Footer — more">
         <h3>More</h3>
-        <ul>
+        <ul data-em-list="footer-more">
           <li><a href="/giveaways.html">Corporate Gifts</a></li>
           <li><a href="/rental.html">Items for Rental</a></li>
           <li><a href="/careers.html">Careers</a></li>

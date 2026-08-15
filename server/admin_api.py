@@ -1225,7 +1225,13 @@ async def admin_pages(request: Request):
     coll_ts = collections_mod.last_edit_ts()
     if coll_ts:
         for spec in collections_mod.SCHEMAS.values():
-            coll_edit[spec["page"]] = coll_ts
+            if spec["page"] in collections_mod.GLOBAL_PAGES:
+                # the header and the footer are on every page, so editing one
+                # leaves every page waiting to be published
+                for page in content.all_pages():
+                    coll_edit[page] = coll_ts
+            else:
+                coll_edit[spec["page"]] = coll_ts
     pages = []
     for page, cfg in content.all_pages().items():
         edited = max(content.last_edit_ts(page), design.last_design_edit(page),
@@ -1501,7 +1507,8 @@ async def admin_collections(request: Request):
     require_perm(request, "content.edit")
     from . import collections as collections_mod
 
-    return {"collections": collections_mod.summary()}
+    return {"collections": collections_mod.summary(),
+            "pages": collections_mod.page_groups()}
 
 
 @router.get("/api/admin/collections/{name}")

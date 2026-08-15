@@ -1629,7 +1629,11 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   text-decoration: none; color: var(--text); transition: border-color 0.18s ease, transform 0.18s ease;
 }
 .coll-card:hover { border-color: var(--orange-2); transform: translateY(-2px); }
-.coll-card__name { font-weight: 700; font-size: 0.92rem; }
+.coll-card__name { font-weight: 700; font-size: 0.92rem; display: flex; align-items: center;
+  gap: 8px; flex-wrap: wrap; }
+/* a page tile is one step up the hierarchy from a list tile, so it says so */
+.coll-card--page .coll-card__name { font-size: 1rem; }
+.coll-card--page { background: var(--adm-sheen), var(--adm-card); }
 .coll-card__hint { font-size: 0.84rem; color: var(--text-muted); }
 /* the card is a flex column: pin the count line to the floor so a title
    that wraps to two lines does not push its footer below its neighbours */
@@ -1637,7 +1641,7 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 .coll-hid { color: var(--adm-accent); }
 /* whether an edit will stick was the least visible thing on the card */
 .coll-state {
-  text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.66rem; font-weight: 700;
+  text-transform: uppercase; white-space: nowrap; letter-spacing: 0.08em; font-size: 0.66rem; font-weight: 700;
   border-radius: 999px; padding: 2px 8px; background: var(--adm-inset); color: var(--text-soft);
 }
 .coll-state--managed { color: var(--adm-accent); background: rgba(237, 108, 38, 0.12); }

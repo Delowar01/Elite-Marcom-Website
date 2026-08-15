@@ -1101,8 +1101,14 @@
                     : '<button class="btn btn--ghost btn--small" data-rollback="' + h.id + '">Restore</button>') + "</td></tr>";
               }).join("") + "</tbody></table></div>" : "") + "</div>" +
           '<div class="admin-panel"><h2>Header &amp; Footer</h2>' +
-          '<p class="admin-inline-note" style="margin-bottom:10px;">Menu labels, header button, footer text and contact details — applied to every page.</p>' +
-          '<a class="btn btn--ghost btn--small" href="#pages/_global">Edit (' + esc(d.globalRegions) + " fields)</a></div>" +
+          '<p class="admin-inline-note" style="margin-bottom:10px;">The header button, the footer ' +
+          "text and the contact details — applied to every page. The menus themselves are lists: " +
+          'add, rename, reorder or remove a link under <a href="#sections/_header">Sections &amp; ' +
+          'items</a>.</p>' +
+          '<div class="admin-actions" style="margin-top:0;">' +
+          '<a class="btn btn--ghost btn--small" href="#pages/_global">Edit (' + esc(d.globalRegions) + " fields)</a>" +
+          '<a class="btn btn--ghost btn--small" href="#sections/_header">Header menus</a>' +
+          '<a class="btn btn--ghost btn--small" href="#sections/_footer">Footer links</a></div></div>' +
           '<div class="admin-panel"><h2>Pages</h2>' +
           '<div class="admin-actions" style="margin-bottom:14px;">' +
           '<button class="btn btn--primary btn--small" id="page-new">+ New page</button></div>' +
@@ -4624,41 +4630,105 @@
      not a deployment. */
 
   views.sections = function (param) {
-    if (param) return sectionList(param);
+    /* three levels, one screen: the site's pages, one page's lists, one list's
+       items. #sections/<page>/<list> — an old #sections/<list> link still
+       works, it is redirected to the page the list belongs to. */
+    var parts = (param || "").split("/");
+    if (parts[1]) return sectionList(parts[1], parts[0]);
+    if (parts[0]) return pageSections(parts[0]);
+    return sectionIndex();
+  };
+
+  function collCard(c) {
+    return '<a class="coll-card" href="#sections/' + esc(c.page) + "/" + esc(c.id) + '">' +
+      '<span class="coll-card__name">' + esc(c.label) + "</span>" +
+      '<span class="coll-card__hint">' + esc(c.hint || "") + "</span>" +
+      '<span class="coll-card__meta">' + esc(c.count) + " " +
+      esc(c.itemLabel + (c.count === 1 ? "" : "s")) +
+      (c.hidden ? ' · <b class="coll-hid">' + esc(c.hidden) + " hidden</b>" : "") +
+      ' <span class="coll-state' + (c.managed ? " coll-state--managed" : "") + '">' +
+      (c.managed ? "edited here" : "as shipped") + "</span></span></a>";
+  }
+
+  var collCache = null;
+  function withCollections(then) {
+    if (collCache) return then(collCache);
     api("/api/admin/collections").then(function (r) {
       if (!r.ok) return apiErr(r);
-      var groups = {}, titles = {};
-      (r.data.collections || []).forEach(function (c) {
-        (groups[c.page] = groups[c.page] || []).push(c);
-        titles[c.page] = c.pageLabel || c.page;
-      });
-      var pages = Object.keys(groups);
+      collCache = r.data;
+      then(collCache);
+    });
+  }
+
+  /* ---- level 1: every page of the site ---- */
+  function sectionIndex() {
+    collCache = null;
+    withCollections(function (d) {
+      var groups = d.pages || [];
       main.innerHTML =
         '<h1 class="admin-h1">Sections &amp; items</h1>' +
-        '<p class="admin-sub">The repeating parts of a page — service cards, the list on the home ' +
-        'page, values, offices. Add, copy, reorder, hide or delete them here; changes go live at the ' +
-        'next <b>Publish site</b>. To add, duplicate or remove a whole <b>section</b>, use the ' +
-        '<a href="#editor">Visual editor</a>.</p>' +
-        pages.map(function (page) {
-          return '<div class="admin-panel"><h2>' + esc(titles[page]) + '</h2><div class="coll-grid">' +
-            groups[page].map(function (c) {
-              return '<a class="coll-card" href="#sections/' + esc(c.id) + '">' +
-                '<span class="coll-card__name">' + esc(c.label) + "</span>" +
-                '<span class="coll-card__hint">' + esc(c.hint || "") + "</span>" +
-                '<span class="coll-card__meta">' + esc(c.count) + " " +
-                esc(c.itemLabel + (c.count === 1 ? "" : "s")) +
-                (c.hidden ? ' · <b class="coll-hid">' + esc(c.hidden) + " hidden</b>" : "") +
-                ' <span class="coll-state' + (c.managed ? " coll-state--managed" : "") + '">' +
-                (c.managed ? "edited here" : "as shipped") + "</span></span></a>";
-            }).join("") + "</div></div>";
-        }).join("") +
+        '<p class="admin-sub">Every page of the website, and the repeating parts each one is ' +
+        'made of. Pick a page to add, edit, copy, reorder, hide or delete what is inside it. ' +
+        'Changes go live at the next <b>Publish site</b>.</p>' +
+        '<div class="admin-panel"><h2>Pages</h2>' +
+        '<p class="admin-inline-note" style="margin-bottom:14px;">The header and the footer are ' +
+        'on every page, so they are managed once here rather than page by page.</p>' +
+        '<div class="coll-grid">' + groups.map(function (g) {
+          return '<a class="coll-card coll-card--page" href="#sections/' + esc(g.page) + '">' +
+            '<span class="coll-card__name">' + esc(g.label) +
+            (g["global"] ? ' <span class="coll-state">every page</span>' : "") + "</span>" +
+            '<span class="coll-card__hint">' + esc(g.lists.length) +
+            (g.lists.length === 1 ? " list" : " lists") + "</span>" +
+            '<span class="coll-card__meta">' + esc(g.items) +
+            (g.items === 1 ? " item" : " items") +
+            (g.hidden ? ' · <b class="coll-hid">' + esc(g.hidden) + " hidden</b>" : "") +
+            ' <span class="coll-state' + (g.managed ? " coll-state--managed" : "") + '">' +
+            (g.managed ? "edited here" : "as shipped") + "</span></span></a>";
+        }).join("") + "</div></div>" +
         '<div class="admin-panel"><h2>Whole sections</h2><p class="admin-inline-note">' +
         'Adding a new section, duplicating one, changing their order, hiding one or deleting it ' +
         'all happen in the <a href="#editor">Visual editor</a> — click a section on the page and ' +
         "use the <b>Sections</b> tab. Any text, image, button or link that is not part of a list " +
         "above can be edited there by clicking it.</p></div>";
     });
-  };
+  }
+
+  /* ---- level 2: one page's lists ---- */
+  function pageSections(page) {
+    withCollections(function (d) {
+      var group = (d.pages || []).filter(function (g) { return g.page === page; })[0];
+      if (!group) {
+        // an old #sections/<list> link, or a page with nothing managed on it
+        var hit = (d.collections || []).filter(function (c) { return c.id === page; })[0];
+        location.hash = hit ? "#sections/" + hit.page + "/" + hit.id : "#sections";
+        return;
+      }
+      var lists = (d.collections || []).filter(function (c) { return c.page === page; });
+      var isGlobal = !!group["global"];
+      main.innerHTML =
+        '<button class="jz-back" id="coll-back">&larr; All pages</button>' +
+        '<h1 class="admin-h1">' + esc(group.label) + "</h1>" +
+        '<p class="admin-sub">' +
+        (isGlobal
+          ? "On every page of the site — an edit here reaches all of them."
+          : "Everything repeatable on this page. ") +
+        " Changes go live at the next <b>Publish site</b>.</p>" +
+        '<div class="admin-panel"><div class="coll-bar">' +
+        (isGlobal ? ""
+          : '<a class="btn btn--ghost btn--small" href="#editor/' + esc(page) +
+            '">Open this page in the Visual editor</a>' +
+            '<a class="btn btn--ghost btn--small" href="/admin/preview/' + esc(page) +
+            '" target="_blank" rel="noopener">Preview the page</a>') +
+        "</div>" +
+        (lists.length
+          ? '<div class="coll-grid">' + lists.map(collCard).join("") + "</div>"
+          : emptyState("Nothing repeatable on this page yet",
+              "Text and pictures on this page are edited in the Visual editor.")) +
+        "</div>";
+      var back = document.getElementById("coll-back");
+      if (back) back.addEventListener("click", function () { location.hash = "#sections"; });
+    });
+  }
 
   function collField(f, value, idx) {
     var id = "cf-" + f.key;
@@ -4692,22 +4762,26 @@
       f.type === "image" ? " form-field--full" : "") + '">' + label + body + "</div>";
   }
 
-  function sectionList(name) {
+  function sectionList(name, fromPage) {
     api("/api/admin/collections/" + encodeURIComponent(name)).then(function (r) {
       if (!r.ok) { apiErr(r); location.hash = "#sections"; return; }
       var spec = r.data.collection, rows = r.data.items || [], managed = r.data.managed;
       var titleKey = spec.titleField, imgKey = spec.imageField;
+      var page = fromPage || spec.page;
 
       main.innerHTML =
-        '<button class="jz-back" id="coll-back">&larr; All sections &amp; items</button>' +
+        '<button class="jz-back" id="coll-back">&larr; ' + esc(spec.pageLabel || "All pages") +
+        "</button>" +
         '<h1 class="admin-h1">' + esc(spec.label) + "</h1>" +
         '<p class="admin-sub">' + esc(spec.hint || "") +
+        (spec["global"] ? " This one is on every page of the site." : "") +
         " Changes go live at the next <b>Publish site</b>.</p>" +
         '<div class="admin-panel"><div class="coll-bar">' +
           '<button class="btn btn--primary btn--small" id="coll-add">Add ' +
             esc(spec.itemLabel) + "</button>" +
-          '<a class="btn btn--ghost btn--small" href="#editor/' + esc(spec.page) +
-            '">Open the page in the Visual editor</a>' +
+          (spec["global"] ? ""
+            : '<a class="btn btn--ghost btn--small" href="#editor/' + esc(spec.page) +
+              '">Open the page in the Visual editor</a>') +
           (managed ? '<button class="btn btn--ghost btn--small" id="coll-reset">' +
             "Restore the shipped list</button>" : "") +
         "</div>" +
@@ -4753,7 +4827,7 @@
           '<div class="coll-bar"><button class="btn btn--primary btn--small" type="submit">Add to the list</button>' +
           '<button class="btn btn--ghost btn--small" type="button" id="coll-new-cancel">Cancel</button></div></form>';
 
-      function reload() { sectionList(name); }
+      function reload() { collCache = null; sectionList(name, page); }
       function collect(scope) {
         var values = {};
         scope.querySelectorAll("[data-key]").forEach(function (el) {
@@ -4776,7 +4850,8 @@
       }
 
       document.getElementById("coll-back").addEventListener("click", function () {
-        location.hash = "#sections";
+        collCache = null;
+        location.hash = "#sections/" + page;
       });
       var newForm = document.getElementById("coll-new");
       document.getElementById("coll-add").addEventListener("click", function () {
