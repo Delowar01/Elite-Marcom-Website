@@ -423,10 +423,16 @@ def _escaped(value: str) -> str:
 
 
 def bake_page(page: str, lang: str = "en") -> str:
+    from . import collections as collections_mod
     from . import design
 
     raw = page_source(page)
-    raw = design.apply_to_page(raw, page)
+    # repeatable lists sit between the section layer and the element overrides:
+    # a section the editor duplicated brings its container with it, one it
+    # removed takes its list away, and an override on a card inside a list is
+    # applied after the list is built rather than being rebuilt away
+    raw = design.apply_to_page(raw, page,
+                               between=lambda r: collections_mod.apply_to_page(r, page))
     raw = _inject_nav(raw, page)
     raw = _inject_social(raw)
     values = get_values("_global", lang) | get_values(page, lang)

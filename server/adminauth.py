@@ -162,6 +162,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         created_at INTEGER NOT NULL,
         created_by TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS collection_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        collection TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        hidden INTEGER NOT NULL DEFAULT 0,
+        data TEXT NOT NULL DEFAULT '{}',
+        updated_at INTEGER NOT NULL,
+        updated_by TEXT NOT NULL DEFAULT '',
+        UNIQUE(collection, item_id)
+    );
     CREATE TABLE IF NOT EXISTS media (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         file TEXT NOT NULL UNIQUE,

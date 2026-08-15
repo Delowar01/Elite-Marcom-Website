@@ -3827,6 +3827,247 @@
     });
   }
 
+  /* ---------------- sections & items: the repeatable content of a page ----------------
+     Whole sections are the Visual editor's job — add, duplicate, reorder, hide,
+     delete. This screen is the items INSIDE one: the service cards, the home
+     rows, the values, the offices. Adding an eleventh service is a form here,
+     not a deployment. */
+
+  views.sections = function (param) {
+    if (param) return sectionList(param);
+    api("/api/admin/collections").then(function (r) {
+      if (!r.ok) return apiErr(r);
+      var groups = {}, titles = {};
+      (r.data.collections || []).forEach(function (c) {
+        (groups[c.page] = groups[c.page] || []).push(c);
+        titles[c.page] = c.pageLabel || c.page;
+      });
+      var pages = Object.keys(groups);
+      main.innerHTML =
+        '<h1 class="admin-h1">Sections &amp; items</h1>' +
+        '<p class="admin-sub">The repeating parts of a page — service cards, the list on the home ' +
+        'page, values, offices. Add, copy, reorder, hide or delete them here; changes go live at the ' +
+        'next <b>Publish site</b>. To add, duplicate or remove a whole <b>section</b>, use the ' +
+        '<a href="#editor">Visual editor</a>.</p>' +
+        pages.map(function (page) {
+          return '<div class="admin-panel"><h2>' + esc(titles[page]) + '</h2><div class="coll-grid">' +
+            groups[page].map(function (c) {
+              return '<a class="coll-card" href="#sections/' + esc(c.id) + '">' +
+                '<span class="coll-card__name">' + esc(c.label) + "</span>" +
+                '<span class="coll-card__hint">' + esc(c.hint || "") + "</span>" +
+                '<span class="coll-card__meta">' + esc(c.count) + " " +
+                esc(c.itemLabel + (c.count === 1 ? "" : "s")) +
+                (c.hidden ? ' · <b class="coll-hid">' + esc(c.hidden) + " hidden</b>" : "") +
+                ' · <span class="coll-state">' + (c.managed ? "edited here" : "as shipped") +
+                "</span></span></a>";
+            }).join("") + "</div></div>";
+        }).join("") +
+        '<div class="admin-panel"><h2>Whole sections</h2><p class="admin-inline-note">' +
+        'Adding a new section, duplicating one, changing their order, hiding one or deleting it ' +
+        'all happen in the <a href="#editor">Visual editor</a> — click a section on the page and ' +
+        "use the <b>Sections</b> tab. Any text, image, button or link that is not part of a list " +
+        "above can be edited there by clicking it.</p></div>";
+    });
+  };
+
+  function collField(f, value, idx) {
+    var id = "cf-" + f.key;
+    var label = '<label for="' + id + '">' + esc(f.label) +
+      (f.required ? ' <span class="req">required</span>' : "") + "</label>" +
+      (f.hint ? '<span class="admin-inline-note">' + esc(f.hint) + "</span>" : "");
+    var body;
+    if (f.type === "textarea" || f.type === "lines") {
+      body = '<textarea id="' + id + '" data-key="' + esc(f.key) + '" rows="' +
+        (f.type === "lines" ? 6 : 3) + '" maxlength="' + (f.max || 400) + '">' +
+        esc(value || "") + "</textarea>";
+    } else if (f.type === "select") {
+      body = '<select id="' + id + '" data-key="' + esc(f.key) + '">' +
+        (f.options || []).map(function (o) {
+          return '<option value="' + esc(o.value) + '"' +
+            (String(value) === o.value ? " selected" : "") + ">" + esc(o.label) + "</option>";
+        }).join("") + "</select>";
+    } else if (f.type === "image") {
+      body = '<div class="coll-img"><input id="' + id + '" data-key="' + esc(f.key) +
+        '" type="text" value="' + esc(value || "") + '" maxlength="' + (f.max || 240) +
+        '" placeholder="/assets/… or /media/…">' +
+        '<button type="button" class="btn btn--ghost btn--small" data-pick="' + esc(f.key) +
+        '">Choose image</button></div>' +
+        '<div class="coll-img__prev">' + (value
+          ? '<img src="' + esc(value) + '" alt="" loading="lazy">' : "") + "</div>";
+    } else {
+      body = '<input id="' + id + '" data-key="' + esc(f.key) + '" type="text" value="' +
+        esc(value || "") + '" maxlength="' + (f.max || 300) + '">';
+    }
+    return '<div class="form-field' + (f.type === "textarea" || f.type === "lines" ||
+      f.type === "image" ? " form-field--full" : "") + '">' + label + body + "</div>";
+  }
+
+  function sectionList(name) {
+    api("/api/admin/collections/" + encodeURIComponent(name)).then(function (r) {
+      if (!r.ok) { apiErr(r); location.hash = "#sections"; return; }
+      var spec = r.data.collection, rows = r.data.items || [], managed = r.data.managed;
+      var titleKey = spec.titleField, imgKey = spec.imageField;
+
+      main.innerHTML =
+        '<button class="jz-back" id="coll-back">&larr; All sections &amp; items</button>' +
+        '<h1 class="admin-h1">' + esc(spec.label) + "</h1>" +
+        '<p class="admin-sub">' + esc(spec.hint || "") +
+        " Changes go live at the next <b>Publish site</b>.</p>" +
+        '<div class="admin-panel"><div class="coll-bar">' +
+          '<button class="btn btn--primary btn--small" id="coll-add">Add ' +
+            esc(spec.itemLabel) + "</button>" +
+          '<a class="btn btn--ghost btn--small" href="#editor/' + esc(spec.page) +
+            '">Open the page in the Visual editor</a>' +
+          (managed ? '<button class="btn btn--ghost btn--small" id="coll-reset">' +
+            "Restore the shipped list</button>" : "") +
+        "</div>" +
+        (rows.length
+          ? '<ol class="coll-list">' + rows.map(function (it, i) {
+              var v = it.values || {};
+              return '<li class="coll-item' + (it.hidden ? " is-hidden" : "") +
+                '" data-item="' + esc(it.id) + '">' +
+                '<div class="coll-item__head">' +
+                  '<span class="coll-item__n">' + (i + 1) + "</span>" +
+                  (imgKey ? '<span class="coll-item__thumb">' + (v[imgKey]
+                    ? '<img src="' + esc(v[imgKey]) + '" alt="" loading="lazy">' : "") + "</span>" : "") +
+                  '<span class="coll-item__name">' + esc(v[titleKey] || "(untitled)") +
+                    (it.hidden ? ' <span class="status-pill status-pill--warn">Hidden</span>' : "") +
+                  "</span>" +
+                  '<span class="coll-item__acts">' +
+                    '<button class="btn btn--ghost btn--small" data-move="-1" aria-label="Move up"' +
+                      (i === 0 ? " disabled" : "") + ">&uarr;</button>" +
+                    '<button class="btn btn--ghost btn--small" data-move="1" aria-label="Move down"' +
+                      (i === rows.length - 1 ? " disabled" : "") + ">&darr;</button>" +
+                    '<button class="btn btn--ghost btn--small" data-edit>Edit</button>' +
+                    '<button class="btn btn--ghost btn--small" data-dup>Duplicate</button>' +
+                    '<button class="btn btn--ghost btn--small" data-hide>' +
+                      (it.hidden ? "Show" : "Hide") + "</button>" +
+                    '<button class="btn btn--ghost btn--small" data-del>Delete</button>' +
+                  "</span></div>" +
+                '<form class="coll-item__form" hidden>' +
+                  '<div class="form-grid">' +
+                    spec.fields.map(function (f) { return collField(f, v[f.key], i); }).join("") +
+                  "</div>" +
+                  '<div class="coll-bar"><button class="btn btn--primary btn--small" type="submit">' +
+                    "Save</button>" +
+                    '<button class="btn btn--ghost btn--small" type="button" data-cancel>Cancel</button>' +
+                  "</div></form></li>";
+            }).join("") + "</ol>"
+          : '<p class="admin-inline-note">Nothing in this list yet — add the first ' +
+            esc(spec.itemLabel) + ".</p>") +
+        "</div>" +
+        '<form class="admin-panel" id="coll-new" hidden><h2>New ' + esc(spec.itemLabel) + "</h2>" +
+          '<div class="form-grid">' +
+            spec.fields.map(function (f) { return collField(f, "", 0); }).join("") +
+          "</div>" +
+          '<div class="coll-bar"><button class="btn btn--primary btn--small" type="submit">Add to the list</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" id="coll-new-cancel">Cancel</button></div></form>';
+
+      function reload() { sectionList(name); }
+      function collect(scope) {
+        var values = {};
+        scope.querySelectorAll("[data-key]").forEach(function (el) {
+          values[el.getAttribute("data-key")] = el.value;
+        });
+        return values;
+      }
+      function wirePickers(scope) {
+        scope.querySelectorAll("[data-pick]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            mediaPicker(function (url) {
+              var input = scope.querySelector('[data-key="' + btn.getAttribute("data-pick") + '"]');
+              if (!input) return;
+              input.value = url;
+              var prev = input.closest(".form-field").querySelector(".coll-img__prev");
+              if (prev) prev.innerHTML = '<img src="' + esc(url) + '" alt="">';
+            });
+          });
+        });
+      }
+
+      document.getElementById("coll-back").addEventListener("click", function () {
+        location.hash = "#sections";
+      });
+      var newForm = document.getElementById("coll-new");
+      document.getElementById("coll-add").addEventListener("click", function () {
+        newForm.hidden = false;
+        newForm.scrollIntoView({ behavior: "smooth", block: "center" });
+        var first = newForm.querySelector("input, textarea");
+        if (first) first.focus();
+      });
+      document.getElementById("coll-new-cancel").addEventListener("click", function () {
+        newForm.hidden = true;
+      });
+      newForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        api("/api/admin/collections/" + encodeURIComponent(name) + "/items",
+            { values: collect(newForm) }).then(function (r2) {
+          r2.ok ? (toast("Added — publish the site to put it live."), reload()) : apiErr(r2);
+        });
+      });
+      wirePickers(newForm);
+
+      var reset = document.getElementById("coll-reset");
+      if (reset) reset.addEventListener("click", function () {
+        if (!confirm("Discard your version of this list and restore the one that ships with the site?")) return;
+        api("/api/admin/collections/" + encodeURIComponent(name) + "/reset", {}).then(function (r2) {
+          r2.ok ? (toast("Shipped list restored."), reload()) : apiErr(r2);
+        });
+      });
+
+      main.querySelectorAll(".coll-item").forEach(function (li, index) {
+        var id = li.getAttribute("data-item");
+        var form = li.querySelector(".coll-item__form");
+        var base = "/api/admin/collections/" + encodeURIComponent(name);
+        li.querySelector("[data-edit]").addEventListener("click", function () {
+          form.hidden = !form.hidden;
+          if (!form.hidden) {
+            var first = form.querySelector("input, textarea, select");
+            if (first) first.focus();
+          }
+        });
+        li.querySelector("[data-cancel]").addEventListener("click", function () { form.hidden = true; });
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          api(base + "/items/" + encodeURIComponent(id), { values: collect(form) })
+            .then(function (r2) {
+              r2.ok ? (toast("Saved — publish the site to put it live."), reload()) : apiErr(r2);
+            });
+        });
+        wirePickers(form);
+        li.querySelector("[data-dup]").addEventListener("click", function () {
+          api(base + "/duplicate/" + encodeURIComponent(id), {}).then(function (r2) {
+            r2.ok ? (toast("Copied — edit the copy below the original."), reload()) : apiErr(r2);
+          });
+        });
+        li.querySelector("[data-hide]").addEventListener("click", function () {
+          api(base + "/hidden/" + encodeURIComponent(id),
+              { hidden: !li.classList.contains("is-hidden") }).then(function (r2) {
+            r2.ok ? reload() : apiErr(r2);
+          });
+        });
+        li.querySelector("[data-del]").addEventListener("click", function () {
+          if (!confirm("Delete this item from the page?")) return;
+          api(base + "/delete/" + encodeURIComponent(id), {}).then(function (r2) {
+            r2.ok ? (toast("Deleted."), reload()) : apiErr(r2);
+          });
+        });
+        li.querySelectorAll("[data-move]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var step = parseInt(btn.getAttribute("data-move"), 10);
+            var order = rows.map(function (x) { return x.id; });
+            var to = index + step;
+            if (to < 0 || to >= order.length) return;
+            order.splice(to, 0, order.splice(index, 1)[0]);
+            api(base + "/order", { order: order }).then(function (r2) {
+              r2.ok ? reload() : apiErr(r2);
+            });
+          });
+        });
+      });
+    });
+  }
+
   /* ---------------- one item, on its own page ---------------- */
 
   function jzDetail(market, productId) {

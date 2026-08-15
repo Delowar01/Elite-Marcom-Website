@@ -642,11 +642,20 @@ def build_css(elements: dict) -> str:
     return css.strip()
 
 
-def apply_to_page(raw: str, page: str) -> str:
+def apply_to_page(raw: str, page: str, between=None) -> str:
     """Full design layer for one page: sections → attributes → style block.
-    Sections are stamped even with no overrides so editor paths stay stable."""
+    Sections are stamped even with no overrides so editor paths stay stable.
+
+    ``between`` runs after the section layer and before the element overrides.
+    Repeatable lists (server/collections.py) go there: they rebuild whole
+    containers, so running them afterwards would wipe a text or style override
+    an admin had put on a card inside one. Sections first, then the items
+    inside them, then the per-element edits on top of both.
+    """
     merged = merge_docs(get_doc("_global"), get_doc(page))
     raw = _apply_sections(raw, merged.get("sections") or {})
+    if between is not None:
+        raw = between(raw)
     if merged["elements"]:
         raw = _apply_text_ops(raw, merged["elements"])
         raw = _apply_attr_ops(raw, merged["elements"])

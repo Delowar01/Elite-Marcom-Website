@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import quote
 import time
 
@@ -1414,7 +1415,7 @@ def test_untagged_element_text_is_editable_by_path():
                        headers={"X-CSRF": me["csrf"]})
     assert evil.status_code == 200
     baked = client.get("/admin/preview/about").text
-    assert "<script>" not in baked.split("<dl class=\"values-grid\">")[1][:400]
+    assert "<script>" not in baked.split('class="values-grid"')[1][:400]
     assert "onerror" not in baked
     client.post("/api/admin/design/about", json={"doc": {"elements": {}}},
                 headers={"X-CSRF": me["csrf"]})
@@ -2280,3 +2281,317 @@ def test_email_test_send_reports_failure_without_provider_detail(monkeypatch):
     assert ok.status_code == 200 and ok.json()["ok"] is True
     actions = {e["action"] for e in aa.audit_list(limit=10)}
     assert "email.test_sent" in actions and "email.test_failed" in actions
+
+
+# ---------------- repeatable content: the items inside a section ----------------
+# Sections are the design layer's business. This is the other half: adding an
+# eleventh service must be a form in the panel, not a deployment.
+
+def _csrf():
+    return {"X-CSRF": client.get("/api/admin/me").json()["csrf"]}
+
+
+def test_an_untouched_list_is_whatever_the_shipped_page_says():
+    """No rows in the database, no divergence: the list follows the git HTML
+    until somebody edits it, and baking reproduces the page it came from."""
+    from server import collections as co
+
+    assert not co.is_managed("services-spaces")
+    shipped = co.items("services-spaces")
+    assert [i["values"]["name"] for i in shipped] == ["Exhibition stands", "Fit-out & interiors"]
+
+    baked = client.get("/admin/preview/services").text
+    for item in shipped:
+        import html as _html
+        assert ">" + _html.escape(item["values"]["name"]) + "<" in baked
+        assert item["values"]["image"] in baked
+
+
+def test_every_shipped_list_survives_a_round_trip_through_the_renderer():
+    """render(parse(page)) has to reproduce the page field for field, or the
+    first edit to any list would silently rewrite the ones beside it."""
+    from server import collections as co
+    from server import content
+
+    for name, spec in co.SCHEMAS.items():
+        raw = content.page_source(spec["page"])
+        out = co.apply_to_page(raw, spec["page"])
+        box = co._container(out, name)
+        assert box is not None, name
+        inner = out[box["contentStart"]:box["contentEnd"]]
+        after = [spec["parse"](n["html"])
+                 for n in co.elements_with_class(inner, spec["itemClass"])]
+        assert after == [i["values"] for i in co.shipped_items(name)], name
+        assert after, name
+
+
+def test_add_a_service_from_the_panel_and_it_reaches_the_page():
+    """The whole point: a new service with its name, description and image,
+    with no developer involved."""
+    res = client.post("/api/admin/collections/services-spaces/items", headers=_csrf(), json={
+        "values": {"name": "Wayfinding systems", "eyebrow": "Spaces & fit-out",
+                   "description": "Signage and orientation for venues and campuses.",
+                   "image": "/assets/services/led-display.webp",
+                   "imageAlt": "Illuminated wayfinding panel",
+                   "specTitle": "What it includes",
+                   "includes": "Survey and route planning\nSign family design\nProduction and install",
+                   "linkLabel": "Talk to us about this", "link": "/contact.html",
+                   "anchor": "wayfinding"}})
+    assert res.status_code == 200, res.text
+    new_id = res.json()["item"]["id"]
+
+    listed = client.get("/api/admin/collections/services-spaces").json()
+    assert [i["values"]["name"] for i in listed["items"]] == [
+        "Exhibition stands", "Fit-out & interiors", "Wayfinding systems"]
+    assert listed["managed"] is True     # the first edit takes the list over
+
+    baked = client.get("/admin/preview/services").text
+    assert "Wayfinding systems" in baked
+    assert 'id="wayfinding"' in baked
+    assert "Signage and orientation for venues and campuses." in baked
+    assert "<li>Survey and route planning</li>" in baked
+    # the two shipped cards are still there, unchanged
+    assert "Exhibition stands" in baked and "Fit-out &amp; interiors" in baked
+    return new_id
+
+
+def test_duplicate_edit_reorder_hide_and_delete_one_item():
+    """The complete workflow, in the order somebody would actually do it."""
+    items = client.get("/api/admin/collections/services-spaces").json()["items"]
+    target = [i for i in items if i["values"]["name"] == "Wayfinding systems"][0]
+
+    # --- duplicate: the copy lands directly below the original
+    dup = client.post(f"/api/admin/collections/services-spaces/duplicate/{target['id']}",
+                      headers=_csrf())
+    assert dup.status_code == 200, dup.text
+    copy_id = dup.json()["item"]["id"]
+    names = [i["values"]["name"] for i in
+             client.get("/api/admin/collections/services-spaces").json()["items"]]
+    assert names == ["Exhibition stands", "Fit-out & interiors",
+                     "Wayfinding systems", "Wayfinding systems (copy)"]
+    # an anchor is an address; the copy must not claim the original's
+    copy = [i for i in client.get("/api/admin/collections/services-spaces").json()["items"]
+            if i["id"] == copy_id][0]
+    assert copy["values"]["anchor"] == "wayfinding-copy"
+
+    # --- edit the copy
+    values = dict(copy["values"], name="Environmental graphics",
+                  description="Large-format graphics for spaces.")
+    edit = client.post(f"/api/admin/collections/services-spaces/items/{copy_id}",
+                       headers=_csrf(), json={"values": values})
+    assert edit.status_code == 200, edit.text
+    baked = client.get("/admin/preview/services").text
+    assert "Environmental graphics" in baked and "Large-format graphics for spaces." in baked
+
+    # --- reorder: move the copy to the front
+    order = [copy_id] + [i["id"] for i in
+                         client.get("/api/admin/collections/services-spaces").json()["items"]
+                         if i["id"] != copy_id]
+    moved = client.post("/api/admin/collections/services-spaces/order",
+                        headers=_csrf(), json={"order": order})
+    assert moved.status_code == 200, moved.text
+    baked = client.get("/admin/preview/services").text
+    assert baked.index("Environmental graphics") < baked.index("Exhibition stands")
+
+    # --- hide: off the page, still in the panel
+    hide = client.post(f"/api/admin/collections/services-spaces/hidden/{copy_id}",
+                       headers=_csrf(), json={"hidden": True})
+    assert hide.status_code == 200, hide.text
+    baked = client.get("/admin/preview/services").text
+    assert "Environmental graphics" not in baked
+    assert "Exhibition stands" in baked          # the rest of the list is untouched
+    assert [i["hidden"] for i in
+            client.get("/api/admin/collections/services-spaces").json()["items"]][0] is True
+
+    # --- show again
+    client.post(f"/api/admin/collections/services-spaces/hidden/{copy_id}",
+                headers=_csrf(), json={"hidden": False})
+    assert "Environmental graphics" in client.get("/admin/preview/services").text
+
+    # --- delete
+    gone = client.post(f"/api/admin/collections/services-spaces/delete/{copy_id}",
+                       headers=_csrf())
+    assert gone.status_code == 200, gone.text
+    baked = client.get("/admin/preview/services").text
+    assert "Environmental graphics" not in baked
+    assert "Wayfinding systems" in baked and "Exhibition stands" in baked
+
+
+def test_restoring_the_shipped_list_drops_the_panels_copy():
+    reset = client.post("/api/admin/collections/services-spaces/reset", headers=_csrf())
+    assert reset.status_code == 200, reset.text
+    listed = client.get("/api/admin/collections/services-spaces").json()
+    assert listed["managed"] is False
+    assert [i["values"]["name"] for i in listed["items"]] == [
+        "Exhibition stands", "Fit-out & interiors"]
+    assert "Wayfinding systems" not in client.get("/admin/preview/services").text
+
+
+def test_every_managed_list_takes_the_same_operations():
+    """Not a services-only feature: each list on the site does the lot."""
+    from server import collections as co
+
+    for name, spec in co.SCHEMAS.items():
+        fields = co.public_schema(name)["fields"]
+        values = {}
+        for f in fields:
+            if f["type"] == "image":
+                values[f["key"]] = "/assets/services/led-display.webp"
+            elif f["type"] == "link":
+                values[f["key"]] = "/contact.html"
+            elif f["type"] == "slug":
+                values[f["key"]] = "probe-item"
+            elif f["type"] == "select":
+                values[f["key"]] = f["options"][0]["value"]
+            else:
+                values[f["key"]] = "Probe item"
+        added = client.post(f"/api/admin/collections/{name}/items",
+                            headers=_csrf(), json={"values": values})
+        assert added.status_code == 200, (name, added.text)
+        item_id = added.json()["item"]["id"]
+        assert client.post(f"/api/admin/collections/{name}/duplicate/{item_id}",
+                           headers=_csrf()).status_code == 200, name
+        assert client.post(f"/api/admin/collections/{name}/hidden/{item_id}",
+                           headers=_csrf(), json={"hidden": True}).status_code == 200, name
+        rows = client.get(f"/api/admin/collections/{name}").json()["items"]
+        assert client.post(f"/api/admin/collections/{name}/order", headers=_csrf(),
+                           json={"order": [r["id"] for r in reversed(rows)]}).status_code == 200
+        baked = client.get(f"/admin/preview/{spec['page']}").text
+        assert "Probe item" in baked                       # the copy is visible
+        for r in rows:
+            if r["id"] == item_id:
+                continue
+        assert client.post(f"/api/admin/collections/{name}/reset",
+                           headers=_csrf()).status_code == 200, name
+        assert "Probe item" not in client.get(f"/admin/preview/{spec['page']}").text
+
+
+def test_a_hidden_item_leaves_the_page_but_not_the_panel():
+    from server import collections as co
+
+    client.post("/api/admin/collections/about-values/items", headers=_csrf(),
+                json={"values": {"title": "Curiosity", "text": "We ask before we answer."}})
+    rows = client.get("/api/admin/collections/about-values").json()["items"]
+    added = rows[-1]["id"]
+    assert "Curiosity" in client.get("/admin/preview/about").text
+    client.post(f"/api/admin/collections/about-values/hidden/{added}",
+                headers=_csrf(), json={"hidden": True})
+    assert "Curiosity" not in client.get("/admin/preview/about").text
+    assert any(r["id"] == added for r in
+               client.get("/api/admin/collections/about-values").json()["items"])
+    client.post("/api/admin/collections/about-values/reset", headers=_csrf())
+    assert not co.is_managed("about-values")
+
+
+def test_nothing_an_admin_types_is_ever_treated_as_markup():
+    """Every tag in a rendered item is written by us. A field is text, a path
+    or a URL — never HTML, and never a way into the page."""
+    res = client.post("/api/admin/collections/about-values/items", headers=_csrf(), json={
+        "values": {"title": "Ok<script>alert(1)</script>",
+                   "text": "<img src=x onerror=alert(1)> and <b>bold</b>"}})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/preview/about").text
+    grid = baked.split('class="values-grid"')[1].split("</dl>")[0]
+    # the only tags in a rendered list are the ones the renderer writes; the
+    # admin's angle brackets came back as text, which is the whole point
+    assert set(re.findall(r"</?([a-zA-Z][a-zA-Z0-9]*)", grid)) == {"div", "dt", "dd"}
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in grid
+    assert "&lt;b&gt;bold&lt;/b&gt;" in grid
+    client.post("/api/admin/collections/about-values/reset", headers=_csrf())
+
+
+def test_an_image_or_link_field_only_takes_something_we_would_serve():
+    bad_image = client.post("/api/admin/collections/services-spaces/items", headers=_csrf(),
+                            json={"values": {"name": "X", "image": "https://evil.example/x.png"}})
+    assert bad_image.status_code == 400
+    assert "Media library" in bad_image.json()["detail"]
+    bad_link = client.post("/api/admin/collections/services-spaces/items", headers=_csrf(),
+                           json={"values": {"name": "X", "link": "javascript:alert(1)"}})
+    assert bad_link.status_code == 400
+    bad_slug = client.post("/api/admin/collections/services-spaces/items", headers=_csrf(),
+                           json={"values": {"name": "X", "anchor": "Not A Slug"}})
+    assert bad_slug.status_code == 400
+    nameless = client.post("/api/admin/collections/services-spaces/items", headers=_csrf(),
+                           json={"values": {"name": ""}})
+    assert nameless.status_code == 400
+    assert not client.get("/api/admin/collections/services-spaces").json()["managed"]
+
+
+def test_a_stale_screen_cannot_delete_an_item_by_reordering():
+    """An order list that has fallen behind must move what it names and leave
+    everything else alone — never drop the items it forgot."""
+    from server import collections as co
+
+    client.post("/api/admin/collections/about-values/items", headers=_csrf(),
+                json={"values": {"title": "Fifth", "text": "Added after the screen loaded."}})
+    rows = client.get("/api/admin/collections/about-values").json()["items"]
+    assert len(rows) >= 5
+    stale = [r["id"] for r in rows[:2]][::-1]           # a two-item order from before
+    client.post("/api/admin/collections/about-values/order", headers=_csrf(),
+                json={"order": stale})
+    after = client.get("/api/admin/collections/about-values").json()["items"]
+    assert len(after) == len(rows)
+    assert [a["id"] for a in after[:2]] == stale
+    client.post("/api/admin/collections/about-values/reset", headers=_csrf())
+
+
+def test_editing_a_list_needs_permission_and_a_csrf_token():
+    res = client.post("/api/admin/collections/about-values/items",
+                      json={"values": {"title": "No token"}})
+    assert res.status_code == 403
+    lean, lean_me = _catalog_client()
+    denied = lean.post("/api/admin/collections/about-values/items",
+                       headers={"X-CSRF": lean_me["csrf"]}, json={"values": {"title": "Nope"}})
+    assert denied.status_code == 403
+    assert lean.get("/api/admin/collections").status_code == 403
+
+
+def test_an_unknown_list_is_a_404_not_a_crash():
+    assert client.get("/api/admin/collections/not-a-list").status_code == 404
+    assert client.post("/api/admin/collections/not-a-list/items", headers=_csrf(),
+                       json={"values": {}}).status_code == 400
+
+
+def test_a_visual_editor_edit_inside_a_list_is_not_rebuilt_away():
+    """Both layers can touch the same card. Sections, then the items inside
+    them, then the per-element overrides — so the last word is the editor's."""
+    from server import collections as co
+
+    client.post("/api/admin/collections/about-values/items", headers=_csrf(),
+                json={"values": {"title": "Care", "text": "Details matter."}})
+    path = ("[data-em-sec=s3]>div:nth-of-type(1)>dl:nth-of-type(1)"
+            ">div:nth-of-type(5)>dt:nth-of-type(1)")
+    saved = client.post("/api/admin/design/about", headers=_csrf(),
+                        json={"doc": {"elements": {path: {"text": "Care, always"}}}})
+    assert saved.status_code == 200, saved.text
+    baked = client.get("/admin/preview/about").text
+    assert "<dt>Care, always</dt>" in baked
+    client.post("/api/admin/design/about", headers=_csrf(), json={"doc": {"elements": {}}})
+    client.post("/api/admin/collections/about-values/reset", headers=_csrf())
+    assert not co.is_managed("about-values")
+
+
+def test_a_list_edit_marks_its_page_as_needing_publishing():
+    client.post("/api/admin/collections/home-services/items", headers=_csrf(),
+                json={"values": {"name": "New capability", "hint": "Something we now do",
+                                 "link": "/contact.html", "preview": ""}})
+    pages = {p["page"]: p for p in client.get("/api/admin/pages").json()["pages"]}
+    assert pages["index"]["dirty"] is True
+    client.post("/api/admin/collections/home-services/reset", headers=_csrf())
+
+
+def test_a_backup_carries_the_lists_and_a_restore_puts_them_back():
+    from server import backup, collections as co
+
+    client.post("/api/admin/collections/about-presence/items", headers=_csrf(),
+                json={"values": {"title": "Jeddah", "text": "Western region support.",
+                                 "chip": "Regional", "tone": "chip--violet"}})
+    blob, manifest = backup.create()
+    assert "collections" in manifest["contains"]
+    co.reset("about-presence", "test")
+    assert not co.is_managed("about-presence")
+    backup.restore(blob, "test")
+    assert co.is_managed("about-presence")
+    assert any(i["values"]["title"] == "Jeddah" for i in co.items("about-presence"))
+    co.reset("about-presence", "test")
+

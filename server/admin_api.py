@@ -1213,14 +1213,23 @@ def _content_err(exc: Exception) -> HTTPException:
 @router.get("/api/admin/pages")
 async def admin_pages(request: Request):
     require_perm(request, "content.edit")
+    from . import collections as collections_mod
     from . import content
 
     from . import design
 
     last = content.last_publish()
+    # an item added or reordered on the Sections screen is an unpublished edit
+    # to its page too, or the Pages screen would say the site was up to date
+    coll_edit = {}
+    coll_ts = collections_mod.last_edit_ts()
+    if coll_ts:
+        for spec in collections_mod.SCHEMAS.values():
+            coll_edit[spec["page"]] = coll_ts
     pages = []
     for page, cfg in content.all_pages().items():
-        edited = max(content.last_edit_ts(page), design.last_design_edit(page))
+        edited = max(content.last_edit_ts(page), design.last_design_edit(page),
+                     coll_edit.get(page, 0))
         pages.append({"page": page, "label": cfg["label"], "file": cfg["file"],
                       "regions": len(cfg["regions"]),
                       "custom": bool(cfg.get("custom")), "nav": bool(cfg.get("nav")),
@@ -1451,6 +1460,174 @@ async def admin_page_delete(request: Request, page: str,
         raise HTTPException(status_code=404, detail="Unknown page.")
     aa.audit(session, "page.deleted", "pages", {"page": page}, _ip_hash(request))
     return {"deleted": page}
+
+
+# ---------------- repeatable content: the items inside a section ----------------
+# Sections are the design layer's business; the items inside one are this.
+# Everything an admin sends is a field value — never markup — and the renderer
+# in collections.py writes every tag.
+
+def _collection_err(exc: Exception) -> HTTPException:
+    from . import collections as collections_mod
+
+    if isinstance(exc, collections_mod.CollectionError):
+        return HTTPException(status_code=400, detail=str(exc))
+    raise exc
+
+
+@router.get("/api/admin/collections")
+async def admin_collections(request: Request):
+    require_perm(request, "content.edit")
+    from . import collections as collections_mod
+
+    return {"collections": collections_mod.summary()}
+
+
+@router.get("/api/admin/collections/{name}")
+async def admin_collection(request: Request, name: str):
+    require_perm(request, "content.edit")
+    from . import collections as collections_mod
+
+    try:
+        spec = collections_mod.public_schema(name)
+        rows = collections_mod.items(name)
+    except collections_mod.CollectionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"collection": spec, "items": rows,
+            "managed": collections_mod.is_managed(name)}
+
+
+class CollectionItemBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict
+
+
+@router.post("/api/admin/collections/{name}/items")
+async def admin_collection_add(request: Request, name: str, body: CollectionItemBody,
+                               x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import collections as collections_mod
+
+    try:
+        item = collections_mod.add_item(name, body.values, session["email"])
+    except Exception as exc:
+        raise _collection_err(exc)
+    aa.audit(session, "collection.item.added", "content",
+             {"collection": name, "item": item["id"]}, _ip_hash(request))
+    return {"item": item}
+
+
+@router.post("/api/admin/collections/{name}/items/{item_id}")
+async def admin_collection_save(request: Request, name: str, item_id: str,
+                                body: CollectionItemBody,
+                                x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import collections as collections_mod
+
+    try:
+        item = collections_mod.update_item(name, item_id, body.values, session["email"])
+    except Exception as exc:
+        raise _collection_err(exc)
+    aa.audit(session, "collection.item.saved", "content",
+             {"collection": name, "item": item_id}, _ip_hash(request))
+    return {"item": item}
+
+
+@router.post("/api/admin/collections/{name}/duplicate/{item_id}")
+async def admin_collection_duplicate(request: Request, name: str, item_id: str,
+                                     x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import collections as collections_mod
+
+    try:
+        item = collections_mod.duplicate_item(name, item_id, session["email"])
+    except Exception as exc:
+        raise _collection_err(exc)
+    aa.audit(session, "collection.item.duplicated", "content",
+             {"collection": name, "from": item_id, "item": item["id"]}, _ip_hash(request))
+    return {"item": item}
+
+
+class CollectionHiddenBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    hidden: bool
+
+
+@router.post("/api/admin/collections/{name}/hidden/{item_id}")
+async def admin_collection_hidden(request: Request, name: str, item_id: str,
+                                  body: CollectionHiddenBody,
+                                  x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import collections as collections_mod
+
+    try:
+        ok = collections_mod.set_hidden(name, item_id, body.hidden, session["email"])
+    except Exception as exc:
+        raise _collection_err(exc)
+    if not ok:
+        raise HTTPException(status_code=404, detail="That item is no longer in the list.")
+    aa.audit(session, "collection.item.visibility", "content",
+             {"collection": name, "item": item_id, "hidden": body.hidden}, _ip_hash(request))
+    return {"hidden": body.hidden}
+
+
+class CollectionOrderBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    order: list[str] = Field(default_factory=list, max_length=200)
+
+
+@router.post("/api/admin/collections/{name}/order")
+async def admin_collection_order(request: Request, name: str, body: CollectionOrderBody,
+                                 x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import collections as collections_mod
+
+    try:
+        rows = collections_mod.reorder(name, [str(i)[:40] for i in body.order], session["email"])
+    except Exception as exc:
+        raise _collection_err(exc)
+    aa.audit(session, "collection.reordered", "content",
+             {"collection": name, "order": [r["id"] for r in rows]}, _ip_hash(request))
+    return {"items": rows}
+
+
+@router.post("/api/admin/collections/{name}/delete/{item_id}")
+async def admin_collection_delete(request: Request, name: str, item_id: str,
+                                  x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import collections as collections_mod
+
+    try:
+        gone = collections_mod.delete_item(name, item_id, session["email"])
+    except Exception as exc:
+        raise _collection_err(exc)
+    if not gone:
+        raise HTTPException(status_code=404, detail="That item is no longer in the list.")
+    aa.audit(session, "collection.item.deleted", "content",
+             {"collection": name, "item": item_id}, _ip_hash(request))
+    return {"deleted": item_id}
+
+
+@router.post("/api/admin/collections/{name}/reset")
+async def admin_collection_reset(request: Request, name: str,
+                                 x_csrf: str | None = Header(default=None)):
+    """Hand the list back to the shipped page — the panel's copy is dropped."""
+    session = require_perm(request, "content.edit")
+    require_csrf(request, session, x_csrf)
+    from . import collections as collections_mod
+
+    try:
+        rows = collections_mod.reset(name, session["email"])
+    except Exception as exc:
+        raise _collection_err(exc)
+    aa.audit(session, "collection.reset", "content", {"collection": name}, _ip_hash(request))
+    return {"items": rows}
 
 
 @router.post("/api/admin/pages-publish")

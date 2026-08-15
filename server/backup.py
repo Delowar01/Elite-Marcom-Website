@@ -39,12 +39,16 @@ def create() -> tuple[bytes, dict]:
         "version": BACKUP_VERSION,
         "createdAt": int(time.time()),
         "createdAtHuman": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "contains": ["content", "designs", "pages", "settings", "rentals", "media",
-                     "jasaniHidden"],
+        "contains": ["content", "designs", "collections", "pages", "settings", "rentals",
+                     "media", "jasaniHidden"],
     }
     payload = {
         "content": _rows("content", "page, key, lang, value, updated_at, updated_by"),
         "designs": _rows("designs", "page, doc, updated_at, updated_by"),
+        # the items inside a section — a restore without these would put the
+        # shipped lists back and quietly drop every service added in the panel
+        "collections": _rows("collection_items",
+                             "collection, item_id, position, hidden, data, updated_at, updated_by"),
         # pages created in the panel: a restore that dropped these would take
         # the pages themselves away, not just their text
         "customPages": _rows("custom_pages",
@@ -88,7 +92,7 @@ def inspect(blob: bytes) -> dict:
         raise BackupError("This backup was made by a different version of the panel.")
     return {"manifest": manifest,
             "counts": {key: len(data.get(key) or []) for key in
-                       ("content", "designs", "settings", "rentals", "media")}}
+                       ("content", "designs", "collections", "settings", "rentals", "media")}}
 
 
 def restore(blob: bytes, by: str) -> dict:
@@ -122,6 +126,12 @@ def restore(blob: bytes, by: str) -> dict:
         for r in data.get("designs", []):
             conn.execute("INSERT INTO designs (page, doc, updated_at, updated_by) VALUES (?,?,?,?)",
                          (r["page"], r["doc"], now, by[:200]))
+        conn.execute("DELETE FROM collection_items")
+        for r in data.get("collections", []):
+            conn.execute("INSERT INTO collection_items (collection, item_id, position, hidden,"
+                         " data, updated_at, updated_by) VALUES (?,?,?,?,?,?,?)",
+                         (r["collection"], r["item_id"], int(r.get("position") or 0),
+                          1 if r.get("hidden") else 0, r.get("data") or "{}", now, by[:200]))
         conn.execute("DELETE FROM jasani_hidden")
         for r in data.get("jasaniHidden", []):
             conn.execute("INSERT INTO jasani_hidden (market, product_id, code, name,"
