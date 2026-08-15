@@ -129,10 +129,169 @@
 .model-card p { color: var(--text-muted); margin: 0; font-size: 0.95rem; }
 @media (max-width: 760px) { .model-grid { grid-template-columns: 1fr; } }
 
-/* ---------- service blocks ---------- */
-.chapter-head { padding-top: calc(var(--section-gap) * 0.5); }
-.chapter-head h2 { max-width: 24ch; }
-.service-block { padding-block: calc(var(--section-gap) * 0.36); }
+/* ---------- service cards ----------
+   One organising idea: the reveal. The photograph is uncovered rather than
+   faded in, the words follow it, and the capability list is something you
+   open on a pointer device instead of something you scroll past. */
+.sc-chapter { position: relative; padding-left: 34px; margin-bottom: clamp(48px, 6vw, 78px); }
+.sc-chapter:last-of-type { margin-bottom: 0; }
+/* the rail fills with reading progress — see public/js/services.js */
+.sc-rail {
+  position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px;
+  border-radius: 2px; background: var(--border-strong); overflow: hidden;
+}
+.sc-rail i { position: absolute; left: 0; top: 0; width: 100%; height: 0; background: var(--grad-brand); border-radius: 2px; }
+.sc-chapter__head { margin-bottom: 30px; }
+.sc-chapter__head h2 { max-width: 20ch; margin: 0 0 10px; }
+.sc-chapter__head p { margin: 0; color: var(--text-muted); max-width: 58ch; font-size: 0.95rem; }
+
+.sc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(18px, 2.2vw, 26px); }
+@media (max-width: 1000px) { .sc-grid { grid-template-columns: 1fr; } }
+
+.sc-card {
+  position: relative; display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 20px; border: 1px solid var(--border); background: var(--surface);
+  backdrop-filter: blur(10px); isolation: isolate;
+  transition: transform var(--dur-2) var(--ease-out), border-color var(--dur-1) linear,
+              box-shadow var(--dur-2) var(--ease-out);
+}
+.sc-card:hover, .sc-card.is-key { transform: translateY(-6px); border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+.sc-card::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 5;
+  background: var(--grad-brand); transform: scaleX(0); transform-origin: left;
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.sc-card:hover::after, .sc-card.is-key::after { transform: scaleX(1); }
+
+.sc-card__media { position: relative; aspect-ratio: 16 / 10; overflow: hidden; background: var(--panel-2); }
+.sc-card__media img {
+  position: absolute; inset: -6% 0; width: 100%; height: 112%; object-fit: cover;
+  filter: saturate(0.94);
+  transition: transform var(--dur-3) var(--ease-out), filter var(--dur-2) linear;
+}
+.sc-card:hover .sc-card__media img, .sc-card.is-key .sc-card__media img {
+  transform: scale(1.05); filter: saturate(1.06) brightness(0.82);
+}
+.sc-card__media::after {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(180deg, rgba(10, 13, 20, 0.3) 0%, rgba(10, 13, 20, 0) 38%,
+              rgba(10, 13, 20, 0) 56%, rgba(10, 13, 20, 0.5) 100%);
+}
+.sc-card__hint {
+  position: absolute; right: 16px; bottom: 14px; z-index: 4;
+  font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: rgba(245, 242, 237, 0.62); display: inline-flex; align-items: center; gap: 6px;
+  transition: opacity var(--dur-1) linear;
+}
+.sc-card__hint i { width: 5px; height: 5px; border-radius: 50%; background: var(--orange-2); }
+.sc-card:hover .sc-card__hint, .sc-card.is-key .sc-card__hint { opacity: 0; }
+
+/* The panel is a child of the card body. On a pointer device it is lifted out
+   of flow and sized to the media box, so it covers the photograph exactly;
+   everywhere else it is simply text in the body. That is why nothing is ever
+   printed over a photograph on a phone. */
+.sc-card__spec {
+  position: absolute; top: 0; left: 0; right: 0; aspect-ratio: 16 / 10; z-index: 3;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 9px;
+  padding: 22px 24px;
+  background: linear-gradient(180deg, rgba(13, 17, 26, 0) 0%, rgba(13, 17, 26, 0.72) 34%,
+              rgba(13, 17, 26, 0.92) 100%);
+  transform: translateY(101%); opacity: 0;
+  transition: transform var(--dur-2) var(--ease-out), opacity var(--dur-1) linear;
+}
+.sc-card:hover .sc-card__spec, .sc-card.is-key .sc-card__spec { transform: translateY(0); opacity: 1; }
+.sc-card__spec h4 {
+  margin: 0 0 2px; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--orange-soft);
+}
+.sc-card__spec ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.sc-card__spec li {
+  position: relative; padding-left: 17px; font-size: 0.845rem; line-height: 1.45;
+  color: rgba(245, 242, 237, 0.9); opacity: 0; transform: translateY(9px);
+  transition: opacity 0.34s linear, transform 0.34s var(--ease-out);
+}
+.sc-card:hover .sc-card__spec li, .sc-card.is-key .sc-card__spec li { opacity: 1; transform: translateY(0); }
+/* each line follows the one before it, so the list assembles rather than appears */
+.sc-card__spec li:nth-child(1) { transition-delay: 0.10s; }
+.sc-card__spec li:nth-child(2) { transition-delay: 0.15s; }
+.sc-card__spec li:nth-child(3) { transition-delay: 0.20s; }
+.sc-card__spec li:nth-child(4) { transition-delay: 0.25s; }
+.sc-card__spec li:nth-child(5) { transition-delay: 0.30s; }
+.sc-card__spec li:nth-child(6) { transition-delay: 0.35s; }
+.sc-card__spec li::before {
+  content: ""; position: absolute; left: 0; top: 0.55em; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--orange-2);
+}
+
+.sc-card__body { padding: 21px 24px 22px; display: flex; flex-direction: column; gap: 9px; flex: 1; }
+/* the chapter is on screen beside the card on a pointer device, so the eyebrow
+   only earns its place where the heading has scrolled away */
+.sc-card__eyebrow { display: none; }
+.sc-card__name { font-size: clamp(1.1rem, 1rem + 0.4vw, 1.3rem); font-weight: 700; letter-spacing: -0.015em; margin: 0; line-height: 1.25; }
+.sc-card__desc { margin: 0; font-size: 0.9rem; color: var(--text-soft); line-height: 1.65; }
+.sc-card__go {
+  margin-top: auto; padding-top: 14px; align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 0.85rem; font-weight: 650; color: var(--orange-2);
+}
+.sc-card__go svg { width: 16px; height: 16px; transition: transform var(--dur-1) var(--ease-out); }
+.sc-card:hover .sc-card__go svg, .sc-card.is-key .sc-card__go svg { transform: translateX(5px); }
+.sc-card__go:focus-visible { outline: 2px solid var(--orange-2); outline-offset: 3px; border-radius: 4px; }
+
+/* the entrance: the photograph is uncovered, then the words arrive */
+.sc-anim .sc-card__media { clip-path: inset(100% 0 0 0); }
+/* :not(.sc-card__spec) matters — the panel is a body child, and letting the
+   entrance rule reach it would set opacity 1 and pin it open for good */
+.sc-anim .sc-card__body > :not(.sc-card__spec) { opacity: 0; transform: translateY(14px); }
+.sc-anim .sc-chapter__head > * { opacity: 0; transform: translateY(14px); }
+.sc-anim .sc-rail { opacity: 0; }
+.sc-anim.is-in .sc-card__media { clip-path: inset(0 0 0 0); transition: clip-path 0.78s var(--ease-out); transition-delay: var(--d, 0s); }
+.sc-anim.is-in .sc-card__body > :not(.sc-card__spec) {
+  opacity: 1; transform: translateY(0);
+  transition: opacity 0.5s linear, transform 0.6s var(--ease-out);
+}
+/* delays by class, not by position — the eyebrow is display:none on a pointer
+   device but still counts for :nth-child, which would shift every other line */
+.sc-anim.is-in .sc-card__eyebrow { transition-delay: calc(var(--d, 0s) + 0.24s); }
+.sc-anim.is-in .sc-card__name { transition-delay: calc(var(--d, 0s) + 0.26s); }
+.sc-anim.is-in .sc-card__desc { transition-delay: calc(var(--d, 0s) + 0.32s); }
+.sc-anim.is-in .sc-card__go { transition-delay: calc(var(--d, 0s) + 0.38s); }
+.sc-anim.is-in .sc-chapter__head > * { opacity: 1; transform: translateY(0); transition: opacity 0.5s linear, transform 0.6s var(--ease-out); }
+.sc-anim.is-in .sc-chapter__head > *:nth-child(1) { transition-delay: 0.02s; }
+.sc-anim.is-in .sc-chapter__head > *:nth-child(2) { transition-delay: 0.10s; }
+.sc-anim.is-in .sc-chapter__head > *:nth-child(3) { transition-delay: 0.18s; }
+.sc-anim.is-in .sc-rail { opacity: 1; transition: opacity 0.5s linear 0.1s; }
+
+/* No hover to reveal anything, and no photograph is a dependable background
+   for white type — so on touch the photograph carries nothing at all. */
+@media (hover: none) {
+  .sc-card__spec {
+    position: static; aspect-ratio: auto; transform: none; opacity: 1;
+    padding: 13px 0 0; margin-top: 3px; background: none;
+    border-top: 1px solid var(--border); display: grid; gap: 7px;
+  }
+  .sc-card__spec li { opacity: 1; transform: none; transition: none; color: var(--text-muted); }
+  .sc-card__spec h4 { color: var(--text-muted); }
+  .sc-card__hint { display: none; }
+  .sc-card__eyebrow {
+    display: block; margin: 0; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  /* the scrim existed to hold type; with none there, let the photograph be */
+  .sc-card__media::after { background: linear-gradient(180deg, rgba(10, 13, 20, 0.16) 0%, rgba(10, 13, 20, 0) 40%); }
+  .sc-card__body { gap: 11px; }
+}
+@media (max-width: 700px) { .sc-chapter { padding-left: 22px; } .sc-card__body { padding: 17px 18px 19px; } }
+html.reveals-off .sc-anim .sc-card__media { clip-path: none; }
+html.reveals-off .sc-anim .sc-card__body > :not(.sc-card__spec),
+html.reveals-off .sc-anim .sc-chapter__head > * { opacity: 1; transform: none; }
+html.reveals-off .sc-anim .sc-rail { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .sc-anim .sc-card__media { clip-path: none; }
+  .sc-anim .sc-card__body > :not(.sc-card__spec), .sc-anim .sc-chapter__head > * { opacity: 1; transform: none; }
+  .sc-anim .sc-rail { opacity: 1; }
+}
+
 .service-title { font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.2rem); }
 .service-points {
   list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 10px;
