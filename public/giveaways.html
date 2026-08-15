@@ -19,7 +19,7 @@
 <link rel="icon" href="/assets/favicon.png" type="image/png">
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
-<link rel="stylesheet" href="/styles.css?v=9">
+<link rel="stylesheet" href="/styles.css?v=10">
 <link rel="stylesheet" href="/pages.css?v=12">
 <script src="/js/theme-init.js?v=1"></script>
 <script type="application/ld+json">
@@ -187,10 +187,6 @@
           <option value="name-desc">Name Z–A</option>
           <option value="stock">Stock availability</option>
         </select>
-        <div class="view-toggle" role="group" aria-label="View">
-          <button type="button" data-view="grid" aria-pressed="true" aria-label="Grid view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button>
-          <button type="button" data-view="list" aria-pressed="false" aria-label="List view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-        </div>
       </div>
       <div class="filter-chips" id="give-flags" role="group" aria-label="Quick filters" style="margin-bottom:22px;">
         <button type="button" class="filter-chip" aria-pressed="false" data-flag="sustainable">Sustainable</button>
@@ -202,7 +198,7 @@
         <span class="catalog-count" id="give-active-filters" aria-live="polite"></span>
       </div>
 
-      <div class="catalog-grid catalog-grid--gifts" id="give-grid" aria-busy="true"></div>
+      <div class="catalog-list" id="give-grid" aria-busy="true"></div>
       <div class="empty-state" id="give-empty" hidden>
         <h3>No products match this view</h3>
         <p>Adjust the search or filters — or <button type="button" class="link-arrow" id="give-clear">clear everything</button>.</p>
@@ -377,6 +373,6 @@
 <script src="/js/site.js?v=6" defer></script>
 <script src="/js/insights.js?v=1" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/giveaways.js?v=5" defer></script>
+<script src="/js/giveaways.js?v=6" defer></script>
 </body>
 </html>

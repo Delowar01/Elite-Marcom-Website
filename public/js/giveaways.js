@@ -256,10 +256,12 @@
   }
 
   /* ---------- rendering ---------- */
+  function qty(n) { return Number(n || 0).toLocaleString("en-GB"); }
+
   function availability(p) {
     var s = p.stock || {};
-    if (s.available > 0 && s.available <= 20) return { cls: "availability--low", label: "Low stock — " + s.available + " left" };
-    if (s.available > 0) return { cls: "availability--in", label: s.available + " in stock" };
+    if (s.available > 0 && s.available <= 20) return { cls: "availability--low", label: qty(s.available) + " left" };
+    if (s.available > 0) return { cls: "availability--in", label: qty(s.available) + " in stock" };
     if (s.incoming > 0) return { cls: "availability--incoming", label: "Incoming" + (s.incomingDate ? " — " + s.incomingDate : "") };
     return { cls: "availability--out", label: "Out of stock" };
   }
@@ -291,88 +293,81 @@
     window.scrollTo(0, st.y || 0);
   }
 
-  function cardHtml(p, group) {
+  var CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';
+
+  function rowHtml(p, group) {
     var multi = group.length > 1;
-    var total = groupStock(group);
-    /* aggregate availability across the group's variants */
+    /* a variant group is one row, so its stock is the group's, not the rep's */
     var av = availability(multi ? { stock: {
-      available: total,
+      available: groupStock(group),
       incoming: Math.max.apply(null, group.map(function (g) { return (g.stock && g.stock.incoming) || 0; })),
       incomingDate: (p.stock || {}).incomingDate
     } } : p);
     var inReq = findRequest(p.id);
     var canOrder = p.stock && p.stock.available > 0;
-    var badges = "";
-    if (p.categories && p.categories.length) badges += '<span class="chip">' + EM.escapeHtml(p.categories[0]) + "</span>";
-    if (p.isNew) badges += '<span class="chip chip--violet">New</span>';
-    if (p.sustainable) badges += '<span class="chip chip--orange">Sustainable</span>';
-    var meta = multi
-      ? [p.brand, group.length + " options"].filter(Boolean).join(" · ")
-      : [p.brand, p.color].filter(Boolean).join(" · ");
-    /* slideable media with auto-hide arrows, right on the card */
-    var imgs = (p.images && p.images.length ? p.images : (p.image ? [p.image] : [])).slice(0, 8);
-    var slides = imgs.map(function (src, i) {
-      return '<img src="' + EM.escapeHtml(src) + '" alt="" loading="lazy" width="480" height="480" draggable="false">';
-    }).join("");
+    var meta = [p.brand, p.color].filter(Boolean).join(" · ");
     return (
-      '<div class="product-card__media carousel">' +
-        '<div class="carousel__track">' + slides + "</div>" +
-        '<div class="product-card__badges">' + badges + "</div>" +
-      "</div>" +
-      '<div class="product-card__body">' +
-        '<span class="product-card__code"><span>' + EM.escapeHtml(p.code) + "</span><span>" + market.toUpperCase() + "</span></span>" +
-        '<h3 class="product-card__name">' + EM.escapeHtml(p.name) + "</h3>" +
-        '<span class="product-card__meta">' + EM.escapeHtml(meta) + "</span>" +
-        '<span class="availability ' + av.cls + '">' + EM.escapeHtml(av.label) + "</span>" +
-        '<div class="product-card__actions">' +
-          (multi
-            ? '<a class="btn btn--primary btn--small" href="' + productUrl(p) + '">Select options</a>'
-            : canOrder
-            ? '<div class="qty-control" aria-label="Quantity">' +
-                '<button type="button" data-qty-minus aria-label="Decrease quantity">−</button>' +
-                '<input type="number" inputmode="numeric" value="' + (inReq ? inReq.qty : 1) + '" min="1" max="' + p.stock.available + '" aria-label="Requested quantity">' +
-                '<button type="button" data-qty-plus aria-label="Increase quantity">+</button>' +
-              "</div>" +
-              '<button class="btn btn--primary btn--small" type="button" data-add>' + (inReq ? "Update request" : "Add request") + "</button>"
-            : '<button class="btn btn--violet btn--small" type="button" data-notify>Notify when available</button>') +
-        "</div>" +
-      "</div>");
+      '<span class="c-img">' +
+        (p.image
+          ? '<img src="' + EM.escapeHtml(p.image) + '" alt="" loading="lazy" width="44" height="44" draggable="false">'
+          : "") +
+      "</span>" +
+      '<span class="c-sku">' + EM.escapeHtml(p.code) + "</span>" +
+      /* data-meta carries brand and colour for the narrow layout, where they
+         move under the name instead of keeping columns of their own */
+      '<span class="c-name" data-meta="' + EM.escapeHtml(meta) + '">' + EM.escapeHtml(p.name) +
+        (multi ? '<span class="vtag">' + group.length + " options</span>" : "") + "</span>" +
+      '<span class="c-brand">' + EM.escapeHtml(p.brand || "—") + "</span>" +
+      '<span class="c-colour">' + EM.escapeHtml(p.color || "—") + "</span>" +
+      '<span class="c-stock"><span class="availability ' + av.cls + '">' +
+        EM.escapeHtml(av.label) + "</span></span>" +
+      '<span class="c-act">' +
+        (multi
+          ? '<a class="rowbtn rowbtn--ghost" href="' + productUrl(p) + '">' + group.length + " options</a>"
+          : canOrder
+          ? '<button class="rowbtn" type="button" data-add>' + (inReq ? "Update" : "Add") + "</button>"
+          : '<button class="rowbtn rowbtn--violet" type="button" data-notify>Notify me</button>') +
+      "</span>" +
+      '<span class="c-go" aria-hidden="true">' + CHEVRON + "</span>");
   }
+
+  var LIST_HEAD =
+    '<div class="lhead" aria-hidden="true"><span></span><span>SKU</span><span>Product</span>' +
+    '<span class="th-brand">Brand</span><span class="th-colour">Colour</span>' +
+    "<span>Available</span><span></span><span></span></div>";
 
   function render() {
     grid.setAttribute("aria-busy", "false");
     var list = filtered();
     var slice = list.slice(0, visibleLimit);
-    grid.innerHTML = "";
+    grid.innerHTML = slice.length ? LIST_HEAD : "";
     slice.forEach(function (group) {
       var p = groupRep(group);
-      var card = document.createElement("article");
-      card.className = "product-card";
-      card.setAttribute("data-id", p.id);
-      card.setAttribute("role", "link");
-      card.setAttribute("tabindex", "0");
-      card.setAttribute("aria-label", p.name + " — open product page");
-      card.innerHTML = cardHtml(p, group);
-      bindCard(card, p);
-      /* the whole card opens the product page — except its own controls */
-      card.addEventListener("click", function (e) {
-        if (e.target.closest("input, .qty-control, .carousel__btn, .carousel__dots")) return;
+      var row = document.createElement("div");
+      row.className = "lrow";
+      row.setAttribute("data-id", p.id);
+      row.setAttribute("role", "link");
+      row.setAttribute("tabindex", "0");
+      row.setAttribute("aria-label", p.name + " — open product page");
+      row.innerHTML = rowHtml(p, group);
+      bindRow(row, p);
+      /* the whole row opens the product page — except its own action */
+      row.addEventListener("click", function (e) {
         var link = e.target.closest("a");
         if (e.target.closest("button") && !link) return;
         saveReturnState();
-        if (link) return; /* the Select options anchor navigates on its own */
+        if (link) return;   /* the options anchor navigates on its own */
         location.href = productUrl(p);
       });
-      card.addEventListener("keydown", function (e) {
-        if ((e.key === "Enter" || e.key === " ") && e.target === card) {
+      row.addEventListener("keydown", function (e) {
+        if ((e.key === "Enter" || e.key === " ") && e.target === row) {
           e.preventDefault();
           saveReturnState();
           location.href = productUrl(p);
         }
       });
-      var mediaEl = card.querySelector(".product-card__media");
-      if (mediaEl && EM.carousel) EM.carousel(mediaEl);
-      grid.appendChild(card);
+      grid.appendChild(row);
     });
     if (els.count) els.count.textContent = list.length + " product" + (list.length === 1 ? "" : "s");
     if (els.empty) els.empty.hidden = list.length !== 0;
@@ -386,31 +381,16 @@
     }
   }
 
-  function clampQty(input, max) {
-    var v = parseInt(input.value, 10);
-    if (isNaN(v) || v < 1) v = 1;
-    if (v > max) { v = max; EM.toast("Quantity limited to available stock (" + max + ").", ""); }
-    input.value = String(v);
-    return v;
-  }
-
-  function bindCard(card, p) {
-    var qtyInput = card.querySelector(".qty-control input");
-    var max = (p.stock && p.stock.available) || 1;
-    /* live validation: a typed quantity can never exceed available stock */
-    if (qtyInput) qtyInput.addEventListener("change", function () { clampQty(qtyInput, max); });
-    card.querySelectorAll("[data-qty-minus]").forEach(function (b) {
-      b.addEventListener("click", function () { qtyInput.value = String(Math.max(1, clampQty(qtyInput, max) - 1)); });
-    });
-    card.querySelectorAll("[data-qty-plus]").forEach(function (b) {
-      b.addEventListener("click", function () { qtyInput.value = String(Math.min(max, clampQty(qtyInput, max) + 1)); });
-    });
-    var addBtn = card.querySelector("[data-add]");
+  function bindRow(row, p) {
+    /* one product, one press: quantity is set on the product page or in the
+       request drawer, both of which clamp it to available stock */
+    var addBtn = row.querySelector("[data-add]");
     if (addBtn) addBtn.addEventListener("click", function () {
-      addToRequest(p, clampQty(qtyInput, max));
-      addBtn.textContent = "Update request";
+      var existing = findRequest(p.id);
+      addToRequest(p, existing ? existing.qty : 1);
+      addBtn.textContent = "Update";
     });
-    var notBtn = card.querySelector("[data-notify]");
+    var notBtn = row.querySelector("[data-notify]");
     if (notBtn) notBtn.addEventListener("click", function () { openNotify(p); });
   }
 
@@ -478,14 +458,6 @@
     render();
   });
   if (els.more) els.more.addEventListener("click", function () { visibleLimit += BATCH; render(); });
-  document.querySelectorAll(".view-toggle [data-view]").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      grid.classList.toggle("is-list", btn.getAttribute("data-view") === "list");
-      document.querySelectorAll(".view-toggle [data-view]").forEach(function (b) {
-        b.setAttribute("aria-pressed", b === btn ? "true" : "false");
-      });
-    });
-  });
 
   /* ---------- request drawer ---------- */
   var requestDrawer = EM.drawer(document.getElementById("give-request-drawer"), document.getElementById("give-request-scrim"));
