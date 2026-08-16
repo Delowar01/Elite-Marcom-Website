@@ -275,6 +275,31 @@ def test_giveaways_invalid_market_rejected():
     assert client.get("/api/giveaways/products?country=zz").status_code == 422
 
 
+def test_the_catalogue_counts_products_the_way_the_admin_panel_does():
+    """The admin panel says 1,778 KSA products and 2,573 UAE; the catalogue said
+    1,127 and 1,519, because it counted the cards. A card is a variant family —
+    one product in six colours is one card — and that grouping stays, but the
+    number a visitor reads is of products, so the two screens agree.
+
+    `n` per family rather than its length: a family survives a filter when any
+    one of its variants matches, so filtering to Black must not also count the
+    five colours the filter excluded. There is no JS runner in this project, so
+    the contract is pinned here at the source.
+    """
+    js = client.get("/js/giveaways.js").text
+    assert "function countProducts" in js
+    assert "countProducts(list)" in js, "the headline must count products"
+    assert "els.count.textContent = list.length" not in js, "that is the card count"
+    assert "if (n) out.push({ items: items, n: n });" in js
+
+
+def test_the_catalogue_does_not_advertise_zero_prices():
+    """A leftover label sat next to the product count reading "0 prices
+    displayed". We deliberately show no prices at all, so stating it as a
+    figure of zero only reads as something broken."""
+    assert "prices displayed" not in client.get("/giveaways.html").text
+
+
 def enquiry_form(**overrides) -> dict:
     data = {
         "fullName": "Test Person", "company": "Test Co", "email": "t@example.com",

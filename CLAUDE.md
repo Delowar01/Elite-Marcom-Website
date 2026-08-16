@@ -276,6 +276,16 @@ documentation). Non-negotiable rules from it:
 - Corporate Gifts UI: catalog + product page share variant grouping via
   `EM.giftKey` (`public/js/site.js`); request lists live in localStorage
   (`em-giveaway-request`, per market, max 50 items).
+  **A card is a family; the count is of products.** One product in six colours
+  is one card, so counting cards said 1,127 KSA / 1,519 UAE where the admin
+  panel said 1,778 / 2,573 — the same catalogue, two numbers, and the smaller
+  one on the public page. `filtered()` therefore returns `{items, n}` per
+  family and `countProducts` sums `n`: the number of variants that actually
+  match, never `items.length`, because a family survives a filter when any one
+  variant matches and filtering to Black must not count the other five. The
+  headline and "Load more" both read it, so they cannot disagree. The website
+  can still legitimately show fewer than the panel — `get_catalog` drops
+  hidden items and, if the rule is on, zero-stock ones.
 - After a code change that touches `public/*.html`, the admin must press
   **Publish site** once: published snapshots in `runtime/published/site/` are
   served ahead of `public/`, so a stale bake would hide new markup/scripts.

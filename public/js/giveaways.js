@@ -221,27 +221,43 @@
     return true;
   }
 
+  /* One entry per card — a variant group — carrying `n`, how many of its
+     variants actually match the active filters.
+
+     A card is a family (one product in six colours is one card), but the
+     catalogue is 1,778 products in KSA and 2,573 in UAE, which is the figure
+     the admin panel shows and the figure a visitor should read. So the cards
+     stay grouped and the headline counts variants. `n` rather than
+     `items.length` because a group survives when *any* of its variants
+     matches: filtering to Black must not count the other five colours. */
   function filtered() {
     var q = (els.search && els.search.value || "").trim().toLowerCase();
     var cat = els.category ? els.category.value : "";
     var brand = els.brand ? els.brand.value : "";
     var color = els.color ? els.color.value : "";
     var minStock = els.minstock ? Math.max(0, parseInt(els.minstock.value, 10) || 0) : 0;
-    /* a group stays when any of its variants matches the active filters */
-    var out = EM.giftGroups(products).filter(function (items) {
-      return items.some(function (p) { return matches(p, q, cat, brand, color, minStock); });
+    var out = [];
+    EM.giftGroups(products).forEach(function (items) {
+      var n = 0;
+      items.forEach(function (p) { if (matches(p, q, cat, brand, color, minStock)) n++; });
+      if (n) out.push({ items: items, n: n });
     });
     var sort = els.sort ? els.sort.value : "featured";
-    function seq(items) { return (groupRep(items).sequence || 1e9); }
+    function seq(g) { return (groupRep(g.items).sequence || 1e9); }
     /* Featured mirrors the supplier's site: lowest website_sequence first */
     if (sort === "featured") out.sort(function (a, b) { return seq(a) - seq(b); });
     else if (sort === "newest") out.sort(function (a, b) {
-      return (groupRep(b).isNew ? 1 : 0) - (groupRep(a).isNew ? 1 : 0) || seq(a) - seq(b);
+      return (groupRep(b.items).isNew ? 1 : 0) - (groupRep(a.items).isNew ? 1 : 0) || seq(a) - seq(b);
     });
-    else if (sort === "name-asc") out.sort(function (a, b) { return groupRep(a).name.localeCompare(groupRep(b).name); });
-    else if (sort === "name-desc") out.sort(function (a, b) { return groupRep(b).name.localeCompare(groupRep(a).name); });
-    else if (sort === "stock") out.sort(function (a, b) { return groupStock(b) - groupStock(a); });
+    else if (sort === "name-asc") out.sort(function (a, b) { return groupRep(a.items).name.localeCompare(groupRep(b.items).name); });
+    else if (sort === "name-desc") out.sort(function (a, b) { return groupRep(b.items).name.localeCompare(groupRep(a.items).name); });
+    else if (sort === "stock") out.sort(function (a, b) { return groupStock(b.items) - groupStock(a.items); });
     return out;
+  }
+
+  /* how many products, not how many cards */
+  function countProducts(entries) {
+    return entries.reduce(function (n, g) { return n + g.n; }, 0);
   }
 
   function activeFilterCount() {
@@ -413,7 +429,8 @@
     var slice = list.slice(0, visibleLimit);
     var isList = view === "list";
     grid.innerHTML = isList && slice.length ? LIST_HEAD : "";
-    slice.forEach(function (group) {
+    slice.forEach(function (entry) {
+      var group = entry.items;
       var p = groupRep(group);
       var el = document.createElement(isList ? "div" : "article");
       el.className = isList ? "lrow" : "product-card";
@@ -445,11 +462,15 @@
       }
       grid.appendChild(el);
     });
-    if (els.count) els.count.textContent = list.length + " product" + (list.length === 1 ? "" : "s");
+    var total = countProducts(list);
+    if (els.count) els.count.textContent = qty(total) + " product" + (total === 1 ? "" : "s");
     if (els.empty) els.empty.hidden = list.length !== 0;
     if (els.more) {
+      /* more *cards* decides whether the button shows; it counts products,
+         so the button and the headline are talking about the same thing */
       els.more.hidden = list.length <= visibleLimit;
-      els.more.textContent = "Load more products (" + Math.max(0, list.length - visibleLimit) + " remaining)";
+      els.more.textContent = "Load more products (" +
+        qty(Math.max(0, total - countProducts(slice))) + " remaining)";
     }
     if (els.activeFilters) {
       var n = activeFilterCount();
