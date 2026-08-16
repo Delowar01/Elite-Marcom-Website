@@ -977,6 +977,109 @@ def test_brand_tokens_theme_css_and_warnings():
     assert client.get("/theme-custom.css").text == ""
 
 
+def test_the_admin_picks_what_a_first_time_visitor_sees():
+    """An admin chooses the default theme; a visitor who has already chosen
+    keeps theirs. The choice is baked into the markup because the theme has to
+    be settled before the first paint."""
+    import re
+
+    from server import content, media
+
+    me = client.get("/api/admin/me").json()
+
+    def html_tag(page="index"):
+        return re.search(r"<html[^>]*>", content.bake_page(page)).group(0)
+
+    # shipped state: nothing stamped, so the page follows the visitor's device
+    assert media.get_brand_tokens()["theme"] == "auto"
+    assert "data-default-theme" not in html_tag()
+
+    res = client.post("/api/admin/brand/tokens", json={"values": {"theme": "dark"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert res.status_code == 200, res.text
+    assert client.get("/api/admin/brand").json()["tokens"]["theme"] == "dark"
+    # ...and every page carries it, not just the one that was open
+    for page in ("index", "about", "giveaways", "contact", "privacy"):
+        assert 'data-default-theme="dark"' in html_tag(page), page
+
+    # switching again replaces rather than accumulates
+    client.post("/api/admin/brand/tokens", json={"values": {"theme": "light"}},
+                headers={"X-CSRF": me["csrf"]})
+    tag = html_tag()
+    assert 'data-default-theme="light"' in tag
+    assert tag.count("data-default-theme") == 1
+    # the page's own data-theme is untouched: it is the pre-script fallback
+    assert 'data-theme="dark"' in tag
+
+    # back to auto and the attribute goes away entirely
+    client.post("/api/admin/brand/tokens", json={"values": {"theme": "auto"}},
+                headers={"X-CSRF": me["csrf"]})
+    assert "data-default-theme" not in html_tag()
+
+    # anything that is not one of the three is refused
+    bad = client.post("/api/admin/brand/tokens", json={"values": {"theme": "midnight"}},
+                      headers={"X-CSRF": me["csrf"]})
+    assert bad.status_code == 400
+    assert media.get_brand_tokens()["theme"] == "auto"
+
+
+def test_changing_the_default_theme_leaves_the_pages_waiting_to_publish():
+    """It is baked into the markup, so it is an unpublished change to every
+    page. The Pages screen saying "up to date" while the live site still shows
+    the old theme is the failure this prevents."""
+    import time
+
+    def past_the_second():
+        """Both stamps are whole seconds and "waiting to publish" is a strictly
+        later comparison, so a test that publishes and edits inside one second
+        would read as settled. A real admin takes longer than that."""
+        time.sleep(1.05 - time.time() % 1)
+
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    before = client.get("/api/admin/pages").json()
+    assert all(not p["dirty"] for p in before["pages"]), "publish should settle everything"
+
+    past_the_second()
+    client.post("/api/admin/brand/tokens", json={"values": {"theme": "dark"}},
+                headers={"X-CSRF": me["csrf"]})
+    after = client.get("/api/admin/pages").json()
+    assert all(p["dirty"] for p in after["pages"]), "every page is waiting again"
+
+    # a colour is live immediately and needs no publish, so it must not
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    past_the_second()
+    client.post("/api/admin/brand/tokens",
+                json={"values": {"theme": "dark", "orange": "#123456"}},
+                headers={"X-CSRF": me["csrf"]})
+    colour_only = client.get("/api/admin/pages").json()
+    assert not any(p["dirty"] for p in colour_only["pages"])
+
+    client.post("/api/admin/brand/tokens", json={"values": {"theme": "auto"}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+
+
+def test_the_published_site_serves_the_chosen_default():
+    """End to end: set it, publish, and a real request for a real page carries
+    the attribute the browser reads before it paints."""
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/brand/tokens", json={"values": {"theme": "dark"}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    for path in ("/", "/about.html", "/giveaways.html"):
+        body = client.get(path).text
+        assert 'data-default-theme="dark"' in body, path
+        # and the script that reads it is the one we shipped, once
+        assert body.count("/js/theme-init.js") == 1, path
+    client.post("/api/admin/brand/tokens", json={"values": {"theme": "auto"}},
+                headers={"X-CSRF": me["csrf"]})
+    client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+    assert "data-default-theme" not in client.get("/").text
+    # leave the site unpublished, the way this module found it
+    client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+
+
 def test_identity_logo_svg_sanitized_and_served():
     me = client.get("/api/admin/me").json()
     evil = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'

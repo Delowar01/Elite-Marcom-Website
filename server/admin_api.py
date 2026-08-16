@@ -1214,9 +1214,7 @@ def _content_err(exc: Exception) -> HTTPException:
 async def admin_pages(request: Request):
     require_perm(request, "content.edit")
     from . import collections as collections_mod
-    from . import content
-
-    from . import design
+    from . import content, design, media
 
     last = content.last_publish()
     # an item added or reordered on the Sections screen is an unpublished edit
@@ -1232,10 +1230,13 @@ async def admin_pages(request: Request):
                     coll_edit[page] = coll_ts
             else:
                 coll_edit[spec["page"]] = coll_ts
+    # the default theme is baked into the markup, so changing it leaves every
+    # page waiting to publish in exactly the way a text edit does
+    theme_ts = media.theme_changed_at()
     pages = []
     for page, cfg in content.all_pages().items():
         edited = max(content.last_edit_ts(page), design.last_design_edit(page),
-                     coll_edit.get(page, 0))
+                     coll_edit.get(page, 0), theme_ts)
         pages.append({"page": page, "label": cfg["label"], "file": cfg["file"],
                       "regions": len(cfg["regions"]),
                       "custom": bool(cfg.get("custom")), "nav": bool(cfg.get("nav")),

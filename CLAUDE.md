@@ -255,6 +255,21 @@ documentation). Non-negotiable rules from it:
   shared asset changed. They publish, localize, sitemap and back up like any
   built-in page; `published_file()` only hits the database for an `.html` miss,
   so asset requests stay allocation-cheap. Built-in pages cannot be deleted.
+- **The default theme is the admin's, the current theme is the visitor's.**
+  `brand.tokens.theme` (Website & Brand) is `auto` | `dark` | `light`, and
+  `content._stamp_default_theme` bakes the two explicit choices onto `<html>`
+  as `data-default-theme` — after the nav and social injection, so it lands on
+  every page of both editions. `public/js/theme-init.js` reads, in order: the
+  visitor's own `em-theme` in localStorage, then that attribute, then the
+  device. **Never let the admin's choice win over a saved one** — it decides
+  what a *first-time* visitor sees, not what a returning one already asked
+  for. A page with no attribute (the shipped `public/` files before a publish,
+  and the admin panel itself) takes the device, exactly as the site behaved
+  before. Because it is baked rather than served, a theme change is an
+  unpublished edit to every page: `media.theme_changed_at()` feeds
+  `admin_pages` so the Pages screen says so, and `themeSetAt` moves only when
+  the theme itself changes — saving a colour must not mark the whole site
+  dirty.
 - Footer social icons come from `social.*` settings (https:// only, validated
   twice — on save and again in `blocks.render_social`) and are baked in, so a
   new link reaches the site at the next **Publish site**.

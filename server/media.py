@@ -357,6 +357,14 @@ def pdf_logo_path() -> Path | None:
 
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+# What a first-time visitor sees before they have expressed a preference.
+# "auto" is the shipped behaviour — follow the device, fall back to dark — and
+# it stays the default so nothing changes until somebody decides otherwise.
+# A visitor's own choice always wins over any of these: it is stored in their
+# browser and read first.
+THEME_CHOICES = ("auto", "dark", "light")
+DEFAULT_THEME = "auto"
+
 TOKEN_DEFS = {
     "orange": {"var": "--orange", "label": "Primary orange", "default": "#ed6c26"},
     "orange2": {"var": "--orange-2", "label": "Orange highlight", "default": "#f18042"},
@@ -369,13 +377,27 @@ def get_brand_tokens() -> dict:
     from . import adminauth as aa
 
     stored = aa.setting_get("brand.tokens") or {}
+    theme = stored.get("theme")
     return {k: stored.get(k) or v["default"] for k, v in TOKEN_DEFS.items()} | {
-        "radius": stored.get("radius"), "motion": stored.get("motion", True)}
+        "radius": stored.get("radius"), "motion": stored.get("motion", True),
+        "theme": theme if theme in THEME_CHOICES else DEFAULT_THEME}
+
+
+def theme_changed_at() -> int:
+    """When the baked default theme last changed — 0 if it never has."""
+    from . import adminauth as aa
+
+    stored = aa.setting_get("brand.tokens") or {}
+    try:
+        return int(stored.get("themeSetAt") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def save_brand_tokens(values: dict) -> dict:
     from . import adminauth as aa
 
+    stored = aa.setting_get("brand.tokens") or {}
     clean: dict = {}
     for key in TOKEN_DEFS:
         v = str(values.get(key) or "").strip()
@@ -392,6 +414,17 @@ def save_brand_tokens(values: dict) -> dict:
             raise MediaError("Corner radius scale must be between 0 and 2.")
         clean["radius"] = r
     clean["motion"] = bool(values.get("motion", True))
+    theme = str(values.get("theme") or DEFAULT_THEME).strip().lower()
+    if theme not in THEME_CHOICES:
+        raise MediaError("Default theme must be Follow the device, Dark or Light.")
+    clean["theme"] = theme
+    # Colours and motion reach the site through /theme-custom.css and are live
+    # the moment they are saved. The theme is baked into the markup, so it is
+    # an unpublished change to every page — remembered here so the Pages screen
+    # can say so instead of claiming the site is up to date.
+    previous = stored.get("theme") if isinstance(stored, dict) else None
+    clean["themeSetAt"] = (int(time.time()) if theme != (previous or DEFAULT_THEME)
+                           else int(stored.get("themeSetAt") or 0))
     aa.setting_set("brand.tokens", clean)
     return clean
 

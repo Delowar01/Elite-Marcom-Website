@@ -431,6 +431,7 @@ def bake_page(page: str, lang: str = "en") -> str:
                                between=lambda r: collections_mod.apply_to_page(r, page))
     raw = _inject_nav(raw, page)
     raw = _inject_social(raw)
+    raw = _stamp_default_theme(raw)
     values = get_values("_global", lang) | get_values(page, lang)
     if values:
         regions = [r for r in _locate(raw) if values.get(r["key"])]
@@ -465,6 +466,34 @@ def bake_page(page: str, lang: str = "en") -> str:
             raw = re.sub(r'(<meta property="og:image" content=")[^"]*(")',
                          rf"\g<1>{og}\g<2>", raw, count=1)
     return raw
+
+
+def _stamp_default_theme(raw: str) -> str:
+    """Write the admin's chosen default onto <html>, for `theme-init.js` to read.
+
+    It goes in the markup rather than into a stylesheet or a fetch because the
+    theme has to be decided before the first paint, and anything that needs a
+    round trip first would either flash the wrong theme or put a request in
+    front of every page load. An admin changing this reaches the live site at
+    the next publish, which is the same contract as every other page change —
+    and the preview shows it straight away.
+
+    "auto" writes nothing: an unstamped page follows the visitor's device, so
+    the shipped files and the admin panel behave exactly as they always have.
+    """
+    from . import media
+
+    try:
+        theme = media.get_brand_tokens().get("theme") or media.DEFAULT_THEME
+    except Exception:
+        return raw
+    m = re.search(r"<html\b[^>]*>", raw, re.I)
+    if not m:
+        return raw
+    tag = re.sub(r'\s+data-default-theme="[^"]*"', "", m.group(0))
+    if theme in ("dark", "light"):
+        tag = re.sub(r"(/?)>$", f' data-default-theme="{theme}"' + r"\1>", tag, count=1)
+    return raw[:m.start()] + tag + raw[m.end():]
 
 
 # ---------------- navigation & social (baked into every page) ----------------

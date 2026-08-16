@@ -2348,7 +2348,9 @@
         }).join("");
         main.innerHTML =
           '<h1 class="admin-h1">Website &amp; Brand</h1>' +
-          '<p class="admin-sub">Colours, motion, identity assets and the 3D hero. Changes go live immediately and can always be reset.</p>' +
+          '<p class="admin-sub">Colours, motion, identity assets and the 3D hero. Colours and ' +
+          "motion go live immediately; the default theme reaches visitors at the next " +
+          "<b>Publish site</b>. Everything here can be reset.</p>" +
           '<div class="admin-panel"><h2>Brand colours</h2><div id="brand-warnings">' + warn + "</div>" +
           '<form class="admin-form" id="tokens-form">' +
           Object.keys(d.labels || {}).map(function (k) {
@@ -2361,6 +2363,15 @@
           '<div><label for="tk-motion">Animations</label><select id="tk-motion">' +
           '<option value="on"' + (t.motion === false ? "" : " selected") + '>On (default)</option>' +
           '<option value="off"' + (t.motion === false ? " selected" : "") + '>Off — calm site</option></select></div>' +
+          '<div><label for="tk-theme">Default theme for visitors</label><select id="tk-theme">' +
+          [["auto", "Follow the visitor's device"], ["dark", "Dark"], ["light", "Light"]]
+            .map(function (o) {
+              return '<option value="' + o[0] + '"' +
+                ((t.theme || "auto") === o[0] ? " selected" : "") + ">" + esc(o[1]) + "</option>";
+            }).join("") + "</select>" +
+          '<span class="field-help">What somebody sees the first time they arrive. Anyone who ' +
+          "has used the light/dark button keeps their own choice — this never overrides it. " +
+          "Reaches the live site at the next <b>Publish site</b>; <b>Preview</b> shows it now.</span></div>" +
           '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save brand</button>' +
           '<button class="btn btn--ghost btn--small" type="button" id="tokens-reset">Reset to defaults</button>' +
           '<span class="admin-inline-note">Contrast is checked on save — warnings never block you.</span></div></form></div>' +
@@ -2419,20 +2430,27 @@
         document.getElementById("tokens-form").addEventListener("submit", function (e) {
           e.preventDefault();
           var values = { radius: document.getElementById("tk-radius").value,
-                         motion: document.getElementById("tk-motion").value === "on" };
+                         motion: document.getElementById("tk-motion").value === "on",
+                         theme: document.getElementById("tk-theme").value };
           Object.keys(d.labels).forEach(function (k) {
             values[k] = document.getElementById("tk-" + k).value;
           });
           api("/api/admin/brand/tokens", { values: values }).then(function (r2) {
             if (!r2.ok) return apiErr(r2);
-            toast("Brand saved — live on the site now.");
+            toast(values.theme === (d.tokens || {}).theme
+              ? "Brand saved — live on the site now."
+              : "Brand saved. The default theme reaches visitors at the next Publish site.");
             document.getElementById("brand-warnings").innerHTML =
               (r2.data.warnings || []).map(function (w) { return '<p class="brand-warn">⚠ ' + esc(w) + "</p>"; }).join("");
           });
         });
         document.getElementById("tokens-reset").addEventListener("click", function () {
           if (!confirm("Reset colours, radius and motion to the original design?")) return;
-          api("/api/admin/brand/tokens", { values: { motion: true } }).then(function (r2) {
+          /* the default theme is not part of "the original design" — resetting
+             it here would quietly republish the whole site in another theme */
+          api("/api/admin/brand/tokens",
+              { values: { motion: true, theme: document.getElementById("tk-theme").value } }
+          ).then(function (r2) {
             r2.ok ? (toast("Brand reset."), views.brand()) : apiErr(r2);
           });
         });
