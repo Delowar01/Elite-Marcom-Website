@@ -286,6 +286,22 @@ documentation). Non-negotiable rules from it:
   headline and "Load more" both read it, so they cannot disagree. The website
   can still legitimately show fewer than the panel — `get_catalog` drops
   hidden items and, if the rule is on, zero-stock ones.
+- **Public addresses carry no `.html`.** The files keep their names; the
+  addresses do not. `clean_urls` in `server/main.py` is the whole mechanism:
+  `/about` is rewritten in place onto `about.html`, and `/about.html`,
+  `/about/` and `/index*` are answered with a **301** to the clean form. It
+  fires only for a slug `content.is_public_page` recognises — a built-in page
+  or a row in `custom_pages` — so `/admin`, `/api/…`, assets, downloads and
+  unknown addresses pass through untouched, and because nothing unknown is
+  ever rewritten a loop cannot form. It lives in the app, not in nginx, so
+  development and production route identically and the production nginx
+  config needs no change. Both editions work: `/ar/about`, `/ar/about.html`
+  → 301, and `/ar/` stays the Arabic root. **A new public link is written
+  `/services`, never `/services.html`** — in the pages, in page JS, in
+  `blocks.py` templates, in `collections.page_href`, in the sitemap, in
+  canonical/OG/JSON-LD and in email templates. `localize` rewrites a
+  one-segment `href="/x"` into `/ar/x` with a lookahead so `#fragments`
+  survive; two-segment paths (`/assets/…`, `/js/…`) are left alone.
 - After a code change that touches `public/*.html`, the admin must press
   **Publish site** once: published snapshots in `runtime/published/site/` are
   served ahead of `public/`, so a stale bake would hide new markup/scripts.

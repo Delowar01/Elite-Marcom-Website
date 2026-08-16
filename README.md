@@ -29,6 +29,10 @@ existing environment and never reinstall dependencies.
 ```
 public/                  strict public webroot (the only directory ever served)
   index/about/services/projects/giveaways/rental/careers/contact/privacy.html
+                                       served at /about, /services, … — the
+                                       `clean_urls` middleware in server/main.py
+                                       maps a slug onto its file and 301s the
+                                       old .html address to the new one
   styles.css home.css pages.css        design system + page styles
   js/                                  site, hero-3d, forms, page scripts
   vendor/three/                        Three.js 0.167.1 + GLTFLoader (vendored)

@@ -1857,7 +1857,7 @@
           '<button class="btn btn--primary btn--small" id="page-new">+ New page</button></div>' +
           '<form id="page-new-form" class="admin-form" hidden style="margin-bottom:18px;">' +
           '<div class="form-row"><label>Page name (shown in the menu)<input id="np-label" maxlength="60" required placeholder="Our team"></label>' +
-          '<label>Web address<span class="np-slug-wrap">/<input id="np-slug" maxlength="40" required placeholder="our-team">.html</span></label></div>' +
+          '<label>Web address<span class="np-slug-wrap">/<input id="np-slug" maxlength="40" required placeholder="our-team"></span></label></div>' +
           '<label>Browser &amp; search title<input id="np-title" maxlength="200" placeholder="Our team — Elite Marcom"></label>' +
           '<label>Meta description<textarea id="np-desc" rows="2" maxlength="300" placeholder="One or two sentences describing the page for search results."></textarea></label>' +
           '<label class="ed-check"><input type="checkbox" id="np-nav" checked> Show this page in the site menus</label>' +
@@ -3364,8 +3364,8 @@
                 : ""));
           }
           var link = meta.isLink
-            ? group("Link", "<label>Target (URL or /page.html)</label>" +
-                textInput("ed-href", attrs.href || meta.attrs.href, "/contact.html"))
+            ? group("Link", "<label>Target (URL or /page)</label>" +
+                textInput("ed-href", attrs.href || meta.attrs.href, "/contact"))
             : "";
           /* A Video element ships with a placeholder clip. This is how it is
              changed: a YouTube id or link in, a validated youtube-nocookie
@@ -3591,7 +3591,7 @@
                 var ins;
                 if (tag === "br") ins = "<br>";
                 else if (tag === "a") {
-                  var url = prompt("Link to (URL or /page.html):", "https://");
+                  var url = prompt("Link to (URL or /page):", "https://");
                   if (!url) return;
                   ins = '<a href="' + url.trim() + '">' + (sel || "link text") + "</a>";
                 } else if (tag === "li") ins = "<ul><li>" + (sel || "item") + "</li></ul>";
@@ -3624,7 +3624,7 @@
                 var ins;
                 if (tag === "br") ins = "<br>";
                 else if (tag === "a") {
-                  var url = prompt("Link to (URL or /page.html):", "https://");
+                  var url = prompt("Link to (URL or /page):", "https://");
                   if (!url) return;
                   ins = '<a href="' + url.trim() + '">' + (sel || "link text") + "</a>";
                 } else ins = "<" + tag + ">" + (sel || "text") + "</" + tag + ">";
@@ -4201,7 +4201,7 @@
           '<div class="full"><label for="an-text">Message</label><input id="an-text" maxlength="200" value="' +
           esc(a["announce.text"] || "") + '" placeholder="Visit us at Cityscape, stand B21"></div>' +
           '<div><label for="an-link">Link (optional)</label><input id="an-link" maxlength="200" value="' +
-          esc(a["announce.link"] || "") + '" placeholder="/contact.html"></div>' +
+          esc(a["announce.link"] || "") + '" placeholder="/contact"></div>' +
           '<div><label for="an-label">Link label</label><input id="an-label" maxlength="60" value="' +
           esc(a["announce.linkLabel"] || "") + '" placeholder="Book a meeting"></div>' +
           '<div><label for="an-from">Show from (optional)</label><input type="datetime-local" id="an-from" value="' +
@@ -4847,7 +4847,7 @@
       { label: "View details", action: function () { location.hash = "#items/" + jzState.market + "/" + encodeURIComponent(it.id); } },
       { label: "Open on the website", disabled: !it.live,
         title: "This item is not on the website right now",
-        action: function () { window.open("/product.html?country=" + jzState.market + "&id=" + encodeURIComponent(it.id), "_blank", "noopener"); } },
+        action: function () { window.open("/product?country=" + jzState.market + "&id=" + encodeURIComponent(it.id), "_blank", "noopener"); } },
       { label: "Download printing manual",
         action: function () { location.href = "/api/giveaways/manual?country=" + jzState.market + "&product_id=" + encodeURIComponent(it.id); } },
       { label: "Copy SKU", action: function () { jzCopy(it.code); } },

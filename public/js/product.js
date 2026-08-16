@@ -224,7 +224,7 @@
         els.variants.querySelectorAll("select").forEach(function (s) { want[s.getAttribute("data-variant")] = s.value; });
         var next = pickVariant(want, sel.getAttribute("data-variant"));
         if (next && next.id !== p.id) {
-          history.replaceState(null, "", "/product.html?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(next.id));
+          history.replaceState(null, "", "/product?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(next.id));
           render(next);
         } else {
           renderVariants(p); /* impossible combination — snap selects back */
@@ -402,7 +402,7 @@
     /* alternative colours — sibling products resolved server-side */
     if (p.colorOptions && p.colorOptions.length) {
       els.colors.innerHTML = p.colorOptions.map(function (o) {
-        return '<a class="pdp__color" href="/product.html?country=' + encodeURIComponent(market) +
+        return '<a class="pdp__color" href="/product?country=' + encodeURIComponent(market) +
                "&id=" + encodeURIComponent(o.id) + '" title="' + EM.escapeHtml(o.name) + '">' +
                (o.image ? '<img src="' + EM.escapeHtml(o.image) + '" alt="' + EM.escapeHtml(o.name) + '" loading="lazy" width="64" height="64">' : "") +
                (o.color ? "<span>" + EM.escapeHtml(o.color) + "</span>" : "") +
@@ -632,7 +632,7 @@
       var cameFromCatalog = false;
       try {
         cameFromCatalog = document.referrer &&
-          new URL(document.referrer).pathname === "/giveaways.html" && history.length > 1;
+          new URL(document.referrer).pathname === "/giveaways" && history.length > 1;
       } catch (err) { cameFromCatalog = false; }
       if (cameFromCatalog) {
         e.preventDefault();

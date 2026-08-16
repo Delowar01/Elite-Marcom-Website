@@ -44,7 +44,7 @@ def base_fields(form: str) -> dict:
         "challenge": get_challenge(form),
         "consentVersion": config.CONSENT_VERSION,
         "website": "",
-        "sourcePage": "/contact.html",
+        "sourcePage": "/contact",
     }
 
 
@@ -59,14 +59,103 @@ def test_security_config():
     assert data["consentVersion"] == config.CONSENT_VERSION
 
 
+# The public address of every page, home first. The .html the file still
+# carries is an implementation detail the website never shows.
+CLEAN_PAGES = ("/", "/about", "/services", "/projects", "/giveaways", "/rental",
+               "/careers", "/contact", "/privacy", "/product", "/rental-item")
+
+
 def test_pages_load():
-    for page in ("/", "/about.html", "/services.html", "/projects.html", "/giveaways.html",
-                 "/rental.html", "/careers.html", "/contact.html", "/privacy.html"):
+    for page in CLEAN_PAGES:
         res = client.get(page)
         assert res.status_code == 200, page
         assert res.headers["content-security-policy"]
         assert res.headers["x-content-type-options"] == "nosniff"
-        assert res.text.count("<h1") == (1 if page != "/" else 1), page
+        assert res.text.count("<h1") == 1, page
+
+
+def test_the_old_html_address_makes_exactly_one_hop():
+    """Every page keeps its old address as a permanent redirect, and the
+    redirect lands on a page rather than on another redirect — one hop, no
+    loop, which is the whole reason the rewrite only ever runs on a slug the
+    site publishes."""
+    for page in CLEAN_PAGES:
+        old = "/" if page == "/" else page + ".html"
+        res = client.get(old, follow_redirects=False)
+        if page == "/":
+            assert res.status_code == 200      # the home page has no old form
+            continue
+        assert res.status_code == 301, old
+        assert res.headers["location"] == page, old
+        landed = client.get(res.headers["location"], follow_redirects=False)
+        assert landed.status_code == 200, page
+
+
+def test_a_trailing_slash_is_the_same_page_under_a_spare_address():
+    """Nobody typed /about.html/, but /about/ is an easy thing to type or to
+    be linked with, and two addresses for one page is what a canonical is
+    supposed to prevent. /ar/ is the Arabic edition's own root and must not be
+    caught by this."""
+    for page in CLEAN_PAGES:
+        if page == "/":
+            continue
+        res = client.get(page + "/", follow_redirects=False)
+        assert res.status_code == 301, page
+        assert res.headers["location"] == page, page
+    assert client.get("/", follow_redirects=False).status_code == 200
+    assert client.get("/ar/", follow_redirects=False).status_code in (200, 404)
+
+
+def test_index_html_is_the_home_page_not_a_second_address_for_it():
+    for path in ("/index.html", "/index", "/index/"):
+        res = client.get(path, follow_redirects=False)
+        assert res.status_code == 301, path
+        assert res.headers["location"] == "/", path
+
+
+def test_a_redirect_keeps_the_query_it_was_given():
+    """A product link carries the market and the id; losing them on the way
+    through the redirect would land the visitor on an empty page."""
+    res = client.get("/product.html?country=ksa&id=24246", follow_redirects=False)
+    assert res.status_code == 301
+    assert res.headers["location"] == "/product?country=ksa&id=24246"
+
+
+def test_clean_urls_leave_everything_that_is_not_a_page_alone():
+    """The rewrite must not reach the admin, the API, an asset or a download —
+    it only ever fires for a slug the site actually publishes."""
+    for path, expected in (("/admin", 200), ("/api/security/config", 200),
+                           ("/styles.css", 200), ("/js/site.js", 200),
+                           ("/assets/logo.svg", 200), ("/sitemap.xml", 200),
+                           ("/robots.txt", 200), ("/data/rental-products.json", 200),
+                           ("/assets/aces-exhibition.glb", 200)):
+        res = client.get(path, follow_redirects=False)
+        assert res.status_code == expected, path
+    for missing in ("/nothing-here", "/nothing-here.html", "/admin.html"):
+        assert client.get(missing).status_code == 404, missing
+
+
+def test_no_public_page_still_links_to_a_dot_html_address():
+    """Links, canonicals, Open Graph and structured data all move together —
+    a page that redirects on every click is slower and reads as an old site."""
+    import pathlib as _p
+    import re as _re
+
+    for f in sorted(_p.Path("public").glob("*.html")):
+        raw = f.read_text(encoding="utf-8")
+        assert not _re.search(r'href="/[a-z][a-z0-9-]*\.html', raw), f.name
+        assert not _re.search(r'https://www\.elitemarcom\.com/[a-z][a-z0-9-]*\.html', raw), f.name
+    for f in sorted(_p.Path("public/js").glob("*.js")):
+        raw = f.read_text(encoding="utf-8")
+        # insights.js still *recognises* the old form so a direct hit is counted
+        stale = _re.findall(r'["\'](/[a-z][a-z0-9-]*\.html)', raw)
+        assert not stale, (f.name, stale)
+
+
+def test_the_sitemap_lists_clean_addresses_only():
+    body = client.get("/sitemap.xml").text
+    assert ".html" not in body
+    assert "<loc>https://www.elitemarcom.com/about</loc>" in body
 
 
 def test_private_paths_blocked():
@@ -297,7 +386,7 @@ def test_the_catalogue_does_not_advertise_zero_prices():
     """A leftover label sat next to the product count reading "0 prices
     displayed". We deliberately show no prices at all, so stating it as a
     figure of zero only reads as something broken."""
-    assert "prices displayed" not in client.get("/giveaways.html").text
+    assert "prices displayed" not in client.get("/giveaways").text
 
 
 def enquiry_form(**overrides) -> dict:
@@ -404,7 +493,7 @@ def careers_form(form_key: str = "career", **overrides) -> dict:
         "consent": "yes",
         "challenge": get_challenge(form_key),
         "consentVersion": config.CONSENT_VERSION,
-        "sourcePage": "/careers.html",
+        "sourcePage": "/careers",
         "website": "",
     }
     fields.update(overrides)
@@ -2015,7 +2104,7 @@ def test_jasani_rejects_foreign_image_hosts():
 
 def test_token_never_in_public_payloads(tmp_path):
     """The supplier token must not appear in anything served to the browser."""
-    for path in ("/", "/giveaways.html", "/js/giveaways.js", "/api/security/config"):
+    for path in ("/", "/giveaways", "/js/giveaways.js", "/api/security/config"):
         res = client.get(path)
         assert "JASANI" not in res.text or path == "/js/giveaways.js" and "JASANI" not in res.text
         assert "token" not in res.headers.get("set-cookie", "")

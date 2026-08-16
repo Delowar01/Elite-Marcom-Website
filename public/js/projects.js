@@ -200,7 +200,7 @@
         "<div><dt>Focus</dt><dd>" + EM.escapeHtml(p.focus) + "</dd></div>" +
         "<div><dt>Delivery</dt><dd>" + EM.escapeHtml(p.delivery) + "</dd></div>" +
       "</dl>" +
-      '<a class="btn btn--primary" href="/contact.html">Discuss a similar project</a>';
+      '<a class="btn btn--primary" href="/contact">Discuss a similar project</a>';
     dlg.open();
   }
   document.querySelectorAll("[data-open-project]").forEach(function (btn) {

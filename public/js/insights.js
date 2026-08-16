@@ -76,12 +76,12 @@
   function trackPageview() {
     push("pageview", { referrer: doc.referrer || "" });
     var id = new URLSearchParams(location.search).get("id");
-    if (/product\.html$/.test(location.pathname) && id) {
+    if (/\/product(\.html)?$/.test(location.pathname) && id) {
       var name = (doc.getElementById("pdp-title") || {}).textContent || "";
       push("product_view", { meta: (name || "").trim().slice(0, 80) || ("id " + id) });
       ga4("view_item", { item_id: id });
     }
-    if (/rental-item\.html$/.test(location.pathname) && id) {
+    if (/\/rental-item(\.html)?$/.test(location.pathname) && id) {
       var rname = (doc.getElementById("rip-title") || {}).textContent || "";
       push("product_view", { meta: "Rental — " + ((rname || id).trim().slice(0, 70)) });
     }

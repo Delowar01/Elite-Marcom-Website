@@ -185,8 +185,8 @@ _TEMPLATES: list[dict] = [
     <h2 class="reveal" data-reveal="fade-up">Ready to talk about your project?</h2>
     <p class="lede reveal" data-reveal="fade-up" data-reveal-delay="80" style="margin-inline:auto;">Tell us what you are planning and we will come back with an approach, a timeline and a number.</p>
     <p class="page-hero__actions reveal" data-reveal="fade-up" data-reveal-delay="160">
-      <a class="btn btn--primary" href="/contact.html">Start a project</a>
-      <a class="btn btn--ghost" href="/projects.html">See our work</a>
+      <a class="btn btn--primary" href="/contact">Start a project</a>
+      <a class="btn btn--ghost" href="/projects">See our work</a>
     </p>
   </div>""",
     },
@@ -299,7 +299,7 @@ _ELEMENTS: list[dict] = [
         "label": "Button",
         "hint": "A primary call to action.",
         "html": ('<p class="reveal" data-reveal="fade-up">'
-                 '<a class="btn btn--primary" href="/contact.html" data-magnetic>'
+                 '<a class="btn btn--primary" href="/contact" data-magnetic>'
                  'Start the conversation</a></p>'),
     },
     {
@@ -307,7 +307,7 @@ _ELEMENTS: list[dict] = [
         "label": "Outline button",
         "hint": "A quieter secondary button.",
         "html": ('<p class="reveal" data-reveal="fade-up">'
-                 '<a class="btn btn--ghost" href="/projects.html">See our work</a></p>'),
+                 '<a class="btn btn--ghost" href="/projects">See our work</a></p>'),
     },
     {
         "id": "icon",
@@ -560,7 +560,7 @@ def page_shell(slug: str, title: str, description: str, heading: str, lead: str)
     script chain are identical to the rest of the site by construction —
     a hand-kept copy would drift the first time a shared asset changed."""
     raw = (config.PUBLIC_DIR / _SHELL_SOURCE).read_text(encoding="utf-8")
-    url = f"https://www.elitemarcom.com/{slug}.html"
+    url = f"https://www.elitemarcom.com/{slug}"
     safe_title = html_mod.escape(title, quote=True)
     safe_desc = html_mod.escape(re.sub(r"\s+", " ", description).strip(), quote=True)
     raw = re.sub(r"<title>.*?</title>", f"<title>{html_mod.escape(title)}</title>",

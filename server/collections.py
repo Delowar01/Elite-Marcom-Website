@@ -253,7 +253,7 @@ _SERVICE_FIELDS = [
     {"key": "linkLabel", "label": "Button label", "type": "text", "max": 80},
     {"key": "link", "label": "Button link", "type": "link", "max": 300},
     {"key": "anchor", "label": "Anchor id", "type": "slug", "max": 60,
-     "hint": "Used by links like /services.html#branding. Leave alone unless you know why."},
+     "hint": "Used by links like /services#branding. Leave alone unless you know why."},
 ]
 
 
@@ -352,16 +352,12 @@ NAV_PARENT = {"product": "giveaways", "rental-item": "rental"}
 
 def page_href(page: str) -> str:
     """The address a page is reached at — what a menu link must match to be
-    marked as the current one."""
-    from . import content
-
+    marked as the current one. The slug *is* the address: public pages are
+    served without the .html the file still carries."""
     page = NAV_PARENT.get(page, page)
     if not page or page in GLOBAL_PAGES:
         return ""
-    if page == "index":
-        return "/"
-    cfg = content.all_pages().get(page) or {}
-    return "/" + (cfg.get("file") or f"{page}.html")
+    return "/" if page == "index" else "/" + page
 
 
 def _is_current(link: str, page: str) -> str:
@@ -743,7 +739,7 @@ _CASE_FIELDS = [
     {"key": "openId", "label": "Project id it opens", "type": "slug", "max": 60,
      "hint": "Must match an id in the projects data, or the button opens nothing."},
     {"key": "anchor", "label": "Anchor id", "type": "slug", "max": 60,
-     "hint": "Used by links like /projects.html#virgo-acp."},
+     "hint": "Used by links like /projects#virgo-acp."},
 ]
 
 

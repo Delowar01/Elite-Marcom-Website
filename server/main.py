@@ -14,7 +14,7 @@ from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -273,7 +273,7 @@ async def careers_apply(
     consent: Annotated[str, Form()],
     challenge: Annotated[str, Form()],
     consentVersion: Annotated[str, Form()],
-    sourcePage: Annotated[str, Form()] = "/careers.html",
+    sourcePage: Annotated[str, Form()] = "/careers",
     website: Annotated[str, Form()] = "",
     turnstileToken: Annotated[str | None, Form()] = None,
     cv: Annotated[UploadFile | None, File()] = None,
@@ -326,7 +326,7 @@ class ContactEnquiry(BaseModel):
     challenge: str
     consentVersion: str
     website: str = ""
-    sourcePage: str = "/contact.html"
+    sourcePage: str = "/contact"
     turnstileToken: str | None = None
 
 
@@ -418,7 +418,7 @@ class RentalEnquiry(BaseModel):
     challenge: str
     consentVersion: str
     website: str = ""
-    sourcePage: str = "/rental.html"
+    sourcePage: str = "/rental"
     turnstileToken: str | None = None
 
     @field_validator("items")
@@ -496,7 +496,7 @@ class RentalNotification(BaseModel):
     challenge: str
     consentVersion: str
     website: str = ""
-    sourcePage: str = "/rental.html"
+    sourcePage: str = "/rental"
     turnstileToken: str | None = None
 
 
@@ -722,7 +722,7 @@ async def giveaways_enquiry(
     consentVersion: Annotated[str, Form()],
     requiredBy: Annotated[str, Form()] = "",
     notes: Annotated[str, Form()] = "",
-    sourcePage: Annotated[str, Form()] = "/giveaways.html",
+    sourcePage: Annotated[str, Form()] = "/giveaways",
     website: Annotated[str, Form()] = "",
     turnstileToken: Annotated[str | None, Form()] = None,
     logo: Annotated[UploadFile | None, File()] = None,
@@ -784,7 +784,7 @@ class GiveawayNotification(BaseModel):
     challenge: str
     consentVersion: str
     website: str = ""
-    sourcePage: str = "/giveaways.html"
+    sourcePage: str = "/giveaways"
     turnstileToken: str | None = None
 
 
@@ -1048,6 +1048,55 @@ async def block_private_paths(request: Request, call_next):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     if "/../" in path or path.endswith("/..") or "\\" in path:
         return JSONResponse({"detail": "Not found"}, status_code=404)
+    return await call_next(request)
+
+
+# ---------------- clean URLs: no .html in a public address ----------------
+
+# One optional /ar/ edition prefix, one slug, and optionally the old extension
+# or a trailing slash — both of which are the same page under a spare address.
+# Anything with a second path segment (/api/…, /assets/…) or another suffix
+# (/styles.css, /sitemap.xml) does not match at all and is never touched.
+_CLEAN_URL_RE = re.compile(r"^/(ar/)?([a-z][a-z0-9-]{0,60})(\.html|/)?$")
+
+
+def _permanent(request: Request, path: str) -> RedirectResponse:
+    query = request.url.query
+    return RedirectResponse(path + ("?" + query if query else ""), status_code=301)
+
+
+@app.middleware("http")
+async def clean_urls(request: Request, call_next):
+    """Public pages are addressed without .html, in both editions.
+
+    Two rules, and each is the exact inverse of the other, so they cannot
+    disagree or bounce off each other:
+
+      /about.html  ->  301 to /about          (the address changes)
+      /about/      ->  301 to /about          (one page, one address)
+      /about       ->  served from about.html (the file does not)
+
+    Only a slug the site actually publishes is rewritten — `is_public_page`
+    decides — so /admin, /api/…, assets, downloads and unknown addresses go
+    through untouched and 404 exactly as they did. The old address never
+    reaches the file, and the new one never redirects, so one hop is all a
+    visitor or a crawler ever makes.
+
+    /index.html and /index are the home page under another name; both go to
+    "/" rather than becoming a second address for it.
+    """
+    match = _CLEAN_URL_RE.match(request.url.path)
+    if match:
+        from . import content
+
+        prefix, slug, spare = match.group(1) or "", match.group(2), match.group(3)
+        if slug == "index":
+            return _permanent(request, "/" + prefix)
+        if content.is_public_page(slug):
+            if spare:                       # ".html" or a trailing slash
+                return _permanent(request, f"/{prefix}{slug}")
+            # rewrite in place: the response is the page, not a redirect
+            request.scope["path"] = f"/{prefix}{slug}.html"
     return await call_next(request)
 
 

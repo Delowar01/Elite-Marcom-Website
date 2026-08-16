@@ -128,7 +128,7 @@ def test_general_inquiry_sends_both_emails():
         "enquiryType": "New project", "fullName": "Amira Hassan", "company": "Falcon Events",
         "email": "amira@example.com", "phone": "+966551234567", "market": "Saudi Arabia",
         "service": "Exhibition Stands", "message": "We need a 200 sqm double-deck stand.",
-        "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+        "sourcePage": "/contact", **base("contact")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     reference = res.json()["reference"]
     assert SENT == []                      # nothing sent during the request
@@ -170,7 +170,7 @@ def test_job_application_attaches_the_cv():
         "location": "Dubai", "roleId": "general", "portfolioUrl": "https://portfolio.example.com/lina",
         "introduction": "Eight years designing award-winning exhibition experiences.",
         "consent": "yes", "challenge": challenge("career"), "consentVersion": "2026-01",
-        "sourcePage": "/careers.html"},
+        "sourcePage": "/careers"},
         files={"cv": ("lina-cv.pdf", pdf, "application/pdf")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     reference = res.json()["reference"]
@@ -199,7 +199,7 @@ def test_corporate_gifts_request_sends_both_emails():
         "consent": "yes", "market": "ksa",
         "items": json.dumps([{"productId": "prev-hoodie-ksa", "quantity": 50}]),
         "challenge": challenge("giveaway_enquiry"), "consentVersion": "2026-01",
-        "sourcePage": "/giveaways.html"}, headers=ORIGIN)
+        "sourcePage": "/giveaways"}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     drain()
     internal = by_recipient("mohammad.hossain@elitemarcom.com")
@@ -217,7 +217,7 @@ def test_stock_notification_sends_both_emails():
     res = client.post("/api/giveaways/notifications", json={
         "fullName": "Sara Al Qahtani", "company": "Vision Expo", "email": "sara@example.com",
         "phone": "+966542228899", "message": "", "market": "ksa",
-        "productId": products[0]["id"], "sourcePage": "/giveaways.html",
+        "productId": products[0]["id"], "sourcePage": "/giveaways",
         **base("giveaway_notification")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     drain()
@@ -236,7 +236,7 @@ def test_rental_inquiry_sends_both_emails():
         "phone": "+966509991122", "startDate": "2026-10-02", "endDate": "2026-10-06",
         "eventCity": "Riyadh", "venue": "Riyadh Front", "notes": "Full AV setup.",
         "market": "ksa", "items": [{"productId": rentals[0]["id"], "quantity": 2, "days": 4}],
-        "sourcePage": "/rental.html", **base("rental_enquiry")}, headers=ORIGIN)
+        "sourcePage": "/rental", **base("rental_enquiry")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     drain()
     internal = by_recipient("mohammad.hossain@elitemarcom.com")
@@ -257,7 +257,7 @@ def test_rental_availability_is_its_own_notification_type():
         "email": "nadia.customer@example.com", "phone": "+966554443322",
         "requiredFrom": "2026-11-02", "requiredUntil": "2026-11-08",
         "message": "We need this for the Riyadh Season activation.",
-        "market": "ksa", "productId": rental["id"], "sourcePage": "/rental.html",
+        "market": "ksa", "productId": rental["id"], "sourcePage": "/rental",
         **base("rental_notification")}, headers=ORIGIN)
     assert res.status_code == 200, res.text
     reference = res.json()["reference"]
@@ -313,7 +313,7 @@ def test_rental_availability_settings_are_independent_of_stock_notification():
         "fullName": "Route Check", "company": "Route Co", "email": "route.rental@example.com",
         "phone": "+966554443322", "requiredFrom": "2026-12-01", "requiredUntil": "2026-12-05",
         "message": "Routing check for the rental availability alert.",
-        "market": "ksa", "productId": load_rentals()[0]["id"], "sourcePage": "/rental.html",
+        "market": "ksa", "productId": load_rentals()[0]["id"], "sourcePage": "/rental",
         **base("rental_notification")}, headers=ORIGIN)
     assert res.status_code == 200
     drain()
@@ -330,7 +330,7 @@ def test_routing_change_affects_the_next_submission():
         "enquiryType": "General enquiry", "fullName": "Routing Test", "company": "",
         "email": "routing@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Branding", "message": "Testing the routing change end to end.",
-        "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+        "sourcePage": "/contact", **base("contact")}, headers=ORIGIN)
     drain()
     assert by_recipient("newteam@elitemarcom.com") is not None
     assert by_recipient("info@elitemarcom.com") is None
@@ -343,7 +343,7 @@ def test_on_off_switches_are_respected():
         "enquiryType": "General enquiry", "fullName": "Switch Test", "company": "",
         "email": "switch@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Branding", "message": "Only the customer should hear back here.",
-        "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+        "sourcePage": "/contact", **base("contact")}, headers=ORIGIN)
     drain()
     assert by_recipient("info@elitemarcom.com") is None
     assert by_recipient("switch@example.com") is not None
@@ -354,7 +354,7 @@ def test_on_off_switches_are_respected():
         "enquiryType": "General enquiry", "fullName": "Switch Test 2", "company": "",
         "email": "switch2@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Branding", "message": "Only the team should hear about this one.",
-        "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+        "sourcePage": "/contact", **base("contact")}, headers=ORIGIN)
     drain()
     assert by_recipient("info@elitemarcom.com") is not None
     assert by_recipient("switch2@example.com") is None
@@ -367,18 +367,18 @@ def test_template_edits_reach_the_customer_email():
         "heading": "Thanks, {{customer_name}}",
         "body": "We received your note about {{service}}. Reference {{reference_number}}.",
         "closing": "Talk soon.", "buttonText": "Our services",
-        "buttonUrl": "https://www.elitemarcom.com/services.html"})
+        "buttonUrl": "https://www.elitemarcom.com/services"})
     client.post("/api/contact/enquiries", json={
         "enquiryType": "General enquiry", "fullName": "Template Tester", "company": "",
         "email": "template@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Corporate Events", "message": "Checking the custom template rendering.",
-        "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+        "sourcePage": "/contact", **base("contact")}, headers=ORIGIN)
     drain()
     customer = by_recipient("template@example.com")
     assert customer["subject"] == "Hello Template Tester — Elite Marcom"
     assert "Thanks, Template Tester" in customer["html"]
     assert "Corporate Events" in customer["html"]
-    assert "https://www.elitemarcom.com/services.html" in customer["html"]
+    assert "https://www.elitemarcom.com/services" in customer["html"]
     assert "Our services" in customer["html"]
     assert "{{" not in customer["html"]                       # every variable resolved
 
@@ -403,7 +403,7 @@ def test_template_values_are_escaped_not_injected():
         "company": "", "email": "bobby@example.com", "phone": "+966500000000",
         "market": "Worldwide", "service": "Branding",
         "message": "Testing that markup in a name cannot break the email.",
-        "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+        "sourcePage": "/contact", **base("contact")}, headers=ORIGIN)
     drain()
     customer = by_recipient("bobby@example.com")
     assert "<script>" not in customer["html"]
@@ -418,7 +418,7 @@ def test_failed_send_is_retried_then_recovered_without_duplicates():
         "enquiryType": "General enquiry", "fullName": "Fail Case", "company": "",
         "email": "fail@example.com", "phone": "+966500000000", "market": "Worldwide",
         "service": "Branding", "message": "The provider will reject this one.",
-        "sourcePage": "/contact.html", **base("contact")}, headers=ORIGIN)
+        "sourcePage": "/contact", **base("contact")}, headers=ORIGIN)
     assert res.status_code == 200          # the visitor's request is still safely stored
     reference = res.json()["reference"]
 

@@ -1067,7 +1067,7 @@ def test_the_published_site_serves_the_chosen_default():
     client.post("/api/admin/brand/tokens", json={"values": {"theme": "dark"}},
                 headers={"X-CSRF": me["csrf"]})
     client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
-    for path in ("/", "/about.html", "/giveaways.html"):
+    for path in ("/", "/about", "/giveaways"):
         body = client.get(path).text
         assert 'data-default-theme="dark"' in body, path
         # and the script that reads it is the one we shipped, once
@@ -1201,7 +1201,7 @@ def test_content_save_preview_publish_and_rollback():
     assert pub.status_code == 200 and pub.json()["pages"] >= 11
     v1 = pub.json()["id"]
     assert "Bold experiences" in client.get("/").text
-    assert "Bold experiences" in client.get("/index.html").text
+    assert "Bold experiences" in client.get("/").text
     assert client.get("/sitemap.xml").text.startswith("<?xml")
     # second edit + publish v2
     client.post("/api/admin/pages/index",
@@ -1232,18 +1232,18 @@ def test_global_header_footer_bake_applies_everywhere():
     # an edit to the Header list and it has to reach every page
     from server import collections as co
 
-    about_link = [i for i in co.items("header-nav") if i["values"]["link"] == "/about.html"][0]
+    about_link = [i for i in co.items("header-nav") if i["values"]["link"] == "/about"][0]
     renamed = client.post("/api/admin/collections/header-nav/items/" + about_link["id"],
                           headers={"X-CSRF": me["csrf"]},
                           json={"values": dict(about_link["values"], label="Our Story")})
     assert renamed.status_code == 200, renamed.text
     client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
-    about = client.get("/about.html").text
+    about = client.get("/about").text
     assert ">Our Story</a>" in about
     assert 'href="mailto:hello@elitemarcom.com"' in about
     assert ">hello@elitemarcom.com</a>" in about
     # and it is on a page that is not the one the list was read from
-    assert ">Our Story</a>" in client.get("/services.html").text
+    assert ">Our Story</a>" in client.get("/services").text
     co.reset("header-nav", "test")
     # unknown fields are rejected
     bad = client.post("/api/admin/pages/_global",
@@ -1345,7 +1345,7 @@ def test_visual_editor_page_injects_bridge_and_is_frameable():
     assert prev.headers["x-frame-options"] == "DENY"
     assert "editor-bridge" not in prev.text
     # public pages never carry the bridge
-    assert "editor-bridge" not in client.get("/index.html").text
+    assert "editor-bridge" not in client.get("/").text
     assert client.get("/admin/visual/nope").status_code == 404
 
 
@@ -1670,25 +1670,25 @@ def test_custom_page_create_edit_publish_and_delete():
     preview = client.get("/admin/preview/our-team")
     assert preview.status_code == 200
     assert "The people behind it" in preview.text
-    assert '<link rel="canonical" href="https://www.elitemarcom.com/our-team.html">' in preview.text
+    assert '<link rel="canonical" href="https://www.elitemarcom.com/our-team">' in preview.text
     assert '<footer class="site-footer">' in preview.text  # same shell as the rest of the site
 
     # not on the public site until it is published
-    assert client.get("/our-team.html").status_code == 404
+    assert client.get("/our-team").status_code == 404
     pub = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
     assert pub.status_code == 200
-    live = client.get("/our-team.html")
+    live = client.get("/our-team")
     assert live.status_code == 200 and "The people behind it" in live.text
     # and it is linked from the menus of every other page, plus the sitemap
-    assert '<li><a href="/our-team.html">Our team</a></li>' in client.get("/about.html").text
-    assert "/our-team.html" in client.get("/sitemap.xml").text
+    assert '<li><a href="/our-team">Our team</a></li>' in client.get("/about").text
+    assert "/our-team" in client.get("/sitemap.xml").text
 
     # taking it out of the menus leaves the page reachable by address
     client.post("/api/admin/pages-meta/our-team", json={"nav": False},
                 headers={"X-CSRF": me["csrf"]})
     client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
-    assert "/our-team.html" not in client.get("/about.html").text
-    assert client.get("/our-team.html").status_code == 200
+    assert "/our-team" not in client.get("/about").text
+    assert client.get("/our-team").status_code == 200
 
     # reserved and malformed addresses are refused, as are duplicates
     for slug in ("our-team", "admin", "about", "Our Team", "a", "x" * 60):
@@ -1701,7 +1701,7 @@ def test_custom_page_create_edit_publish_and_delete():
 
     gone = client.post("/api/admin/pages-delete/our-team", headers={"X-CSRF": me["csrf"]})
     assert gone.status_code == 200
-    assert client.get("/our-team.html").status_code == 404
+    assert client.get("/our-team").status_code == 404
     assert "our-team" not in {p["page"] for p in client.get("/api/admin/pages").json()["pages"]}
     client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
 
@@ -1764,12 +1764,12 @@ def test_insights_config_public_and_beacon_collects():
     batch = {"events": [
         {"kind": "pageview", "path": "/", "referrer": "https://google.com/search?q=x",
          "session": "sess-aaa"},
-        {"kind": "pageview", "path": "/giveaways.html", "session": "sess-aaa"},
-        {"kind": "product_view", "path": "/product.html", "session": "sess-aaa",
+        {"kind": "pageview", "path": "/giveaways", "session": "sess-aaa"},
+        {"kind": "product_view", "path": "/product", "session": "sess-aaa",
          "meta": "A5 Eco Notebook"},
-        {"kind": "catalog_search", "path": "/giveaways.html", "session": "sess-aaa",
+        {"kind": "catalog_search", "path": "/giveaways", "session": "sess-aaa",
          "meta": "gifts: notebook"},
-        {"kind": "add_to_request", "path": "/product.html", "session": "sess-aaa",
+        {"kind": "add_to_request", "path": "/product", "session": "sess-aaa",
          "meta": "A5 Eco Notebook"},
         {"kind": "vital", "metric": "LCP", "value": 2100.5, "path": "/"},
         {"kind": "vital", "metric": "CLS", "value": 0.04, "path": "/"},
@@ -1783,7 +1783,7 @@ def test_insights_config_public_and_beacon_collects():
     # a second visitor from another session
     client.post("/api/insights/collect", json={"events": [
         {"kind": "pageview", "path": "/", "session": "sess-bbb"},
-        {"kind": "pageview", "path": "/contact.html", "session": "sess-bbb"},
+        {"kind": "pageview", "path": "/contact", "session": "sess-bbb"},
     ]})
     # unknown fields are refused outright
     assert client.post("/api/insights/collect",
@@ -1817,7 +1817,7 @@ def test_insights_summary_reports_traffic_and_funnel():
     assert d["totals"]["sessions"] == 2
     assert len(d["series"]) == 30 and d["series"][-1]["views"] == 4
     labels = {p["label"] for p in d["topPages"]}
-    assert "/" in labels and "/giveaways.html" in labels
+    assert "/" in labels and "/giveaways" in labels
     assert d["referrers"][0]["label"] == "google.com"
     assert d["devices"] and d["devices"][0]["count"] >= 1
     assert d["entryPages"] and d["exitPages"]
@@ -1837,7 +1837,7 @@ def test_enquiry_records_a_server_side_conversion():
         "company": "Test Co", "email": "insights@example.com", "phone": "+966500000000",
         "market": "Saudi Arabia", "service": "Branding",
         "message": "Please send a proposal for our stand.", "consent": True,
-        "challenge": challenge, "consentVersion": "2026-01", "sourcePage": "/contact.html"},
+        "challenge": challenge, "consentVersion": "2026-01", "sourcePage": "/contact"},
         headers={"Origin": "http://127.0.0.1:8847"})
     assert res.status_code == 200, res.text
     after = client.get("/api/admin/insights?days=7").json()
@@ -2039,7 +2039,7 @@ def test_announcement_bar_schedule_window():
     assert client.get("/api/site/announcement").json()["show"] is False
     ok = client.post("/api/admin/settings", json={"values": {
         "announce.enabled": True, "announce.text": "Visit us at Cityscape, stand B21",
-        "announce.link": "/contact.html", "announce.linkLabel": "Book a meeting",
+        "announce.link": "/contact", "announce.linkLabel": "Book a meeting",
         "announce.style": "brand"}}, headers={"X-CSRF": me["csrf"]})
     assert ok.status_code == 200
     live = client.get("/api/site/announcement").json()
@@ -2072,7 +2072,7 @@ def test_arabic_edition_publishes_rtl_pages():
     client.post("/api/admin/settings", json={"values": {"site.languages": ["en"]}},
                 headers={"X-CSRF": me["csrf"]})
     client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
-    assert client.get("/ar/index.html").status_code == 404
+    assert client.get("/ar/").status_code == 404
     assert "lang-switch" not in client.get("/").text
 
     # switch Arabic on and publish
@@ -2080,23 +2080,23 @@ def test_arabic_edition_publishes_rtl_pages():
                 headers={"X-CSRF": me["csrf"]})
     pub = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
     assert pub.status_code == 200 and pub.json()["pages"] >= 22   # both editions
-    ar = client.get("/ar/index.html")
+    ar = client.get("/ar/")
     assert ar.status_code == 200
     assert 'lang="ar"' in ar.text and 'dir="rtl"' in ar.text
     assert "تجارب استثنائية" in ar.text
-    assert 'href="/ar/about.html"' in ar.text        # navigation stays in the Arabic edition
+    assert 'href="/ar/about"' in ar.text        # navigation stays in the Arabic edition
     assert 'hreflang="en"' in ar.text                # switch back to English
     assert client.get("/ar/").status_code == 200
     english = client.get("/").text
     assert 'lang="en"' in english and 'hreflang="ar"' in english
     assert "تجارب" not in english
     sitemap = client.get("/sitemap.xml").text
-    assert "/ar/about.html" in sitemap
+    assert "/ar/about" in sitemap
     # turning Arabic off removes the edition on the next publish
     client.post("/api/admin/settings", json={"values": {"site.languages": ["en"]}},
                 headers={"X-CSRF": me["csrf"]})
     client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
-    assert client.get("/ar/index.html").status_code == 404
+    assert client.get("/ar/").status_code == 404
     client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
 
 
@@ -2474,7 +2474,7 @@ def test_the_menu_is_one_list_baked_into_every_page():
     for page in content.PAGES:
         out = co.apply_to_page(content.page_source(page), page)
         # the same links on every page...
-        assert out.count('<li><a href="/about.html"') >= 2, page
+        assert out.count('<li><a href="/about"') >= 2, page
         # ...and where the page is in the menu, the bar and the slide-in panel
         # both say you are here — nothing else does, and the privacy page,
         # which is not a menu destination, is marked nowhere
@@ -2525,7 +2525,7 @@ def test_add_a_service_from_the_panel_and_it_reaches_the_page():
                    "imageAlt": "Illuminated wayfinding panel",
                    "specTitle": "What it includes",
                    "includes": "Survey and route planning\nSign family design\nProduction and install",
-                   "linkLabel": "Talk to us about this", "link": "/contact.html",
+                   "linkLabel": "Talk to us about this", "link": "/contact",
                    "anchor": "wayfinding"}})
     assert res.status_code == 200, res.text
     new_id = res.json()["item"]["id"]
@@ -2628,7 +2628,7 @@ def test_every_managed_list_takes_the_same_operations():
             if f["type"] == "image":
                 values[f["key"]] = "/assets/services/led-display.webp"
             elif f["type"] == "link":
-                values[f["key"]] = "/contact.html"
+                values[f["key"]] = "/contact"
             elif f["type"] == "slug":
                 values[f["key"]] = "probe-item"
             elif f["type"] == "select":
@@ -2764,7 +2764,7 @@ def test_a_visual_editor_edit_inside_a_list_is_not_rebuilt_away():
 def test_a_list_edit_marks_its_page_as_needing_publishing():
     client.post("/api/admin/collections/home-services/items", headers=_csrf(),
                 json={"values": {"name": "New capability", "hint": "Something we now do",
-                                 "link": "/contact.html", "preview": ""}})
+                                 "link": "/contact", "preview": ""}})
     pages = {p["page"]: p for p in client.get("/api/admin/pages").json()["pages"]}
     assert pages["index"]["dirty"] is True
     client.post("/api/admin/collections/home-services/reset", headers=_csrf())

@@ -368,7 +368,7 @@
       var cameFromCatalog = false;
       try {
         cameFromCatalog = document.referrer &&
-          new URL(document.referrer).pathname === "/rental.html" && history.length > 1;
+          new URL(document.referrer).pathname === "/rental" && history.length > 1;
       } catch (err) { cameFromCatalog = false; }
       if (cameFromCatalog) {
         e.preventDefault();

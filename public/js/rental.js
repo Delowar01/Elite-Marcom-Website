@@ -186,7 +186,7 @@
   }
 
   function productUrl(p) {
-    return "/rental-item.html?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(p.id);
+    return "/rental-item?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(p.id);
   }
 
   /* remember scroll position so "Back" from an item lands where the visitor left */

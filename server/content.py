@@ -112,6 +112,20 @@ def _custom_slugs() -> set[str]:
     return {r["slug"] for r in aa._connect().execute("SELECT slug FROM custom_pages")}
 
 
+def is_public_page(slug: str) -> bool:
+    """Is `slug` the address of a page this website serves?
+
+    The clean-URL rewrite asks this before turning /about into about.html. A
+    slug it does not recognise is left exactly as it arrived, which is what
+    keeps /admin, /api/..., every asset and every typo out of the rewrite —
+    and, because nothing unknown is ever rewritten, what makes a redirect
+    loop impossible.
+    """
+    if slug in PAGES:
+        return True
+    return bool(_PAGE_SLUG_RE.match(slug)) and slug in _custom_slugs()
+
+
 def all_pages() -> dict[str, dict]:
     """Built-in pages plus everything created in the admin panel."""
     pages: dict[str, dict] = {key: {**cfg, "custom": False} for key, cfg in PAGES.items()}
@@ -517,7 +531,7 @@ def _inject_nav(raw: str, page: str) -> str:
         return raw
     links = []
     for row in extras:
-        href = f"/{row['slug']}.html"
+        href = f"/{row['slug']}"
         current = ' aria-current="page"' if row["slug"] == page else ""
         links.append((href, html_mod.escape(row["label"]), current))
     header = "".join(f'\n        <li><a href="{h}"{c}>{lbl}</a></li>' for h, lbl, c in links)
@@ -562,7 +576,8 @@ def _sitemap_xml() -> str:
     pages = all_pages()
     for prefix in prefixes:
         for page, cfg in pages.items():
-            tail = prefix if page == "index" else f"{prefix}{cfg['file']}"
+            # the address, not the file: a page is served without its extension
+            tail = prefix if page == "index" else f"{prefix}{page}"
             urls.append(f"  <url><loc>{SITE_ORIGIN}/{tail}</loc>"
                         f"<lastmod>{today}</lastmod></url>")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -590,8 +605,11 @@ def localize(raw: str, lang: str) -> str:
                   else _AR_SWITCH.format(href="/ar/", lang="ar", label="العربية"))
     if lang == "ar":
         raw = raw.replace('<html lang="en"', '<html lang="ar" dir="rtl"', 1)
-        # keep internal navigation inside the Arabic edition
-        raw = re.sub(r'href="/([a-z0-9-]+\.html)"', r'href="/ar/\1"', raw)
+        # keep internal navigation inside the Arabic edition. One path
+        # segment only, so /assets/… and /js/… are left where they are, and a
+        # lookahead rather than a closing quote so /services#branding keeps
+        # its fragment.
+        raw = re.sub(r'href="/([a-z][a-z0-9-]*)(?=["#?])', r'href="/ar/\1', raw)
         raw = re.sub(r'href="/"(\s|>)', r'href="/ar/"\1', raw)
         raw = raw.replace('<link rel="canonical" href="https://www.elitemarcom.com/',
                           '<link rel="canonical" href="https://www.elitemarcom.com/ar/')

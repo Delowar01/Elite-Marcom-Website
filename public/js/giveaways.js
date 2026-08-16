@@ -283,7 +283,7 @@
   }
 
   function productUrl(p) {
-    return "/product.html?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(p.id);
+    return "/product?country=" + encodeURIComponent(market) + "&id=" + encodeURIComponent(p.id);
   }
 
   /* remember scroll position + list depth so "Back" lands where the visitor left */
