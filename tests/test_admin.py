@@ -1235,6 +1235,78 @@ def test_media_and_brand_permissions():
 
 # ---------------- Phase 3: pages, publish, rollback, rentals ----------------
 
+def test_only_the_last_ten_published_versions_are_kept():
+    """Every version carries a full copy of the content and design tables, so
+    the history is a storage ceiling as much as a list. Ten is far enough back
+    to undo a bad publish; the eleventh publish drops the first."""
+    from server import adminauth as aa
+    from server import content as ct
+
+    me = client.get("/api/admin/me").json()
+    ids = []
+    for _ in range(ct.KEEP_PUBLISHES + 3):
+        res = client.post("/api/admin/pages-publish", headers={"X-CSRF": me["csrf"]})
+        assert res.status_code == 200, res.text
+        ids.append(res.json()["id"])
+
+    rows = aa._connect().execute("SELECT id FROM publishes ORDER BY id DESC").fetchall()
+    kept = [r["id"] for r in rows]
+    assert len(kept) == ct.KEEP_PUBLISHES == 10
+    assert kept == ids[-ct.KEEP_PUBLISHES:][::-1], "the newest ten, newest first"
+    for dropped in ids[:3]:
+        assert dropped not in kept
+
+    # the screen shows exactly what is restorable, and says so
+    data = client.get("/api/admin/pages").json()
+    assert [h["id"] for h in data["history"]] == kept
+    assert data["keepVersions"] == 10
+
+    # a version that has been dropped cannot be restored, and says so plainly
+    gone = client.post("/api/admin/pages-rollback", json={"id": ids[0]},
+                       headers={"X-CSRF": me["csrf"]})
+    assert gone.status_code == 400
+    assert "unknown publish version" in gone.json()["detail"]
+    # ...while one that is still held can be
+    ok = client.post("/api/admin/pages-rollback", json={"id": kept[-1]},
+                     headers={"X-CSRF": me["csrf"]})
+    assert ok.status_code == 200, ok.text
+    client.post("/api/admin/pages-unpublish", headers={"X-CSRF": me["csrf"]})
+
+
+def test_the_page_editor_hands_back_the_text_that_is_on_the_page():
+    """Every field is filled with the live sentence so it can be edited in
+    place, rather than shown as a placeholder that cannot be selected. The
+    storage rule behind it is unchanged: a field still holding the original
+    saves as empty, which is how the page keeps following the design."""
+    me = client.get("/api/admin/me").json()
+    d = client.get("/api/admin/pages/about").json()
+
+    by_key = {f["key"]: f for f in d["regions"] + d["seo"]}
+    assert by_key["hero.title1"]["original"], "the live hero text is offered"
+    assert by_key["seo.title"]["original"], "and so is the live <title>"
+    assert by_key["seo.description"]["original"]
+    assert all(f["value"] == "" for f in d["regions"]), "nothing overridden yet"
+
+    # saving the text unchanged must not create an override
+    client.post("/api/admin/pages/about", headers={"X-CSRF": me["csrf"]},
+                json={"lang": "en", "values": {k: "" for k in by_key}})
+    again = client.get("/api/admin/pages/about").json()
+    assert all(f["value"] == "" for f in again["regions"] + again["seo"])
+
+    # a real edit is kept, and the original is still offered beside it
+    client.post("/api/admin/pages/about", headers={"X-CSRF": me["csrf"]},
+                json={"lang": "en", "values": {"hero.title1": "We build experiences"}})
+    edited = {f["key"]: f for f in client.get("/api/admin/pages/about").json()["regions"]}
+    assert edited["hero.title1"]["value"] == "We build experiences"
+    assert edited["hero.title1"]["original"] == by_key["hero.title1"]["original"]
+    assert "We build experiences" in client.get("/admin/preview/about").text
+
+    client.post("/api/admin/pages/about", headers={"X-CSRF": me["csrf"]},
+                json={"lang": "en", "values": {"hero.title1": ""}})
+    back = {f["key"]: f for f in client.get("/api/admin/pages/about").json()["regions"]}
+    assert back["hero.title1"]["value"] == ""
+
+
 def test_pages_list_and_editor_originals():
     res = client.get("/api/admin/pages")
     assert res.status_code == 200

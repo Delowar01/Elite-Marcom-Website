@@ -688,6 +688,12 @@ def localize(raw: str, lang: str) -> str:
     return raw
 
 
+# How many published versions stay restorable. Each one carries a full copy
+# of the content and design tables, so this is a storage ceiling as much as a
+# tidy list.
+KEEP_PUBLISHES = 10
+
+
 def publish_all(by: str, note: str = "") -> dict:
     from . import adminauth as aa
 
@@ -731,16 +737,21 @@ def publish_all(by: str, note: str = "") -> dict:
         conn = aa._connect()
         cur = conn.execute("INSERT INTO publishes (ts, by, pages, snapshot) VALUES (?,?,?,?)",
                            (int(time.time()), by[:200], count, snapshot))
+        # Pruned here rather than on a schedule, so the ceiling holds even
+        # if nobody ever opens the screen that would have triggered it.
+        conn.execute(
+            "DELETE FROM publishes WHERE id NOT IN "
+            "(SELECT id FROM publishes ORDER BY id DESC LIMIT ?)", (KEEP_PUBLISHES,))
         conn.commit()
     return {"pages": count, "id": int(cur.lastrowid)}
 
 
-def publish_history(limit: int = 15) -> list[dict]:
+def publish_history(limit: int = KEEP_PUBLISHES) -> list[dict]:
     from . import adminauth as aa
 
     rows = aa._connect().execute(
         "SELECT id, ts, by, pages FROM publishes ORDER BY id DESC LIMIT ?",
-        (max(1, min(50, limit)),)).fetchall()
+        (max(1, min(KEEP_PUBLISHES, limit)),)).fetchall()
     return [dict(r) for r in rows]
 
 

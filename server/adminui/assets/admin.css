@@ -811,6 +811,14 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 }
 .media-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
+/* a page field's footnote and its restore button share one line, so the
+   button sits with the text it undoes rather than under the next field */
+.page-field__foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 4px;
+}
+.page-field__foot .admin-inline-note { margin: 0; }
+
 /* the thumbnail is the way into the full picture, so it has to look like it */
 .media-open {
   display: block; width: 100%; padding: 0; border: 0; background: none;

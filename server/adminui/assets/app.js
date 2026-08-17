@@ -1149,20 +1149,39 @@
     api("/api/admin/pages/" + encodeURIComponent(page) + "?lang=" + pageLang).then(function (r) {
       if (!r.ok) { apiErr(r); location.hash = "#pages"; return; }
       var d = r.data;
+      var originalOf = {};
+      d.regions.concat(d.seo).forEach(function (f) { originalOf[f.key] = f.original || ""; });
+      /* Every field carries the text that is actually on the page, so an
+         admin edits the real sentence instead of retyping it from a grey
+         placeholder they cannot select. The storage rule is unchanged: a
+         field still holding the original saves as empty, which is how a page
+         keeps following the design instead of freezing a copy of it. */
       function fieldHtml(f, idx, group) {
         var id = group + "-" + idx;
+        var shown = f.value || f.original || "";
         var input = f.kind === "multiline"
-          ? '<textarea id="' + id + '" rows="3" maxlength="2000" placeholder="' + esc(f.original) + '">' + esc(f.value) + "</textarea>"
-          : '<input id="' + id + '" maxlength="' + (f.max || 300) + '" placeholder="' + esc(f.original) + '" value="' + esc(f.value) + '">';
+          ? '<textarea id="' + id + '" rows="3" maxlength="2000">' + esc(shown) + "</textarea>"
+          : '<input id="' + id + '" maxlength="' + (f.max || 300) + '" value="' + esc(shown) + '">';
         return '<div class="full page-field" data-key="' + esc(f.key) + '" data-group="' + group + '">' +
           '<label for="' + id + '">' + esc(f.label) +
           (f.value ? ' <span class="badge-ok">edited</span>' : "") + "</label>" + input +
-          '<span class="admin-inline-note">Original: ' + esc(f.original || "—") + "</span></div>";
+          /* the footnote only earns its place once the field has been
+             changed: an untouched field already shows what is on the page,
+             and repeating that under every one of them is noise */
+          (f.value
+            ? '<span class="page-field__foot">' +
+              '<span class="admin-inline-note">Original: ' + esc(f.original || "—") + "</span>" +
+              (f.original
+                ? '<button type="button" class="btn btn--ghost btn--small" data-reset-field>Restore original</button>'
+                : "") + "</span>"
+            : "") + "</div>";
       }
       main.innerHTML =
         '<p><a href="#pages" class="btn btn--ghost btn--small">&larr; All pages</a></p>' +
         '<h1 class="admin-h1">' + esc(d.label) + "</h1>" +
-        '<p class="admin-sub">Leave a field empty to keep the original design text. Saved changes go live only when you publish.</p>' +
+        '<p class="admin-sub">Every field shows the text that is on the page right now — edit it in place. ' +
+        "A field you have changed is marked <b>edited</b>; clear it, or press <b>Restore original</b>, " +
+        "to hand it back to the design. Saved changes go live only when you publish.</p>" +
         '<div class="lang-tabs">' +
         '<button class="btn btn--small ' + (pageLang === "en" ? "btn--primary" : "btn--ghost") + '" data-lang="en">English</button>' +
         '<button class="btn btn--small ' + (pageLang === "ar" ? "btn--primary" : "btn--ghost") + '" data-lang="ar">العربية (Arabic)</button>' +
@@ -1180,6 +1199,15 @@
           ? '<a class="btn btn--ghost btn--small" href="/admin/preview/' + esc(d.page) + "?lang=" + pageLang + '" target="_blank" rel="noopener">Preview</a>' : "") +
         '<span class="admin-inline-note">Publish from the Pages overview when you are ready.</span></div></form>';
 
+      main.querySelectorAll("[data-reset-field]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var wrap = btn.closest(".page-field");
+          var box = wrap.querySelector("input, textarea");
+          box.value = originalOf[wrap.getAttribute("data-key")] || "";
+          box.focus();
+          toast("Restored — save the draft to keep it.");
+        });
+      });
       main.querySelectorAll("[data-lang]").forEach(function (btn) {
         btn.addEventListener("click", function (e) {
           e.preventDefault();
@@ -1191,8 +1219,11 @@
         e.preventDefault();
         var values = {};
         main.querySelectorAll(".page-field").forEach(function (wrap) {
-          values[wrap.getAttribute("data-key")] =
-            wrap.querySelector("input, textarea").value.trim();
+          var key = wrap.getAttribute("data-key");
+          var typed = wrap.querySelector("input, textarea").value.trim();
+          /* unchanged means "no override", exactly as an empty field did
+             before the text was prefilled */
+          values[key] = typed === (originalOf[key] || "").trim() ? "" : typed;
         });
         api("/api/admin/pages/" + encodeURIComponent(page), { lang: pageLang, values: values })
           .then(function (r2) {
@@ -1906,7 +1937,10 @@
                   "<td class=\"muted\">" + esc(h.by) + "</td><td class=\"muted\">" + h.pages + "</td>" +
                   "<td>" + (i === 0 ? '<span class="badge-ok">current</span>'
                     : '<button class="btn btn--ghost btn--small" data-rollback="' + h.id + '">Restore</button>') + "</td></tr>";
-              }).join("") + "</tbody></table></div>" : "") + "</div>" +
+              }).join("") + "</tbody></table></div>" +
+              '<p class="admin-inline-note">The last ' + esc(d.keepVersions || 10) +
+              " versions are kept — each one holds a full copy of your text and design, " +
+              "so older ones are dropped as new versions are published.</p>" : "") + "</div>" +
           '<div class="admin-panel"><h2>Header &amp; Footer</h2>' +
           '<p class="admin-inline-note" style="margin-bottom:10px;">The header button, the footer ' +
           "text and the contact details — applied to every page. The menus themselves are lists: " +

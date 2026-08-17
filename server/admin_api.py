@@ -1253,6 +1253,7 @@ async def admin_pages(request: Request):
             "staleBuild": bool(published and last and content.source_mtime() > last["ts"]),
             "globalRegions": len(content.GLOBAL_REGIONS),
             "lastPublish": last, "history": content.publish_history(),
+            "keepVersions": content.KEEP_PUBLISHES,
             "published": content.PUBLISHED_DIR.joinpath("index.html").is_file(),
             "languages": aa.setting_get("site.languages") or ["en"]}
 
