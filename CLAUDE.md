@@ -357,6 +357,18 @@ documentation). Non-negotiable rules from it:
   six customer templates are edited in the admin Email screen. Sending is a
   durable outbox: the request only enqueues (unique per reference+kind), and a
   startup worker drains it with backoff — never a post-response thread.
+- **A picture in the Media library knows where it hangs.**
+  `media.library_usage()` finds a file by looking for its own `/media/<name>`
+  address inside the stores that can hold one — `collection_items`, `designs`,
+  `content` and the rental inventory — rather than by a list of known fields,
+  so a schema that gains an image field later is covered without anyone coming
+  back. Each hit carries `href` (the live page, for "show me") and `adminHref`
+  (the screen that owns it, for "let me change it"). `library_delete` refuses
+  an image that is still placed: the file would go, the page would keep
+  pointing at it, and a broken picture on the live site is how you would find
+  out. `_usage_index` answers the same question for shipped `assets/` artwork
+  by scanning the git sources; a stylesheet or script is named but carries no
+  link, because there is nowhere for that link to go.
 - Backups (Operations) carry content, design, settings, rentals and media —
   never customer submissions, which stay encrypted with their own retention.
 - Arabic publishes a full RTL edition under `/ar/` when `site.languages`

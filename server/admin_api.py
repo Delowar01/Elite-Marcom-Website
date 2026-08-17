@@ -953,7 +953,7 @@ async def admin_media(request: Request):
     from . import media
 
     return {"library": media.library_list(), "siteAssets": media.site_assets(),
-            "usage": media.storage_usage()}
+            "usage": media.storage_usage(), "placed": media.library_usage()}
 
 
 @router.post("/api/admin/media/upload")
@@ -1001,7 +1001,13 @@ async def admin_media_delete(request: Request, media_id: int,
     from . import media
 
     item = media.library_get(media_id)
-    if item is None or not media.library_delete(media_id):
+    if item is None:
+        raise HTTPException(status_code=404, detail="Unknown media item.")
+    try:
+        deleted = media.library_delete(media_id)
+    except Exception as exc:
+        raise _media_err(exc)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Unknown media item.")
     aa.audit(session, "media.deleted", "media", {"file": item["file"]}, _ip_hash(request))
     return {"ok": True}

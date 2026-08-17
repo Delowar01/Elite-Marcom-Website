@@ -147,6 +147,77 @@ def library_list() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+_MEDIA_REF_RE = re.compile(r"/media/([A-Za-z0-9._-]{1,120})")
+
+
+def _media_refs(blob: str) -> set[str]:
+    return set(_MEDIA_REF_RE.findall(blob or ""))
+
+
+def _public_href(page: str) -> str:
+    from . import collections as co
+
+    # the header and the footer are on every page, so the home page is where
+    # you go to look at them
+    return co.page_href(page) or "/"
+
+
+def library_usage() -> dict[str, list[dict]]:
+    """Where each library image is placed: file name -> list of places.
+
+    Found by looking for the image's own address inside the places an address
+    can be stored — collection items, page designs, the keyed content model
+    and the rental inventory — rather than by walking a list of known fields.
+    A schema that gains an image field later is therefore covered without
+    anybody remembering to come back here.
+
+    Each place carries two links because they answer different questions:
+    `href` is the live page, for "show me where this appears", and
+    `adminHref` is the screen that owns it, for "let me change it".
+    """
+    import json as _json
+
+    from . import adminauth as aa
+    from . import collections as co
+    from . import content as ct
+
+    known = {r["file"] for r in aa._connect().execute("SELECT file FROM media")}
+    if not known:
+        return {}
+    out: dict[str, list[dict]] = {}
+    labels = {page: cfg.get("label") or page for page, cfg in ct.all_pages().items()}
+    labels.update({co.HEADER: "Header", co.FOOTER: "Footer"})
+
+    def add(files: set[str], page: str, what: str, admin_href: str) -> None:
+        for f in files & known:
+            rows = out.setdefault(f, [])
+            place = {"page": page, "pageLabel": labels.get(page, page), "what": what,
+                     "href": _public_href(page), "adminHref": admin_href}
+            if not any(r["what"] == what and r["page"] == page for r in rows):
+                rows.append(place)
+
+    conn = aa._connect()
+    for row in conn.execute("SELECT collection, data FROM collection_items"):
+        spec = co.SCHEMAS.get(row["collection"]) or {}
+        page = spec.get("page") or ""
+        add(_media_refs(row["data"]), page, spec.get("label") or row["collection"],
+            f"#sections/{page}/{row['collection']}")
+    for row in conn.execute("SELECT page, doc FROM designs"):
+        add(_media_refs(row["doc"]), row["page"], "Page design",
+            f"#editor/{row['page']}")
+    for row in conn.execute("SELECT page, key, value FROM content"):
+        add(_media_refs(row["value"]), row["page"], f"Text — {row['key']}",
+            f"#pages/{row['page']}")
+    try:
+        products, _ = ct.rentals_load()
+    except Exception:
+        products = []
+    for item in products:
+        add(_media_refs(_json.dumps(item)), "rental",
+            f"Rental item — {item.get('name') or item.get('id')}", "#rentals")
+    return out
+
+
 def library_set_alt(media_id: int, alt: str) -> None:
     from . import adminauth as aa
 
@@ -157,7 +228,25 @@ def library_set_alt(media_id: int, alt: str) -> None:
 
 
 def library_delete(media_id: int) -> bool:
+    """Remove an image nothing is using.
+
+    An image still placed on a page is refused rather than deleted: the file
+    would go, the page would keep pointing at it, and the first anybody would
+    know is a broken picture on the live site. `library_usage` already knows
+    every place it sits, so the panel can say which ones and let the admin
+    take it off there first.
+    """
     from . import adminauth as aa
+
+    item = library_get(media_id)
+    if item is not None:
+        places = library_usage().get(item["file"]) or []
+        if places:
+            where = ", ".join(f"{p['pageLabel']} — {p['what']}" for p in places[:4])
+            more = f" and {len(places) - 4} more" if len(places) > 4 else ""
+            raise MediaError(
+                f"This image is still on the site ({where}{more}). Remove it there "
+                "first — deleting it now would leave a broken picture on the page.")
 
     with aa._lock:
         conn = aa._connect()
@@ -228,21 +317,33 @@ def site_assets() -> list[dict]:
     return out
 
 
-def _usage_index() -> dict[str, list[str]]:
-    """Map asset basename -> pages/styles referencing it (best-effort)."""
-    index: dict[str, list[str]] = {}
-    sources = list(config.PUBLIC_DIR.glob("*.html")) + list(config.PUBLIC_DIR.glob("*.css")) \
-        + list((config.PUBLIC_DIR / "js").glob("*.js"))
+def _usage_index() -> dict[str, list[dict]]:
+    """Map asset basename -> the places referencing it (best-effort).
+
+    A page carries its public address so the panel can offer "look at it on
+    the site"; a stylesheet or a script is named but has nowhere to send you,
+    so it carries no link rather than a misleading one.
+    """
+    from . import content as ct
+
+    index: dict[str, list[dict]] = {}
+    labels = {page: cfg.get("label") or page for page, cfg in ct.PAGES.items()}
+    sources: list[tuple[dict, str]] = []
+    for src in sorted(config.PUBLIC_DIR.glob("*.html")):
+        slug = src.stem
+        sources.append(({"label": labels.get(slug, slug), "href": _public_href(slug)}, src))
+    for src in sorted(config.PUBLIC_DIR.glob("*.css")) + sorted((config.PUBLIC_DIR / "js").glob("*.js")):
+        sources.append(({"label": src.name, "href": ""}, src))
     texts = []
-    for src in sources:
+    for place, src in sources:
         try:
-            texts.append((src.name, src.read_text(encoding="utf-8", errors="ignore")))
+            texts.append((place, src.read_text(encoding="utf-8", errors="ignore")))
         except OSError:
             continue
     for f in (config.PUBLIC_DIR / "assets").rglob("*"):
         if not f.is_file():
             continue
-        hits = [name for name, text in texts if f.name in text]
+        hits = [place for place, text in texts if f.name in text]
         if hits:
             index[f.name] = hits[:12]
     return index

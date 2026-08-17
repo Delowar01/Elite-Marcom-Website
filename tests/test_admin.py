@@ -926,6 +926,79 @@ def test_media_upload_converts_to_webp_and_serves():
     assert bad.status_code == 400
 
 
+def test_the_panel_knows_where_every_library_image_is_placed():
+    """The Media page offers "look at it on the site", so it has to know where
+    that is. The index is built by looking for the image's own address inside
+    the stores that can hold one, so a schema that gains an image field later
+    is covered without anybody coming back here."""
+    from server import collections as co
+    from server import media
+
+    me = client.get("/api/admin/me").json()
+    up = client.post("/api/admin/media/upload",
+                     files={"file": ("placed.png", _png_bytes(), "image/png")},
+                     data={"alt": "In use"}, headers={"X-CSRF": me["csrf"]})
+    item = up.json()["item"]
+    url = "/media/" + item["file"]
+
+    assert media.library_usage().get(item["file"]) is None, "nothing uses it yet"
+    listing = client.get("/api/admin/media").json()
+    assert listing["placed"].get(item["file"]) is None
+
+    # placed two different ways: a card in a managed list, and an image the
+    # visual editor pointed at something on another page
+    added = client.post("/api/admin/collections/home-work/items", headers=_csrf(),
+                        json={"values": {"title": "A new case", "meta": "Riyadh",
+                                         "image": url, "link": "/projects"}})
+    assert added.status_code == 200, added.text
+    saved = client.post("/api/admin/design/about", headers=_csrf(),
+                        json={"doc": {"elements": {
+                            "[data-em-sec=s2]>img:nth-of-type(1)": {"attrs": {"src": url}}}}})
+    assert saved.status_code == 200, saved.text
+
+    places = media.library_usage()[item["file"]]
+    by_page = {p["page"]: p for p in places}
+    assert set(by_page) == {"index", "about"}
+    assert by_page["index"]["pageLabel"] == "Home"
+    assert by_page["index"]["what"] == co.SCHEMAS["home-work"]["label"]
+    assert by_page["index"]["href"] == "/"
+    assert by_page["index"]["adminHref"] == "#sections/index/home-work"
+    assert by_page["about"]["what"] == "Page design"
+    assert by_page["about"]["href"] == "/about", "the live address, with no .html"
+    assert by_page["about"]["adminHref"] == "#editor/about"
+    assert client.get("/api/admin/media").json()["placed"][item["file"]] == places
+
+    # ...and it cannot be deleted out from under the page
+    refused = client.post(f"/api/admin/media/{item['id']}/delete", headers=_csrf())
+    assert refused.status_code == 400
+    assert "still on the site" in refused.json()["detail"]
+    assert "About" in refused.json()["detail"]
+    assert client.get(url).status_code == 200, "and the file is still there"
+
+    # take it off the page and it deletes cleanly
+    client.post("/api/admin/design/about", headers=_csrf(), json={"doc": {"elements": {}}})
+    client.post("/api/admin/collections/home-work/reset", headers=_csrf())
+    assert not media.library_usage().get(item["file"])
+    gone = client.post(f"/api/admin/media/{item['id']}/delete", headers=_csrf())
+    assert gone.status_code == 200, gone.text
+    assert client.get(url).status_code == 404
+
+
+def test_a_site_asset_says_which_pages_it_appears_on():
+    """The same question for the shipped artwork. A page carries the address
+    to open; a stylesheet is named but carries none, because there is nowhere
+    for that link to go."""
+    assets = {a["path"]: a for a in client.get("/api/admin/media").json()["siteAssets"]}
+    hero = assets["assets/about/concept-to-build.webp"]
+    pages = {u["label"]: u["href"] for u in hero["usedOn"]}
+    assert pages.get("About") == "/about"
+    for asset in assets.values():
+        for use in asset["usedOn"]:
+            assert use["label"], asset["path"]
+            if use["href"]:
+                assert not use["href"].endswith(".html"), asset["path"]
+
+
 def test_site_asset_replace_serves_override_and_resets():
     me = client.get("/api/admin/me").json()
     original = client.get("/assets/favicon-64.png").content

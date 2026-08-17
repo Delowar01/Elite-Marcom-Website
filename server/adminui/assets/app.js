@@ -30,6 +30,70 @@
       "<b>" + esc(title) + "</b>" +
       (hint ? "<span>" + esc(hint) + "</span>" : "") + "</div>";
   }
+  /* ---------- where a picture sits, and looking at it full size ----------
+     Both the library and the shipped site assets answer the same two
+     questions — "where does this appear?" and "what does it actually look
+     like?" — so they share one implementation and cannot drift apart. */
+
+  function useChips(places, opts) {
+    opts = opts || {};
+    places = places || [];
+    if (!places.length) {
+      return '<span class="muted">' + esc(opts.empty || "Not placed on the site yet") + "</span>";
+    }
+    var cap = opts.detail ? 20 : 6;
+    return places.slice(0, cap).map(function (w) {
+      var page = w.pageLabel || w.label || "";
+      /* a list is called "Home — selected work"; beside a chip that already
+         says Home, repeating it reads as a stutter */
+      var what = (w.what || "").indexOf(page + " — ") === 0
+        ? w.what.slice(page.length + 3) : (w.what || "");
+      var label = esc(page);
+      /* on a card the page name is the whole chip and the exact spot is the
+         tooltip — a two-line pill in a 200px column reads as a mistake. The
+         viewer has the room, so there it is spelled out. */
+      var body = label + (opts.detail && what ? "<span>" + esc(what) + "</span>" : "");
+      var tip = page + (what ? " — " + what : "");
+      if (!w.href) {
+        /* a stylesheet or a script has no address to send anybody to, so it
+           is named rather than linked: a link that goes nowhere is worse */
+        return '<span class="use-chip" title="' + esc(tip) + '">' + body + "</span>";
+      }
+      return '<a class="use-chip" href="' + esc(w.href) + '" target="_blank" rel="noopener" ' +
+        'title="' + esc(tip + " — open it on the website") + '">' + body + " ↗</a>";
+    }).join("") + (places.length > cap
+      ? '<span class="muted">+' + (places.length - cap) + " more</span>" : "");
+  }
+
+  function openMedia(src, name, meta, places) {
+    var box = document.createElement("div");
+    box.className = "media-lightbox";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    box.setAttribute("aria-label", name || "Image");
+    box.innerHTML =
+      '<button type="button" class="media-lightbox__close" aria-label="Close">✕</button>' +
+      '<div class="media-lightbox__inner"><img src="' + esc(src) + '" alt="">' +
+      '<div class="media-lightbox__meta"><h3>' + esc(name || "") + "</h3>" +
+      '<span class="admin-inline-note">' + esc(meta || "") + "</span>" +
+      '<div class="media-uses">' + useChips(places, { detail: true }) + "</div>" +
+      '<span class="media-actions">' +
+      '<a class="btn btn--ghost btn--small" href="' + esc(src) + '" target="_blank" rel="noopener">' +
+      "Open the file</a></span></div></div>";
+    function close() {
+      box.remove();
+      document.removeEventListener("keydown", onKey);
+    }
+    function onKey(e) { if (e.key === "Escape") close(); }
+    box.addEventListener("click", function (e) {
+      /* the backdrop closes it; the picture and its details do not */
+      if (e.target === box || e.target.closest(".media-lightbox__close")) close();
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(box);
+    box.querySelector(".media-lightbox__close").focus();
+  }
+
   var toastTimer = null;
   function toast(msg, isErr) {
     toastEl.textContent = msg;
@@ -2245,10 +2309,14 @@
           '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Upload</button></div></form></div>' +
           '<div class="admin-panel"><h2>Library (' + (d.library || []).length + ')</h2>' +
           ((d.library || []).length ? '<div class="media-grid">' + d.library.map(function (m) {
-            return '<figure class="media-card" data-id="' + m.id + '">' +
-              '<img src="/media/' + esc(m.file) + '" alt="" loading="lazy">' +
+            var where = (d.placed || {})[m.file] || [];
+            return '<figure class="media-card" data-id="' + m.id + '" data-file="' + esc(m.file) + '">' +
+              '<button type="button" class="media-open" data-open ' +
+              'aria-label="Open ' + esc(m.name) + ' full size">' +
+              '<img src="/media/' + esc(m.file) + '" alt="" loading="lazy"></button>' +
               '<figcaption><strong>' + esc(m.name) + "</strong>" +
               '<span class="admin-inline-note">' + m.width + "×" + m.height + " · " + esc(fmtBytes(m.bytes)) + "</span>" +
+              '<div class="media-uses">' + useChips(where) + "</div>" +
               '<input data-alt maxlength="300" placeholder="Alt text" value="' + esc(m.alt) + '">' +
               '<span class="media-actions"><button class="btn btn--ghost btn--small" data-save-alt>Save alt</button>' +
               '<button class="btn btn--ghost btn--small" data-copy>Copy URL</button>' +
@@ -2262,11 +2330,15 @@
           (d.siteAssets || []).map(function (a) {
             /* site assets are transparent logos and wordmarks: they need the
                white plate and must not be cropped, unlike a rental photograph */
-            var img = a.ext === "glb" ? "" : '<img class="jz-thumb jz-thumb--plate" src="/' + esc(a.path) + '?t=' + (a.overridden ? a.overrideBytes : 0) + '" alt="" loading="lazy">';
+            var src = "/" + a.path + "?t=" + (a.overridden ? a.overrideBytes : 0);
+            var img = a.ext === "glb" ? ""
+              : '<button type="button" class="media-open" data-open-asset data-src="' + esc(src) +
+                '" data-name="' + esc(a.path.replace("assets/", "")) + '" aria-label="Open full size">' +
+                '<img class="jz-thumb jz-thumb--plate" src="' + esc(src) + '" alt="" loading="lazy"></button>';
             return '<tr data-path="' + esc(a.path) + '"><td>' + img + "</td>" +
               "<td>" + esc(a.path.replace("assets/", "")) + "</td>" +
               '<td class="muted">' + esc(fmtBytes(a.overridden ? a.overrideBytes : a.bytes)) + "</td>" +
-              '<td class="muted">' + esc((a.usedOn || []).slice(0, 3).join(", ")) + (a.usedOn && a.usedOn.length > 3 ? "…" : "") + "</td>" +
+              '<td><div class="media-uses">' + useChips(a.usedOn, { empty: "Not referenced" }) + "</div></td>" +
               "<td>" + (a.overridden ? '<span class="badge-ok">replaced</span>' : '<span class="muted">original</span>') + "</td>" +
               '<td class="cell-actions">' + (a.ext === "glb"
                 ? '<a class="btn btn--ghost btn--small" href="#brand">3D manager</a>'
@@ -2299,10 +2371,36 @@
               .then(function () { toast("URL copied."); }, function () { prompt("Media URL:", url); });
           });
           card.querySelector("[data-del]").addEventListener("click", function () {
-            if (!confirm("Delete this image from the library?")) return;
+            var file = card.getAttribute("data-file");
+            var where = (d.placed || {})[file] || [];
+            if (where.length) {
+              /* the server refuses this too — asking first saves a round trip
+                 and says the same thing in the same words */
+              return alert("This image is still on the site (" +
+                where.map(function (w) { return w.pageLabel + " — " + w.what; }).join(", ") +
+                "). Take it off there first — deleting it now would leave a " +
+                "broken picture on the page.");
+            }
+            if (!confirm("Delete this image from the library? Nothing is using it.")) return;
             api("/api/admin/media/" + id + "/delete", {}).then(function (r2) {
-              r2.ok ? views.media() : apiErr(r2);
+              r2.ok ? (toast("Deleted."), views.media()) : apiErr(r2);
             });
+          });
+          card.querySelector("[data-open]").addEventListener("click", function () {
+            var m = (d.library || []).filter(function (x) { return String(x.id) === id; })[0];
+            openMedia("/media/" + m.file, m.name,
+                      m.width + "×" + m.height + " · " + fmtBytes(m.bytes),
+                      (d.placed || {})[m.file] || []);
+          });
+        });
+        main.querySelectorAll("[data-open-asset]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var row = btn.closest("tr");
+            var a = (d.siteAssets || []).filter(function (x) {
+              return x.path === row.getAttribute("data-path");
+            })[0] || {};
+            openMedia(btn.getAttribute("data-src"), btn.getAttribute("data-name"),
+                      fmtBytes(a.overridden ? a.overrideBytes : a.bytes), a.usedOn || []);
           });
         });
         var assetFile = document.getElementById("asset-file");
