@@ -156,10 +156,16 @@ def _media_refs(blob: str) -> set[str]:
 
 def _public_href(page: str) -> str:
     from . import collections as co
+    from . import content as ct
 
-    # the header and the footer are on every page, so the home page is where
-    # you go to look at them
-    return co.page_href(page) or "/"
+    # the page's OWN address, not `page_href` — that answers a different
+    # question (which menu link is current) and would send you to /services
+    # for a picture that is on /services/branding.
+    if not page or page in co.GLOBAL_PAGES:
+        # the header and the footer are on every page, so the home page is
+        # where you go to look at them
+        return "/"
+    return "/" + ct.page_address(page)
 
 
 def library_usage() -> dict[str, list[dict]]:

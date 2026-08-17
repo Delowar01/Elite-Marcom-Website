@@ -152,6 +152,112 @@ def test_no_public_page_still_links_to_a_dot_html_address():
         assert not stale, (f.name, stale)
 
 
+SERVICE_PAGES = ("exhibition-stands", "fit-out-interior", "corporate-events",
+                 "outdoor-activities", "branding", "corporate-gifts",
+                 "event-equipment-rental", "photo-videography", "staffing",
+                 "digital-marketing")
+
+
+def test_each_service_has_its_own_page_at_a_two_segment_address():
+    """The file is services-branding.html; the address is /services/branding.
+    The nesting lives in the address map alone, so nothing else in the site
+    has to learn about a slug with a slash in it."""
+    for tail in SERVICE_PAGES:
+        res = client.get(f"/services/{tail}", follow_redirects=False)
+        assert res.status_code == 200, tail
+        assert res.text.count("<h1") == 1, tail
+
+
+def test_a_service_page_has_exactly_one_indexable_address():
+    """Four forms reach each page and three of them are spare. A file name
+    that is separately indexable is a duplicate of the page it serves."""
+    for tail in SERVICE_PAGES:
+        canonical = f"/services/{tail}"
+        for spare in (f"/services-{tail}", f"/services-{tail}.html",
+                      f"{canonical}.html", f"{canonical}/"):
+            res = client.get(spare, follow_redirects=False)
+            assert res.status_code == 301, spare
+            assert res.headers["location"] == canonical, spare
+        # ...and the canonical one is served, not redirected again
+        assert client.get(canonical, follow_redirects=False).status_code == 200
+
+
+def test_no_two_public_pages_share_a_title_or_a_description():
+    """Twenty-one pages now, ten of them siblings. Duplicate titles and
+    descriptions are the failure that turns a set of service pages into one
+    page repeated ten times."""
+    import re as _re
+
+    seen_titles, seen_descs = {}, {}
+    for page in CLEAN_PAGES + tuple(f"/services/{t}" for t in SERVICE_PAGES):
+        body = client.get(page).text
+        title = _re.search(r"<title>(.*?)</title>", body, _re.S).group(1)
+        desc = _re.search(r'<meta name="description" content="(.*?)">', body, _re.S).group(1)
+        assert title not in seen_titles, (page, seen_titles.get(title))
+        assert desc not in seen_descs, (page, seen_descs.get(desc))
+        seen_titles[title], seen_descs[desc] = page, page
+
+
+def test_a_service_page_carries_its_own_seo_head():
+    for tail in SERVICE_PAGES:
+        url = f"https://www.elitemarcom.com/services/{tail}"
+        body = client.get(f"/services/{tail}").text
+        assert f'<link rel="canonical" href="{url}">' in body, tail
+        assert f'<meta property="og:url" content="{url}">' in body, tail
+        assert '<meta property="og:title"' in body and '<meta property="og:image"' in body
+
+
+def test_a_service_page_describes_itself_in_structured_data():
+    """One JSON-LD block per page: the service, the page, and a breadcrumb
+    that matches the one a visitor can see. The organisation is referenced by
+    id rather than repeated, so there is still exactly one of it on the site."""
+    import json as _json
+    import re as _re
+
+    for tail in SERVICE_PAGES:
+        url = f"https://www.elitemarcom.com/services/{tail}"
+        body = client.get(f"/services/{tail}").text
+        blocks = _re.findall(r'<script type="application/ld\+json">(.*?)</script>', body, _re.S)
+        assert len(blocks) == 1, tail
+        graph = _json.loads(blocks[0])["@graph"]
+        nodes = {n["@type"]: n for n in graph}
+        assert set(nodes) == {"Service", "WebPage", "BreadcrumbList"}, tail
+        assert nodes["Service"]["provider"]["@id"] == "https://www.elitemarcom.com/#organization"
+        assert nodes["WebPage"]["url"] == url
+        crumbs = nodes["BreadcrumbList"]["itemListElement"]
+        assert [c["name"] for c in crumbs][:2] == ["Home", "Services"]
+        assert crumbs[2]["item"] == url
+        # the visible breadcrumb says the same thing
+        assert '<nav class="crumbs' in body and '<li><a href="/services">Services</a></li>' in body
+
+
+def test_the_services_page_links_to_every_service_page():
+    """The overview stays the hub; each card is now the way in to the detail."""
+    body = client.get("/services").text
+    for tail in SERVICE_PAGES:
+        assert f'href="/services/{tail}"' in body, tail
+    assert client.get("/services", follow_redirects=False).status_code == 200
+
+
+def test_the_service_pages_are_in_the_sitemap_once_each():
+    body = client.get("/sitemap.xml").text
+    for tail in SERVICE_PAGES:
+        assert body.count(f"<loc>https://www.elitemarcom.com/services/{tail}</loc>") == 1, tail
+
+
+def test_the_catalogue_shells_are_not_offered_to_a_search_engine():
+    """/product and /rental-item are the templates a catalogue item renders
+    into. Without an id they are empty, so they are pages the site serves but
+    not pages worth offering."""
+    import re as _re
+
+    locs = _re.findall(r"<loc>(.*?)</loc>", client.get("/sitemap.xml").text)
+    assert not [l for l in locs if l.rstrip("/").endswith(("/product", "/rental-item"))]
+    # they still work as addresses
+    assert client.get("/product").status_code == 200
+    assert client.get("/rental-item").status_code == 200
+
+
 def test_the_sitemap_lists_clean_addresses_only():
     body = client.get("/sitemap.xml").text
     assert ".html" not in body

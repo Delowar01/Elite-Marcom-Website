@@ -302,6 +302,23 @@ documentation). Non-negotiable rules from it:
   canonical/OG/JSON-LD and in email templates. `localize` rewrites a
   one-segment `href="/x"` into `/ar/x` with a lookahead so `#fragments`
   survive; two-segment paths (`/assets/…`, `/js/…`) are left alone.
+- **The ten service detail pages are ordinary pages with a two-segment
+  address.** `/services/branding` is served from `public/services-branding.html`
+  — the slug stays flat because a slug with a slash in it would have to be
+  handled again in `published_file`, `_SLUG_RESERVED`, the admin routes and
+  every layer keyed on a page name. `content.PAGE_ADDRESS` is the single
+  lookup that maps slug → address, `page_for_address` maps back, and
+  `page_address` is what the sitemap, `collections.page_href` and
+  `media._public_href` all read, so a menu link and a canonical tag cannot
+  point at different forms of one page. Each page answers to four addresses
+  and exactly one is canonical: `/services-branding`, `/services-branding.html`
+  and `/services/branding.html` all 301 to `/services/branding`, so the file
+  name is never separately indexable. `collections._nav_parent` maps a
+  `services-*` slug onto the Services menu entry, so a service page marks
+  Services as current rather than nothing. `/services` stays the overview and
+  the hub; the ten pages are reached from its cards. `content.SITEMAP_SKIP`
+  keeps `/product` and `/rental-item` out of the sitemap — without an id they
+  are empty shells, not pages worth offering.
 - After a code change that touches `public/*.html`, the admin must press
   **Publish site** once: published snapshots in `runtime/published/site/` are
   served ahead of `public/`, so a stale bake would hide new markup/scripts.

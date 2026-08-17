@@ -344,20 +344,29 @@ _PRESENCE_FIELDS = [
 # more than one page with identical markup. One render/parse pair each, pointed
 # at by several schemas, so the four copies can never drift apart.
 
-# A product page and a rental item page are not in the menu; they belong to
-# the section they were opened from, and that is the link that should read as
-# the current one.
+# A product page, a rental item page and a service detail page are not in the
+# menu; each belongs to the section it was opened from, and that is the link
+# that should read as the current one.
 NAV_PARENT = {"product": "giveaways", "rental-item": "rental"}
+
+
+def _nav_parent(page: str) -> str:
+    if page.startswith("services-"):
+        return "services"
+    return NAV_PARENT.get(page, page)
 
 
 def page_href(page: str) -> str:
     """The address a page is reached at — what a menu link must match to be
-    marked as the current one. The slug *is* the address: public pages are
-    served without the .html the file still carries."""
-    page = NAV_PARENT.get(page, page)
+    marked as the current one. `content.page_address` is the one place that
+    knows a page's address, so a menu entry and a canonical tag cannot end up
+    pointing at different forms of the same page."""
+    from . import content
+
+    page = _nav_parent(page)
     if not page or page in GLOBAL_PAGES:
         return ""
-    return "/" if page == "index" else "/" + page
+    return "/" + content.page_address(page)
 
 
 def _is_current(link: str, page: str) -> str:

@@ -1053,11 +1053,13 @@ async def block_private_paths(request: Request, call_next):
 
 # ---------------- clean URLs: no .html in a public address ----------------
 
-# One optional /ar/ edition prefix, one slug, and optionally the old extension
-# or a trailing slash — both of which are the same page under a spare address.
-# Anything with a second path segment (/api/…, /assets/…) or another suffix
-# (/styles.css, /sitemap.xml) does not match at all and is never touched.
-_CLEAN_URL_RE = re.compile(r"^/(ar/)?([a-z][a-z0-9-]{0,60})(\.html|/)?$")
+# One optional /ar/ edition prefix, an address of one or two segments, and
+# optionally the old extension or a trailing slash — both of which are the
+# same page under a spare address. Another suffix (/styles.css, /sitemap.xml)
+# or a third segment does not match at all, and a two-segment address that
+# names no page is left exactly where it was.
+_CLEAN_URL_RE = re.compile(
+    r"^/(ar/)?([a-z][a-z0-9-]{0,60}(?:/[a-z][a-z0-9-]{0,60})?)(\.html|/)?$")
 
 
 def _permanent(request: Request, path: str) -> RedirectResponse:
@@ -1076,27 +1078,31 @@ async def clean_urls(request: Request, call_next):
       /about/      ->  301 to /about          (one page, one address)
       /about       ->  served from about.html (the file does not)
 
-    Only a slug the site actually publishes is rewritten — `is_public_page`
-    decides — so /admin, /api/…, assets, downloads and unknown addresses go
-    through untouched and 404 exactly as they did. The old address never
-    reaches the file, and the new one never redirects, so one hop is all a
-    visitor or a crawler ever makes.
+    Only an address the site actually publishes is rewritten —
+    `page_for_address` decides — so /admin, /api/…, assets, downloads and
+    unknown addresses go through untouched and 404 exactly as they did. The
+    canonical address never redirects, so one hop is all a visitor or a
+    crawler ever makes.
 
-    /index.html and /index are the home page under another name; both go to
-    "/" rather than becoming a second address for it.
+    A page whose address is not simply its slug — /services/branding, whose
+    file is services-branding.html — has exactly one canonical address; every
+    other form it answers to (the bare slug, either of them with .html) is
+    sent there rather than becoming a second indexable copy of the page.
+    /index.html and /index are the same case under another name, so they go
+    to "/".
     """
     match = _CLEAN_URL_RE.match(request.url.path)
     if match:
         from . import content
 
-        prefix, slug, spare = match.group(1) or "", match.group(2), match.group(3)
-        if slug == "index":
-            return _permanent(request, "/" + prefix)
-        if content.is_public_page(slug):
-            if spare:                       # ".html" or a trailing slash
-                return _permanent(request, f"/{prefix}{slug}")
+        prefix, address, spare = match.group(1) or "", match.group(2), match.group(3)
+        page = content.page_for_address(address)
+        if page is not None:
+            canonical = content.page_address(page)
+            if spare or address != canonical:   # ".html", a slash, or the slug
+                return _permanent(request, f"/{prefix}{canonical}")
             # rewrite in place: the response is the page, not a redirect
-            request.scope["path"] = f"/{prefix}{slug}.html"
+            request.scope["path"] = f"/{prefix}{page}.html"
     return await call_next(request)
 
 

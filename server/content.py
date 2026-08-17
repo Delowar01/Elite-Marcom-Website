@@ -59,6 +59,18 @@ PAGES: dict[str, dict] = {
                 "regions": [{"key": "hero.eyebrow", "label": "Hero — eyebrow line", "kind": "text"},
                             {"key": "hero.title1", "label": "Page title", "kind": "text"},
                             {"key": "hero.lead", "label": "Lead paragraph", "kind": "multiline"}]},
+    # The service detail pages. Each is an ordinary page with a flat slug;
+    # `PAGE_ADDRESS` below is what puts them under /services/.
+    "services-exhibition-stands": {"label": "Services — Exhibition stands", "file": "services-exhibition-stands.html", "regions": _HERO},
+    "services-fit-out-interior": {"label": "Services — Fit-out & interiors", "file": "services-fit-out-interior.html", "regions": _HERO},
+    "services-corporate-events": {"label": "Services — Corporate events", "file": "services-corporate-events.html", "regions": _HERO},
+    "services-outdoor-activities": {"label": "Services — Outdoor activities", "file": "services-outdoor-activities.html", "regions": _HERO},
+    "services-branding": {"label": "Services — Branding", "file": "services-branding.html", "regions": _HERO},
+    "services-corporate-gifts": {"label": "Services — Corporate gifts", "file": "services-corporate-gifts.html", "regions": _HERO},
+    "services-event-equipment-rental": {"label": "Services — Event equipment rental", "file": "services-event-equipment-rental.html", "regions": _HERO},
+    "services-photo-videography": {"label": "Services — Photo & videography", "file": "services-photo-videography.html", "regions": _HERO},
+    "services-staffing": {"label": "Services — Staffing", "file": "services-staffing.html", "regions": _HERO},
+    "services-digital-marketing": {"label": "Services — Digital marketing", "file": "services-digital-marketing.html", "regions": _HERO},
     "product": {"label": "Gift product page", "file": "product.html", "regions": []},
     "rental-item": {"label": "Rental item page", "file": "rental-item.html", "regions": []},
 }
@@ -124,6 +136,39 @@ def is_public_page(slug: str) -> bool:
     if slug in PAGES:
         return True
     return bool(_PAGE_SLUG_RE.match(slug)) and slug in _custom_slugs()
+
+
+# The service detail pages read as /services/<name> but are ordinary flat
+# files. A slug with a slash in it would have to be handled again in the
+# published-file lookup, the reserved-name check, the admin routes and every
+# layer keyed on a page name; one lookup table instead keeps the slug flat
+# and moves the nesting into the address, which is the only place it shows.
+PAGE_ADDRESS = {slug: "services/" + slug[len("services-"):]
+                for slug in PAGES if slug.startswith("services-")}
+PAGE_ADDRESS["index"] = ""
+_ADDRESS_PAGE = {addr: slug for slug, addr in PAGE_ADDRESS.items() if addr}
+
+
+def page_address(page: str) -> str:
+    """The public address of a page, with no leading slash and no extension.
+    "" is the home page."""
+    return PAGE_ADDRESS.get(page, page)
+
+
+def page_for_address(address: str) -> str | None:
+    """The page a public address names, or None if it names no page at all.
+
+    Accepts a page's own slug as well as its address, so that the one form
+    that is not canonical — /services-branding, the file's own name — is
+    recognised and can be sent to the canonical one rather than becoming a
+    second indexable address for the same page.
+    """
+    address = address.strip("/")
+    if address in _ADDRESS_PAGE:
+        return _ADDRESS_PAGE[address]
+    if "/" in address:
+        return None
+    return address if is_public_page(address) else None
 
 
 def all_pages() -> dict[str, dict]:
@@ -569,15 +614,23 @@ def _inject_social(raw: str) -> str:
 
 # ---------------- publish, history, rollback ----------------
 
+# /product and /rental-item are the templates a catalogue item is rendered
+# into. On their own — which is the only form an address without an id takes —
+# they are empty shells, so they are pages the site serves but not pages worth
+# offering a search engine.
+SITEMAP_SKIP = {"product", "rental-item"}
+
+
 def _sitemap_xml() -> str:
     today = time.strftime("%Y-%m-%d")
     urls = []
     prefixes = [""] + (["ar/"] if "ar" in languages() else [])
-    pages = all_pages()
+    pages = {k: v for k, v in all_pages().items() if k not in SITEMAP_SKIP}
     for prefix in prefixes:
         for page, cfg in pages.items():
-            # the address, not the file: a page is served without its extension
-            tail = prefix if page == "index" else f"{prefix}{page}"
+            # the address, not the file: a page is served without its
+            # extension, and a service page under /services/
+            tail = f"{prefix}{page_address(page)}"
             urls.append(f"  <url><loc>{SITE_ORIGIN}/{tail}</loc>"
                         f"<lastmod>{today}</lastmod></url>")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -609,7 +662,8 @@ def localize(raw: str, lang: str) -> str:
         # segment only, so /assets/… and /js/… are left where they are, and a
         # lookahead rather than a closing quote so /services#branding keeps
         # its fragment.
-        raw = re.sub(r'href="/([a-z][a-z0-9-]*)(?=["#?])', r'href="/ar/\1', raw)
+        raw = re.sub(r'href="/([a-z][a-z0-9-]*(?:/[a-z][a-z0-9-]*)?)(?=["#?])',
+                     r'href="/ar/\1', raw)
         raw = re.sub(r'href="/"(\s|>)', r'href="/ar/"\1', raw)
         raw = raw.replace('<link rel="canonical" href="https://www.elitemarcom.com/',
                           '<link rel="canonical" href="https://www.elitemarcom.com/ar/')

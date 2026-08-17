@@ -2532,7 +2532,11 @@ def test_every_page_of_the_site_is_managed_section_by_section():
 
     # and every list the site defines belongs to exactly one group
     assert sorted(n for g in groups.values() for n in g["lists"]) == sorted(co.SCHEMAS)
-    assert len(content.PAGES) - len(groups) + 2 == 3   # privacy, product, rental-item
+    # a page with nothing repeatable on it has no group, and those are named
+    # rather than counted so a new page cannot quietly join the list
+    ungrouped = set(content.PAGES) - set(groups)
+    assert ungrouped == {"privacy", "product", "rental-item"} | {
+        p for p in content.PAGES if p.startswith("services-")}
 
 
 def test_the_menu_is_one_list_baked_into_every_page():

@@ -4,6 +4,24 @@
    ============================================================ */
 
 /* ---------- page index (about) ---------- */
+/* Breadcrumb — the one navigation element a service page adds. Sits above
+   the H1 so it reads as position rather than as a menu. */
+.crumbs { margin-bottom: 18px; }
+.crumbs ol {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 0.8rem; color: var(--text-muted);
+}
+.crumbs li { display: inline-flex; align-items: center; gap: 6px; }
+.crumbs li + li::before {
+  content: ""; width: 5px; height: 5px; border-right: 1px solid var(--border-strong);
+  border-top: 1px solid var(--border-strong); transform: rotate(45deg);
+}
+.crumbs a { color: var(--text-muted); text-decoration: none; }
+.crumbs a:hover { color: var(--text); }
+.crumbs [aria-current="page"] { color: var(--text-soft); font-weight: 600; }
+[dir="rtl"] .crumbs li + li::before { transform: rotate(225deg); }
+
 .page-index {
   display: flex; flex-wrap: wrap; gap: 6px;
   margin-top: 54px; padding: 10px;
