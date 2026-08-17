@@ -286,18 +286,17 @@ documentation). Non-negotiable rules from it:
   headline and "Load more" both read it, so they cannot disagree. The website
   can still legitimately show fewer than the panel — `get_catalog` drops
   hidden items and, if the rule is on, zero-stock ones.
-- **One file, two robots rules.** `/product` and `/rental-item` are the
-  templates a catalogue item renders into, and one file answers both the empty
-  shell and a real item page. A tag baked into the file could only ever be
-  right for one of them, so `CachedStaticFiles._catalogue_page` decides it per
-  response: no `id` in the query → `noindex,follow` (**follow**, so a crawler
-  still walks the links out of the shell), an `id` → the ordinary indexable
-  tag. The rewrite is regex-based rather than read from the file, so a stale
-  published bake still serves the right answer, and the four paths it applies
-  to are an explicit allowlist because that branch reads a file by name.
-  Never `Disallow:` these in robots.txt — a blocked page is never fetched, so
-  the noindex is never seen and the URL stays eligible to be listed from links
-  alone.
+- **The catalogue detail route is `noindex,follow`, all of it.**
+  `public/product.html` and `public/rental-item.html` each carry the tag, so
+  the empty shell and a real `?id=…` page say the same thing, in both
+  editions — `localize` never touches it. That is deliberate rather than an
+  oversight: these are roughly 4,300 query-based, client-rendered addresses,
+  and they become indexable only once they have permanent addresses of their
+  own (`/giveaways/{slug}`, `/rental/{slug}`) with server-rendered content,
+  unique metadata, a canonical and structured data. `follow`, not `none`, so
+  a crawler still walks the links out of them; and never `Disallow:` them in
+  robots.txt, because a page that is never fetched is a page whose noindex is
+  never read. `content.SITEMAP_SKIP` keeps both out of the sitemap.
 - **Public addresses carry no `.html`.** The files keep their names; the
   addresses do not. `clean_urls` in `server/main.py` is the whole mechanism:
   `/about` is rewritten in place onto `about.html`, and `/about.html`,

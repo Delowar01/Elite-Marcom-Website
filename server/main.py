@@ -1116,39 +1116,9 @@ _OVERRIDE_TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".webp": "image
                    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".glb": "model/gltf-binary"}
 
 
-# ---------------- the two catalogue templates ----------------
-#
-# One file serves two different things. /product is the empty shell — the
-# template before an item is loaded into it — and /product?id=… is a real
-# product page. The shell must not be indexed and the item must, so the
-# robots rule is decided per response instead of being baked into the file,
-# which could only ever be right for one of them.
-#
-# An explicit list of four paths rather than a suffix test: this branch reads
-# a file off disk by name, and a name it does not recognise must not reach it.
-_CATALOGUE_PAGES = frozenset({"product.html", "rental-item.html",
-                              "ar/product.html", "ar/rental-item.html"})
-_ROBOTS_META_RE = re.compile(r'<meta name="robots" content="[^"]*">')
-_SHELL_ROBOTS = '<meta name="robots" content="noindex,follow">'
-_ITEM_ROBOTS = ('<meta name="robots" content="index, follow, max-image-preview:large, '
-                'max-snippet:-1, max-video-preview:-1">')
-
-
-def _asks_for_an_item(scope) -> bool:
-    from urllib.parse import parse_qs
-
-    query = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
-    return bool((query.get("id") or [""])[0].strip())
-
-
 class CachedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):  # type: ignore[override]
         from . import content, media
-
-        if path in _CATALOGUE_PAGES:
-            answer = self._catalogue_page(path, _asks_for_an_item(scope))
-            if answer is not None:
-                return answer
 
         published = content.published_file(path)
         if published is not None:
@@ -1173,27 +1143,6 @@ class CachedStaticFiles(StaticFiles):
         if path.endswith(".glb"):
             response.headers["Content-Type"] = "model/gltf-binary"
         return response
-
-    def _catalogue_page(self, path: str, has_item: bool) -> Response | None:
-        """The template, with its robots rule set for what this URL actually is.
-
-        Rewritten rather than read from the file so that a stale published
-        bake carrying the old blanket noindex still serves the right answer —
-        there is one rule and it lives here.
-        """
-        from . import content
-
-        page = content.published_file(path) or (config.PUBLIC_DIR / path)
-        if not page.is_file():
-            return None
-        raw = page.read_text(encoding="utf-8")
-        robots = _ITEM_ROBOTS if has_item else _SHELL_ROBOTS
-        if _ROBOTS_META_RE.search(raw):
-            raw = _ROBOTS_META_RE.sub(robots, raw, count=1)
-        else:
-            raw = raw.replace("</head>", robots + "\n</head>", 1)
-        return Response(raw, media_type="text/html; charset=utf-8",
-                        headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/", CachedStaticFiles(directory=str(config.PUBLIC_DIR), html=True), name="static")

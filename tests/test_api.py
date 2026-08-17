@@ -266,24 +266,45 @@ def _robots(url: str) -> str:
     return _re.search(r'<meta name="robots" content="([^"]*)">', body).group(1)
 
 
-def test_an_empty_catalogue_shell_says_noindex_and_a_real_item_does_not():
-    """One file, two different things. /product is the template before an item
-    is loaded into it and must not be indexed; /product?id=… is a real page and
-    must be. A tag baked into the file could only ever be right for one of
-    them, so the rule is decided per response — and `follow`, not `none`, so a
-    crawler still walks the links out of the shell."""
-    assert _robots("/product") == "noindex,follow"
-    assert _robots("/rental-item") == "noindex,follow"
-    # a blank or missing id is still the shell
-    assert _robots("/product?country=ksa") == "noindex,follow"
-    assert _robots("/product?id=") == "noindex,follow"
+def test_the_whole_catalogue_detail_route_is_noindex_for_now():
+    """Every form of /product and /rental-item — the empty shell and a real
+    item alike, in both editions — says noindex,follow.
 
-    for real in ("/product?country=ksa&id=prev-hoodie-ksa",
-                 "/rental-item?country=ksa&id=rent-display-75"):
-        assert _robots(real).startswith("index, follow"), real
-        assert "noindex" not in _robots(real), real
+    These are query-based and client-rendered, and there are roughly 4,300 of
+    them. They will become indexable when they have permanent addresses of
+    their own (/giveaways/{slug}, /rental/{slug}) with server-rendered
+    content, unique metadata, a canonical and structured data — not before.
 
-    # and no other page was touched by the rule
+    `follow`, not `none`: a crawler is still meant to walk the links out of
+    these pages, and robots.txt deliberately does not block them, because a
+    page that is never fetched is a page whose noindex is never read.
+    """
+    for url in ("/product", "/rental-item",
+                "/product?country=ksa", "/product?id=",
+                "/product?country=ksa&id=prev-hoodie-ksa",
+                "/rental-item?country=ksa&id=rent-display-75"):
+        assert _robots(url) == "noindex,follow", url
+
+    # the Arabic edition is a bake of these same two files and `localize`
+    # never touches the robots tag, so both editions say the same thing
+    import pathlib as _p
+    import re as _re
+
+    from server import content as ct
+
+    for name in ("product.html", "rental-item.html"):
+        raw = (_p.Path("public") / name).read_text(encoding="utf-8")
+        assert _re.findall(r'<meta name="robots" content="([^"]*)">', raw) == \
+            ["noindex,follow"], name
+        assert _re.findall(r'<meta name="robots" content="([^"]*)">',
+                           ct.localize(raw, "ar")) == ["noindex,follow"], name
+
+    # customers are unaffected: the pages still serve
+    for url in ("/product", "/rental-item",
+                "/product?country=ksa&id=prev-hoodie-ksa"):
+        assert client.get(url).status_code == 200, url
+
+    # and no other page was touched
     assert _robots("/about").startswith("index, follow")
     assert _robots("/services/branding").startswith("index, follow")
 
