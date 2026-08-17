@@ -286,6 +286,18 @@ documentation). Non-negotiable rules from it:
   headline and "Load more" both read it, so they cannot disagree. The website
   can still legitimately show fewer than the panel — `get_catalog` drops
   hidden items and, if the rule is on, zero-stock ones.
+- **One file, two robots rules.** `/product` and `/rental-item` are the
+  templates a catalogue item renders into, and one file answers both the empty
+  shell and a real item page. A tag baked into the file could only ever be
+  right for one of them, so `CachedStaticFiles._catalogue_page` decides it per
+  response: no `id` in the query → `noindex,follow` (**follow**, so a crawler
+  still walks the links out of the shell), an `id` → the ordinary indexable
+  tag. The rewrite is regex-based rather than read from the file, so a stale
+  published bake still serves the right answer, and the four paths it applies
+  to are an explicit allowlist because that branch reads a file by name.
+  Never `Disallow:` these in robots.txt — a blocked page is never fetched, so
+  the noindex is never seen and the URL stays eligible to be listed from links
+  alone.
 - **Public addresses carry no `.html`.** The files keep their names; the
   addresses do not. `clean_urls` in `server/main.py` is the whole mechanism:
   `/about` is rewritten in place onto `about.html`, and `/about.html`,
@@ -318,7 +330,13 @@ documentation). Non-negotiable rules from it:
   Services as current rather than nothing. `/services` stays the overview and
   the hub; the ten pages are reached from its cards. `content.SITEMAP_SKIP`
   keeps `/product` and `/rental-item` out of the sitemap — without an id they
-  are empty shells, not pages worth offering.
+  are empty shells, not pages worth offering, and
+  `content._sitemap_english_only` keeps the Arabic editions of the ten out of
+  it as well. There is deliberately no hreflang for them either: the pages
+  serve and stay reachable from the language switch, but their body is still
+  English (`collection_items` has no language dimension), so listing them
+  would be advertising a page in the wrong language to Google. Both come back
+  the moment the service pages have real Arabic text.
 - After a code change that touches `public/*.html`, the admin must press
   **Publish site** once: published snapshots in `runtime/published/site/` are
   served ahead of `public/`, so a stale bake would hide new markup/scripts.

@@ -621,6 +621,19 @@ def _inject_social(raw: str) -> str:
 SITEMAP_SKIP = {"product", "rental-item"}
 
 
+def _sitemap_english_only(page: str) -> bool:
+    """Pages whose Arabic edition exists but is not worth offering yet.
+
+    `collection_items` has no language dimension, so a service page's Arabic
+    edition currently carries the English body. The page still works and is
+    still reachable — a visitor who follows the language switch gets it — but
+    listing it in the sitemap would be inviting Google to index a page in the
+    wrong language. Drop this rule (and add hreflang) the moment the service
+    pages have real Arabic text.
+    """
+    return page.startswith("services-")
+
+
 def _sitemap_xml() -> str:
     today = time.strftime("%Y-%m-%d")
     urls = []
@@ -628,6 +641,8 @@ def _sitemap_xml() -> str:
     pages = {k: v for k, v in all_pages().items() if k not in SITEMAP_SKIP}
     for prefix in prefixes:
         for page, cfg in pages.items():
+            if prefix == "ar/" and _sitemap_english_only(page):
+                continue
             # the address, not the file: a page is served without its
             # extension, and a service page under /services/
             tail = f"{prefix}{page_address(page)}"

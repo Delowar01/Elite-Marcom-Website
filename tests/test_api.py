@@ -258,6 +258,76 @@ def test_the_catalogue_shells_are_not_offered_to_a_search_engine():
     assert client.get("/rental-item").status_code == 200
 
 
+def _robots(url: str) -> str:
+    import re as _re
+
+    body = client.get(url).text
+    assert body.count('name="robots"') == 1, url
+    return _re.search(r'<meta name="robots" content="([^"]*)">', body).group(1)
+
+
+def test_an_empty_catalogue_shell_says_noindex_and_a_real_item_does_not():
+    """One file, two different things. /product is the template before an item
+    is loaded into it and must not be indexed; /product?id=… is a real page and
+    must be. A tag baked into the file could only ever be right for one of
+    them, so the rule is decided per response — and `follow`, not `none`, so a
+    crawler still walks the links out of the shell."""
+    assert _robots("/product") == "noindex,follow"
+    assert _robots("/rental-item") == "noindex,follow"
+    # a blank or missing id is still the shell
+    assert _robots("/product?country=ksa") == "noindex,follow"
+    assert _robots("/product?id=") == "noindex,follow"
+
+    for real in ("/product?country=ksa&id=prev-hoodie-ksa",
+                 "/rental-item?country=ksa&id=rent-display-75"):
+        assert _robots(real).startswith("index, follow"), real
+        assert "noindex" not in _robots(real), real
+
+    # and no other page was touched by the rule
+    assert _robots("/about").startswith("index, follow")
+    assert _robots("/services/branding").startswith("index, follow")
+
+
+def test_the_shells_are_not_blocked_in_robots_txt():
+    """A noindex only works if the crawler is allowed to fetch the page and
+    read it. Disallowing them would hide the tag and leave the URLs eligible
+    to be listed from links alone."""
+    import re as _re
+
+    body = client.get("/robots.txt").text
+    assert not _re.search(r"Disallow:\s*/product", body)
+    assert not _re.search(r"Disallow:\s*/rental-item", body)
+
+
+def test_the_untranslated_arabic_service_pages_are_not_in_the_sitemap():
+    """Their Arabic edition currently carries the English body, so the pages
+    stay reachable for anyone who follows the language switch but are not
+    offered to Google. There is no hreflang for them either, for the same
+    reason — both come back when the translations do."""
+    from server import adminauth as aa
+    from server import content as ct
+
+    before = aa.setting_get("site.languages")
+    aa.setting_set("site.languages", ["en", "ar"])
+    try:
+        xml = ct._sitemap_xml()
+        # Arabic really is switched on, so the exclusion is doing work
+        assert "/ar/about</loc>" in xml
+        for tail in SERVICE_PAGES:
+            assert f"/services/{tail}</loc>" in xml, tail
+            assert f"/ar/services/{tail}" not in xml, tail
+        assert "hreflang" not in xml
+    finally:
+        if before is None:
+            aa.setting_delete("site.languages") if hasattr(aa, "setting_delete") \
+                else aa.setting_set("site.languages", ["en"])
+        else:
+            aa.setting_set("site.languages", before)
+    # the Arabic editions of the ordinary pages are still offered
+    assert ct._sitemap_english_only("services-branding") is True
+    assert ct._sitemap_english_only("about") is False
+
+
 def test_the_sitemap_lists_clean_addresses_only():
     body = client.get("/sitemap.xml").text
     assert ".html" not in body
