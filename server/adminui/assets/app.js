@@ -201,7 +201,7 @@
     return k.replace(/([A-Z])/g, " $1").replace(/^./, function (c) { return c.toUpperCase(); });
   }
 
-  var reqState = { kind: "", status: "", q: "", offset: 0, sel: {} };
+  var reqState = { kind: "", status: "", q: "", offset: 0, sel: {}, job: "", jobTitle: "" };
 
   /* ---------- floating row menu (⋮) ---------- */
   var openMenuEl = null;
@@ -1233,6 +1233,249 @@
     });
   }
 
+  /* ---------- job posts: shared state and the editor ---------- */
+  var jobsState = { q: "", status: "all", dept: "" };
+
+  function copyJobLink(url) {
+    (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+      .then(function () { toast("Job link copied"); },
+            function () { prompt("Copy this link:", url); });
+  }
+
+  /* A small rich-text field: a toolbar over a contenteditable surface. The
+     markup it produces is a suggestion — the server keeps only paragraphs,
+     headings, lists, emphasis and safe links, and that is what comes back. */
+  function richField(id, label, html, opts) {
+    opts = opts || {};
+    var bar = [["bold", "B", "Bold"], ["italic", "I", "Italic"], "|",
+               ["h3", "H", "Heading"], ["p", "¶", "Paragraph"], "|",
+               ["ul", "• List", "Bulleted list"], ["ol", "1. List", "Numbered list"], "|",
+               ["link", "Link", "Add a link"], ["clear", "Clear", "Remove formatting"]];
+    return '<div class="full"><label for="' + id + '">' + esc(label) +
+      (opts.required ? ' <span class="req">*</span>' : "") + "</label>" +
+      '<div class="rte' + (opts.tall ? " rte--tall" : "") + '" data-rte="' + id + '">' +
+      '<div class="rte__bar" role="toolbar" aria-label="Formatting">' + bar.map(function (b) {
+        if (b === "|") return '<span class="sep" aria-hidden="true"></span>';
+        return '<button type="button" data-cmd="' + b[0] + '" title="' + esc(b[2]) + '">' + esc(b[1]) + "</button>";
+      }).join("") + "</div>" +
+      '<div class="rte__body" id="' + id + '" contenteditable="true" data-placeholder="' + esc(opts.placeholder || "") + '">' + (html || "") + "</div></div>" +
+      (opts.help ? '<span class="field-help">' + esc(opts.help) + "</span>" : "") + "</div>";
+  }
+  function wireRich(root) {
+    root.querySelectorAll(".rte").forEach(function (box) {
+      var body = box.querySelector(".rte__body");
+      box.querySelector(".rte__bar").addEventListener("mousedown", function (e) { e.preventDefault(); });
+      box.querySelector(".rte__bar").addEventListener("click", function (e) {
+        var b = e.target.closest("[data-cmd]");
+        if (!b) return;
+        body.focus();
+        var cmd = b.getAttribute("data-cmd");
+        if (cmd === "bold" || cmd === "italic") document.execCommand(cmd);
+        else if (cmd === "h3") document.execCommand("formatBlock", false, "h3");
+        else if (cmd === "p") document.execCommand("formatBlock", false, "p");
+        else if (cmd === "ul") document.execCommand("insertUnorderedList");
+        else if (cmd === "ol") document.execCommand("insertOrderedList");
+        else if (cmd === "clear") { document.execCommand("removeFormat"); document.execCommand("formatBlock", false, "p"); }
+        else if (cmd === "link") {
+          var url = prompt("Link to (https://…, mailto: or /page):", "https://");
+          if (url && /^(https:\/\/|mailto:|tel:|\/)/.test(url.trim())) document.execCommand("createLink", false, url.trim());
+          else if (url) toast("Links must start with https://, mailto:, tel: or /", true);
+        }
+        body.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      /* pasted content arrives as plain text: the server would strip the
+         styling anyway, and a pasted Word document is how a page ends up
+         with 40KB of spans */
+      body.addEventListener("paste", function (e) {
+        e.preventDefault();
+        var text = (e.clipboardData || window.clipboardData).getData("text/plain");
+        document.execCommand("insertText", false, text);
+      });
+    });
+  }
+  function readRich(id) {
+    var el = document.getElementById(id);
+    return el ? el.innerHTML : "";
+  }
+
+  function jobEditor(id) {
+    var isNew = !id;
+    var url = isNew ? "/api/admin/jobs" : "/api/admin/jobs/" + encodeURIComponent(id);
+    var load = isNew ? Promise.resolve({ ok: true, data: { job: null, employmentTypes: [], workplaceTypes: [] } })
+                     : api(url);
+    load.then(function (r) {
+      if (!r.ok) { apiErr(r); location.hash = "#jobs"; return; }
+      var j = r.data.job || { title: "", department: "", location: "", employmentType: "Full time",
+        workplaceType: "Onsite", experience: "", salary: "", summary: "", description: "",
+        responsibilities: "", requirements: "", qualifications: "", skills: "", benefits: "",
+        vacancies: 1, applyEmail: "hr@elitemarcom.com", closingDate: "", featured: false,
+        seoTitle: "", seoDescription: "", slug: "", status: "draft", poster: "", applications: 0 };
+      var ET = r.data.employmentTypes.length ? r.data.employmentTypes : ["Full time", "Part time", "Contract", "Internship", "Temporary"];
+      var WT = r.data.workplaceTypes.length ? r.data.workplaceTypes : ["Onsite", "Hybrid", "Remote"];
+      var dirty = false, slugTouched = !isNew;
+
+      function opt(list, cur) {
+        return list.map(function (v) { return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>"; }).join("");
+      }
+      function field(id2, label, value, attrs, help, required) {
+        return '<div><label for="' + id2 + '">' + esc(label) + (required ? ' <span class="req">*</span>' : "") + "</label>" +
+          '<input id="' + id2 + '" value="' + esc(value || "") + '" ' + (attrs || "") + (required ? " required" : "") + ">" +
+          (help ? '<span class="field-help">' + esc(help) + "</span>" : "") + "</div>";
+      }
+      var statusLabel = { draft: "Draft", published: "Published", closed: "Closed", archived: "Archived" }[j.status];
+      var statusNote = j.status === "published"
+        ? (j.expired ? "Published, but the closing date has passed — it reads as closed on the site." : "Live on the Careers page" + (j.publishedAt ? " since " + when(j.publishedAt) : "") + ".")
+        : j.status === "closed" ? "The page still answers and says applications are closed."
+        : j.status === "archived" ? "Off the site. Its address is a 404 until it is restored."
+        : "Not visible to anyone outside the panel.";
+
+      main.innerHTML =
+        '<p><a href="#jobs" class="btn btn--ghost btn--small">&larr; All job posts</a></p>' +
+        '<div class="job-editor__head"><h1 class="admin-h1" id="job-h1">' + (isNew ? "New job post" : esc(j.title)) + "</h1>" +
+        (isNew ? "" : '<span class="status-pill status-pill--' + esc(j.status) + '">' + esc(statusLabel) + "</span>") + "</div>" +
+        '<p class="admin-sub">' + esc(statusNote) + (isNew ? "" : " Edits are saved when you press a button below — nothing publishes itself.") + "</p>" +
+        '<form id="job-form" class="job-editor"><div class="job-editor__main">' +
+        '<div class="admin-panel"><h2>The role</h2><div class="admin-form">' +
+        field("jf-title", "Job title", j.title, 'maxlength="140" placeholder="Sales Manager"', "", true) +
+        field("jf-department", "Department", j.department, 'maxlength="80" placeholder="Business Development"') +
+        field("jf-location", "Location", j.location, 'maxlength="120" placeholder="Riyadh, Saudi Arabia"', "City, country — the city goes into the web address.", true) +
+        '<div><label for="jf-etype">Employment type</label><select id="jf-etype">' + opt(ET, j.employmentType) + "</select></div>" +
+        '<div><label for="jf-wtype">Workplace type</label><select id="jf-wtype">' + opt(WT, j.workplaceType) + "</select></div>" +
+        field("jf-experience", "Experience required", j.experience, 'maxlength="120" placeholder="3–5 years in a similar role"') +
+        field("jf-salary", "Salary / salary range", j.salary, 'maxlength="120" placeholder="Leave empty to say nothing"', "Shown on the job page only if filled in.") +
+        '<div class="full"><label for="jf-summary">Short summary</label><textarea id="jf-summary" rows="2" maxlength="400" placeholder="One or two sentences shown on the Careers card and under the title.">' + esc(j.summary) + "</textarea></div>" +
+        "</div></div>" +
+        '<div class="admin-panel"><h2>The posting</h2><div class="admin-form">' +
+        richField("jf-description", "Full job description", j.description, { required: true, tall: true, placeholder: "What the role is, who it reports to, what a good first year looks like…" }) +
+        richField("jf-responsibilities", "Responsibilities", j.responsibilities, { placeholder: "What the person will do — a bulleted list reads best." }) +
+        richField("jf-requirements", "Requirements", j.requirements, { placeholder: "What we need to see — experience, portfolio, languages." }) +
+        richField("jf-qualifications", "Qualifications", j.qualifications, { placeholder: "Degrees, certifications, licences." }) +
+        richField("jf-skills", "Skills", j.skills, { placeholder: "Tools, methods, soft skills." }) +
+        richField("jf-benefits", "Benefits", j.benefits, { placeholder: "What the role offers." }) +
+        "</div></div>" +
+        '<div class="admin-panel"><h2>Search &amp; sharing</h2><div class="admin-form">' +
+        field("jf-seo-title", "SEO title", j.seoTitle, 'maxlength="200"', "Leave empty for “" + (j.title || "Job title") + " — Careers at Elite Marcom”.") +
+        '<div class="full"><label for="jf-seo-desc">Meta description</label><textarea id="jf-seo-desc" rows="2" maxlength="320" placeholder="Leave empty to use the short summary.">' + esc(j.seoDescription) + "</textarea></div>" +
+        "</div></div></div>" +
+
+        '<aside class="job-editor__side">' +
+        '<div class="admin-panel"><h2>Status</h2>' +
+        '<p class="admin-inline-note" id="jf-status-note">' + esc(isNew ? "Not saved yet." : statusNote) + "</p>" +
+        '<div class="admin-actions" style="margin-top:12px;">' +
+        (j.status === "published"
+          ? '<button class="btn btn--primary btn--small" type="button" data-save="published">Update published job</button>' +
+            '<button class="btn btn--ghost btn--small" type="button" data-save="draft">Unpublish &amp; save as draft</button>' +
+            '<button class="btn btn--ghost btn--small" type="button" data-save="closed">Save &amp; close applications</button>'
+          : j.status === "closed"
+          ? '<button class="btn btn--primary btn--small" type="button" data-save="published">Save &amp; reopen</button>' +
+            '<button class="btn btn--ghost btn--small" type="button" data-save="closed">Save (keep closed)</button>'
+          : '<button class="btn btn--ghost btn--small" type="button" data-save="draft">Save draft</button>' +
+            '<button class="btn btn--primary btn--small" type="button" data-save="published">' + (isNew ? "Publish" : "Publish now") + "</button>") +
+        "</div></div>" +
+        '<div class="admin-panel"><h2>Web address</h2>' +
+        '<div class="admin-form"><div class="full"><label for="jf-slug">Slug</label>' +
+        '<div class="slug-row"><span class="muted">/careers/</span><input id="jf-slug" value="' + esc(j.slug) + '" maxlength="80" placeholder="sales-manager-riyadh" pattern="[a-z0-9-]+">' +
+        '<button class="btn btn--ghost btn--small" type="button" id="jf-slug-gen" title="Generate from the title and city">↻</button></div>' +
+        '<span class="field-help">' + (isNew ? "Filled in from the title and city; edit it before publishing if you like." :
+          "Kept as it is when the title changes. If you do change it, the old address keeps working as a redirect.") + "</span></div></div>" +
+        '<p class="job-address" id="jf-url">' + esc(j.url || "https://www.elitemarcom.com/careers/…") + "</p>" +
+        '<div class="admin-actions" style="margin-top:0;">' +
+        '<button class="btn btn--ghost btn--small" type="button" id="jf-copy"' + (isNew ? " disabled" : "") + ">Copy link</button>" +
+        (!isNew && (j.status === "published" || j.status === "closed")
+          ? '<a class="btn btn--ghost btn--small" href="' + esc(j.url) + '" target="_blank" rel="noopener">View on site</a>' : "") +
+        "</div></div>" +
+        '<div class="admin-panel"><h2>Details</h2><div class="admin-form">' +
+        '<div class="full"><label for="jf-closing">Application deadline</label><input id="jf-closing" type="date" value="' + esc(j.closingDate) + '">' +
+        '<span class="field-help">After this date the page says applications are closed on its own.</span></div>' +
+        '<div class="full"><label for="jf-vacancies">Number of vacancies</label><input id="jf-vacancies" type="number" min="1" max="500" value="' + esc(j.vacancies || 1) + '"></div>' +
+        '<div class="full"><label for="jf-email">Application email</label><input id="jf-email" type="email" maxlength="200" value="' + esc(j.applyEmail) + '">' +
+        '<span class="field-help">Shown under the form for people who prefer to write.</span></div>' +
+        '<div class="full"><label for="jf-poster">Poster / cover image</label><input id="jf-poster" maxlength="240" value="' + esc(j.poster) + '" placeholder="/media/… or /assets/…">' +
+        '<span class="field-help">Optional. Also used as the share image.</span></div>' +
+        '<div class="full"><label class="job-check"><input type="checkbox" id="jf-featured"' + (j.featured ? " checked" : "") + "> Featured job</label>" +
+        '<span class="field-help">Highlighted on the Careers page.</span></div>' +
+        "</div></div>" +
+        (!isNew && can("requests.view")
+          ? '<div class="admin-panel"><h2>Applications</h2><p class="admin-inline-note"><b>' + (j.applications || 0) + "</b> application" + (j.applications === 1 ? "" : "s") + " for this post." +
+            (j.applications ? ' <a href="#requests" id="jf-apps">Open them</a>.' : "") + "</p></div>" : "") +
+        "</aside></form>";
+
+      var form = document.getElementById("job-form");
+      wireRich(form);
+
+      /* ---- unsaved changes ---- */
+      function markDirty() { dirty = true; }
+      form.addEventListener("input", markDirty);
+      form.addEventListener("change", markDirty);
+      leaveGuard = function (silent) {
+        if (!dirty) return true;
+        if (silent) return false;
+        return confirm("You have unsaved changes on this job post. Leave without saving?");
+      };
+
+      /* ---- the address ---- */
+      var slugEl = document.getElementById("jf-slug"), urlEl = document.getElementById("jf-url");
+      var slugTimer = null;
+      function showUrl() { urlEl.textContent = "https://www.elitemarcom.com/careers/" + (slugEl.value.trim() || "…"); }
+      function suggestSlug() {
+        api("/api/admin/jobs/slug", { title: document.getElementById("jf-title").value,
+                                      location: document.getElementById("jf-location").value, id: id || "" })
+          .then(function (r2) { if (r2.ok) { slugEl.value = r2.data.slug; showUrl(); } });
+      }
+      ["jf-title", "jf-location"].forEach(function (fid) {
+        document.getElementById(fid).addEventListener("input", function () {
+          if (slugTouched) return;             /* a slug typed by hand, or one already live, stays */
+          clearTimeout(slugTimer);
+          slugTimer = setTimeout(suggestSlug, 300);
+        });
+      });
+      slugEl.addEventListener("input", function () { slugTouched = true; slugEl.value = slugEl.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"); showUrl(); });
+      document.getElementById("jf-slug-gen").addEventListener("click", function () { slugTouched = true; suggestSlug(); markDirty(); });
+      document.getElementById("jf-copy").addEventListener("click", function () { copyJobLink(j.url); });
+      var appsLink = document.getElementById("jf-apps");
+      if (appsLink) appsLink.addEventListener("click", function (e) {
+        e.preventDefault();
+        reqState.kind = "career"; reqState.job = j.id; reqState.jobTitle = j.title; reqState.offset = 0;
+        location.hash = "#requests";
+      });
+
+      /* ---- saving ---- */
+      function collect() {
+        return {
+          title: document.getElementById("jf-title").value, department: document.getElementById("jf-department").value,
+          location: document.getElementById("jf-location").value, employmentType: document.getElementById("jf-etype").value,
+          workplaceType: document.getElementById("jf-wtype").value, experience: document.getElementById("jf-experience").value,
+          salary: document.getElementById("jf-salary").value, summary: document.getElementById("jf-summary").value,
+          description: readRich("jf-description"), responsibilities: readRich("jf-responsibilities"),
+          requirements: readRich("jf-requirements"), qualifications: readRich("jf-qualifications"),
+          skills: readRich("jf-skills"), benefits: readRich("jf-benefits"),
+          vacancies: document.getElementById("jf-vacancies").value, applyEmail: document.getElementById("jf-email").value,
+          closingDate: document.getElementById("jf-closing").value, featured: document.getElementById("jf-featured").checked,
+          seoTitle: document.getElementById("jf-seo-title").value, seoDescription: document.getElementById("jf-seo-desc").value,
+          poster: document.getElementById("jf-poster").value, slug: slugEl.value.trim()
+        };
+      }
+      form.addEventListener("submit", function (e) { e.preventDefault(); });
+      form.querySelectorAll("[data-save]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var status = btn.getAttribute("data-save");
+          if (!document.getElementById("jf-title").value.trim()) return toast("Job title is required.", true);
+          if (!document.getElementById("jf-location").value.trim()) return toast("Location is required.", true);
+          form.querySelectorAll("[data-save]").forEach(function (b) { b.disabled = true; });
+          api(url, { values: collect(), status: status }).then(function (r2) {
+            form.querySelectorAll("[data-save]").forEach(function (b) { b.disabled = false; });
+            if (!r2.ok) return apiErr(r2);
+            dirty = false;
+            var saved = r2.data.job;
+            toast(status === "published" ? (j.status === "published" ? "Published job updated." : "Published — live on the Careers page.")
+                  : status === "closed" ? "Saved — applications are closed." : "Draft saved.");
+            if (isNew) location.hash = "#jobs/" + saved.id; else jobEditor(saved.id);
+          });
+        });
+      });
+    });
+  }
+
   /* ---------- views ---------- */
   var views = {
     dashboard: function () {
@@ -1469,11 +1712,18 @@
       var qs = "limit=30&offset=" + reqState.offset +
         (reqState.kind ? "&kind=" + encodeURIComponent(reqState.kind) : "") +
         (reqState.status ? "&status=" + encodeURIComponent(reqState.status) : "") +
-        (reqState.q ? "&q=" + encodeURIComponent(reqState.q) : "");
+        (reqState.q ? "&q=" + encodeURIComponent(reqState.q) : "") +
+        (reqState.job ? "&job=" + encodeURIComponent(reqState.job) : "");
       api("/api/admin/requests?" + qs).then(function (r) {
         if (!r.ok) return apiErr(r);
         var d = r.data;
         var counts = d.statusCounts || {};
+        setTimeout(function () {
+          var clear = document.getElementById("req-clear-job");
+          if (clear) clear.addEventListener("click", function (e) {
+            e.preventDefault(); reqState.job = ""; reqState.jobTitle = ""; reqState.kind = ""; reqState.offset = 0; views.requests();
+          });
+        }, 0);
         var manage = can("requests.manage");
         var kindOpts = Object.keys(KIND_LABELS).map(function (k) {
           return '<option value="' + k + '"' + (reqState.kind === k ? " selected" : "") + ">" +
@@ -1488,6 +1738,9 @@
         main.innerHTML =
           '<h1 class="admin-h1">Requests inbox</h1>' +
           '<p class="admin-sub">Customer submissions decrypt on view — every view is recorded in the activity log.</p>' +
+          (reqState.job
+            ? '<p class="admin-inline-note" style="margin-bottom:12px;">Showing applications for <b>' +
+              esc(reqState.jobTitle || "one job post") + '</b> · <a href="#requests" id="req-clear-job">Show all requests</a></p>' : "") +
           '<div class="stat-row">' + (d.statuses || []).map(function (s) {
             /* aria-pressed so the live filter is legible even at a zero count */
             return '<button type="button" class="stat-card stat-card--click" data-status="' + s +
@@ -2464,6 +2717,157 @@
               r2.ok ? (toast("Original restored."), views.media()) : apiErr(r2);
             });
           });
+        });
+      });
+    },
+
+    /* ---------------- Job posts ----------------
+       Every vacancy is its own record with its own address. The list is
+       where they are found, filtered and acted on; the editor is where one
+       is written. Nothing an admin types is rendered as HTML here — the
+       server keeps a whitelist and the panel shows what it kept. */
+
+    jobs: function (param) {
+      if (param) return jobEditor(param === "new" ? null : param);
+      api("/api/admin/jobs").then(function (r) {
+        if (!r.ok) return apiErr(r);
+        var d = r.data;
+        var jobs = d.jobs || [];
+        var st = jobsState;
+        var counts = { all: jobs.length };
+        jobs.forEach(function (j) { counts[j.status] = (counts[j.status] || 0) + 1; });
+        var depts = [];
+        jobs.forEach(function (j) { if (j.department && depts.indexOf(j.department) === -1) depts.push(j.department); });
+
+        function pill(j) {
+          if (j.status === "published" && j.expired) return '<span class="status-pill status-pill--expired">Expired</span>';
+          var label = { draft: "Draft", published: "Published", closed: "Closed", archived: "Archived" }[j.status] || j.status;
+          return '<span class="status-pill status-pill--' + esc(j.status) + '">' + esc(label) + "</span>";
+        }
+        function shown() {
+          var q = st.q.toLowerCase();
+          return jobs.filter(function (j) {
+            if (st.status !== "all" && j.status !== st.status) return false;
+            if (st.dept && j.department !== st.dept) return false;
+            if (q && (j.title + " " + j.department + " " + j.location + " " + j.slug).toLowerCase().indexOf(q) === -1) return false;
+            return true;
+          });
+        }
+        function rows() {
+          var list = shown();
+          if (!list.length) {
+            return '<tr><td colspan="10">' + emptyState(
+              jobs.length ? "No job posts match" : "No job posts yet",
+              jobs.length ? "Try another search or status." : "Press + Add job post to write the first vacancy.") + "</td></tr>";
+          }
+          return list.map(function (j) {
+            var apps = j.applications
+              ? (can("requests.view")
+                  ? '<a class="job-apps-link" href="#requests" data-job-apps="' + esc(j.id) + '" title="Open the applications for this job">' + j.applications + "</a>"
+                  : "<b>" + j.applications + "</b>")
+              : '<span class="muted">0</span>';
+            return '<tr data-id="' + esc(j.id) + '">' +
+              '<td class="job-title-cell"><b>' + esc(j.title) + "</b>" +
+              '<span class="muted">/careers/' + esc(j.slug) + "</span></td>" +
+              '<td class="muted">' + esc(j.department || "—") + "</td>" +
+              '<td class="muted">' + esc(j.location) + "</td>" +
+              '<td class="muted">' + esc(j.employmentType) + "</td>" +
+              "<td>" + pill(j) + (j.featured ? ' <span class="badge-ok" title="Featured">★</span>' : "") + "</td>" +
+              '<td class="muted">' + (j.publishedAt ? esc(when(j.publishedAt)) : "—") + "</td>" +
+              '<td class="muted">' + (j.closingDate ? esc(j.closingDate) : "—") + "</td>" +
+              "<td>" + apps + "</td>" +
+              '<td class="muted">' + esc(when(j.updatedAt)) + "</td>" +
+              '<td class="cell-actions"><button class="btn btn--ghost btn--small" data-job-menu aria-label="Actions for ' + esc(j.title) + '">⋮</button></td></tr>';
+          }).join("");
+        }
+
+        main.innerHTML =
+          '<div class="job-editor__head"><h1 class="admin-h1" style="margin:0">Job posts</h1>' +
+          '<a class="btn btn--primary btn--small" href="#jobs/new">+ Add job post</a></div>' +
+          '<p class="admin-sub">Every vacancy is its own post with its own address. Published jobs appear on the ' +
+          'Careers page at once — no site publish needed.' +
+          (d.generalApplications ? " <b>" + d.generalApplications + "</b> general application" + (d.generalApplications === 1 ? "" : "s") + " not tied to a post." : "") + "</p>" +
+          '<div class="admin-panel">' +
+          '<div class="jobs-toolbar">' +
+          '<input type="search" id="jobs-q" placeholder="Search title, department, location…" value="' + esc(st.q) + '" aria-label="Search job posts">' +
+          '<div class="jobs-chips" id="jobs-status">' +
+          [["all", "All"], ["published", "Published"], ["draft", "Draft"], ["closed", "Closed"], ["archived", "Archived"]].map(function (s) {
+            return '<button type="button" data-status="' + s[0] + '" aria-pressed="' + (st.status === s[0]) + '">' + s[1] + "<b>" + (counts[s[0]] || 0) + "</b></button>";
+          }).join("") + "</div>" +
+          '<select id="jobs-dept" aria-label="Filter by department"><option value="">All departments</option>' +
+          depts.map(function (x) { return '<option value="' + esc(x) + '"' + (st.dept === x ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="table-scroll"><table class="admin-table"><thead><tr>' +
+          "<th>Job title</th><th>Department</th><th>Location</th><th>Type</th><th>Status</th><th>Published</th>" +
+          "<th>Closing</th><th>Applications</th><th>Updated</th><th></th></tr></thead>" +
+          '<tbody id="jobs-rows">' + rows() + "</tbody></table></div></div>";
+
+        function repaint() { document.getElementById("jobs-rows").innerHTML = rows(); }
+        document.getElementById("jobs-q").addEventListener("input", function (e) { st.q = e.target.value.trim(); repaint(); });
+        document.getElementById("jobs-dept").addEventListener("change", function (e) { st.dept = e.target.value; repaint(); });
+        document.getElementById("jobs-status").addEventListener("click", function (e) {
+          var b = e.target.closest("[data-status]");
+          if (!b) return;
+          st.status = b.getAttribute("data-status");
+          e.currentTarget.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+          repaint();
+        });
+
+        function byId(id) { return jobs.filter(function (j) { return j.id === id; })[0]; }
+        function act(id, path, body, done) {
+          api("/api/admin/jobs/" + encodeURIComponent(id) + path, body || {}).then(function (r2) {
+            if (!r2.ok) return apiErr(r2);
+            if (done) done(r2.data);
+            views.jobs();
+          });
+        }
+        main.addEventListener("click", function (e) {
+          var appsLink = e.target.closest("[data-job-apps]");
+          if (appsLink) {
+            e.preventDefault();
+            var jid = appsLink.getAttribute("data-job-apps");
+            reqState.kind = "career"; reqState.job = jid; reqState.jobTitle = (byId(jid) || {}).title || ""; reqState.offset = 0;
+            location.hash = "#requests";
+            return;
+          }
+          var btn = e.target.closest("[data-job-menu]");
+          if (!btn) return;
+          var j = byId(btn.closest("tr").getAttribute("data-id"));
+          if (!j) return;
+          var visible = j.status === "published" || j.status === "closed";
+          var entries = [
+            { label: visible ? "View on site" : "View (edit screen)", action: function () {
+                if (visible) window.open(j.url, "_blank", "noopener"); else location.hash = "#jobs/" + j.id; } },
+            { label: "Edit", action: function () { location.hash = "#jobs/" + j.id; } },
+            { label: "Duplicate", action: function () { act(j.id, "/duplicate", {}, function () { toast("Copied as a draft."); }); } },
+            { label: "Copy job link", action: function () { copyJobLink(j.url); } },
+            "-",
+          ];
+          if (j.status === "published") {
+            entries.push({ label: "Unpublish (back to draft)", action: function () { act(j.id, "/status", { status: "draft" }, function () { toast("Unpublished — it is a draft again."); }); } });
+            entries.push({ label: "Close applications", action: function () { act(j.id, "/status", { status: "closed" }, function () { toast("Closed — the page stays, the form is gone."); }); } });
+          } else if (j.status === "closed") {
+            entries.push({ label: "Reopen (publish)", action: function () { act(j.id, "/status", { status: "published" }, function () { toast("Published again."); }); } });
+          } else {
+            entries.push({ label: "Publish", action: function () { act(j.id, "/status", { status: "published" }, function () { toast("Published — live on the Careers page."); }); } });
+          }
+          if (j.status !== "archived") {
+            entries.push({ label: "Archive", action: function () {
+              if (!confirm("Archive “" + j.title + "”? It leaves the site and its address stops answering. You can restore it later.")) return;
+              act(j.id, "/status", { status: "archived" }, function () { toast("Archived."); }); } });
+          } else {
+            entries.push({ label: "Restore as draft", action: function () { act(j.id, "/status", { status: "draft" }, function () { toast("Restored as a draft."); }); } });
+          }
+          entries.push("-");
+          entries.push({ label: "Delete", danger: true, action: function () {
+            var note = j.applications ? "\n\nIts " + j.applications + " application" + (j.applications === 1 ? "" : "s") + " stay in the Requests inbox under the job title." : "";
+            if (!confirm("Delete “" + j.title + "” permanently? Its address /careers/" + j.slug + " will stop working and cannot be restored." + note)) return;
+            act(j.id, "/delete", {}, function () { toast("Deleted."); });
+          } });
+          /* the document-level closer sees this same click; without this the
+             menu opens and shuts in one go */
+          e.stopPropagation();
+          showMenu(btn, entries);
         });
       });
     },
@@ -5916,7 +6320,17 @@
   }
 
   /* ---------- routing ---------- */
+  /* A screen with unsaved work registers a guard; the router asks it before
+     moving on, and the browser asks it before the tab closes. */
+  var leaveGuard = null, lastHash = location.hash || "#dashboard", restoringHash = false;
+  window.addEventListener("beforeunload", function (e) {
+    if (leaveGuard && !leaveGuard(true)) { e.preventDefault(); e.returnValue = ""; }
+  });
   function route() {
+    if (restoringHash) { restoringHash = false; return; }
+    if (leaveGuard && !leaveGuard()) { restoringHash = true; location.hash = lastHash; return; }
+    leaveGuard = null;
+    lastHash = location.hash || "#dashboard";
     var hash = (location.hash || "#dashboard").slice(1);
     var name = hash.split("/")[0];
     var param = hash.indexOf("/") !== -1 ? hash.slice(name.length + 1) : "";

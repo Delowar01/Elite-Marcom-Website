@@ -2607,7 +2607,7 @@ def test_every_page_of_the_site_is_managed_section_by_section():
     # a page with nothing repeatable on it has no group, and those are named
     # rather than counted so a new page cannot quietly join the list
     ungrouped = set(content.PAGES) - set(groups)
-    assert ungrouped == {"privacy", "product", "rental-item"} | {
+    assert ungrouped == {"privacy", "product", "rental-item", "job"} | {
         p for p in content.PAGES if p.startswith("services-")}
 
 

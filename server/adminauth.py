@@ -39,12 +39,14 @@ PERMISSIONS = (
     # public site sells is a bigger decision than reading the catalogue
     "jasani.prices", "jasani.visibility",
     "requests.view", "requests.manage", "insights.view",
+    # job posts: create, edit, publish, close, archive and delete a vacancy
+    "careers.manage",
 )
 
 ROLES: dict[str, set[str]] = {
     "owner": {"*"},
     "admin": set(PERMISSIONS) - {"users.manage"},
-    "editor": {"content.edit", "media.manage", "brand.edit", "seo.edit"},
+    "editor": {"content.edit", "media.manage", "brand.edit", "seo.edit", "careers.manage"},
     "catalog": {"rentals.manage", "jasani.view", "jasani.refresh"},
     "sales": {"requests.view", "requests.manage"},
     "analyst": {"insights.view", "audit.view"},

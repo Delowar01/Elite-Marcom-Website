@@ -195,26 +195,74 @@ async def security_challenge(request: Request, form: str = Query(...)):
 
 # ---------------- careers ----------------
 
-_JOBS_FILE = Path(__file__).parent / "data" / "jobs.json"
-
-
 def load_jobs() -> list[dict]:
-    try:
-        data = json.loads(_JOBS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    jobs = [j for j in data.get("jobs", []) if j.get("published") and j.get("open")]
-    jobs.sort(key=lambda j: j.get("sortOrder", 999))
-    return jobs
+    """The vacancies a visitor may apply to right now: published, and not past
+    their closing date. Managed in the admin panel (server/jobs.py)."""
+    from . import jobs as jobs_mod
+
+    return jobs_mod.public_jobs()
 
 
 @app.get("/api/careers/jobs")
 async def careers_jobs():
-    jobs = load_jobs()
-    public = [{k: j[k] for k in
-               ("id", "title", "department", "track", "location", "employmentType",
-                "summary", "requirements", "poster")} for j in jobs]
+    from . import jobs as jobs_mod
+
+    public = [jobs_mod.public_view(j) for j in load_jobs()]
     return JSONResponse({"jobs": public}, headers={"Cache-Control": "no-store"})
+
+
+def _job_template(lang: str) -> str | None:
+    """The served job template — the published bake if there is one, else the
+    shipped file — so a job page wears whatever chrome the rest of the site
+    currently wears."""
+    from . import content
+
+    name = "ar/job.html" if lang == "ar" else "job.html"
+    path = content.published_file(name) or (config.PUBLIC_DIR / "job.html")
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+async def _job_page(slug: str, lang: str):
+    from . import jobs as jobs_mod
+
+    slug = slug.strip().lower()
+    job, moved = jobs_mod.resolve_slug(slug)
+    if job is None or not jobs_mod.visible_on_site(job):
+        raise HTTPException(status_code=404, detail="Not found")
+    if moved:
+        # an old address that was shared keeps working — permanently, once
+        prefix = "/ar" if lang == "ar" else ""
+        return RedirectResponse(f"{prefix}/careers/{job['slug']}", status_code=301)
+    template = _job_template(lang)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(jobs_mod.render_page(template, job, lang),
+                    media_type="text/html; charset=utf-8",
+                    headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/careers/{slug}", include_in_schema=False)
+async def careers_job_page(slug: str):
+    return await _job_page(slug, "en")
+
+
+@app.get("/ar/careers/{slug}", include_in_schema=False)
+async def careers_job_page_ar(slug: str):
+    return await _job_page(slug, "ar")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml():
+    """Built live rather than served from the publish-time file, because a
+    vacancy is published from the panel without a site publish and must be
+    offered the moment it is."""
+    from . import content
+
+    return Response(content._sitemap_xml(), media_type="application/xml",
+                    headers={"Cache-Control": "no-cache"})
 
 
 _PDF_MAX = 5 * 1024 * 1024
@@ -300,8 +348,11 @@ async def careers_apply(
         cv_bytes = await cv.read()
         validate_pdf(cv_bytes)
         scan_malware(cv_bytes)
+    if role_id in jobs:
+        payload["jobSlug"] = jobs[role_id]["slug"]
     reference = storage.save_record("career", payload, ip_hash,
-                                    config.RETENTION_CAREERS_DAYS, cv_bytes=cv_bytes)
+                                    config.RETENTION_CAREERS_DAYS, cv_bytes=cv_bytes,
+                                    job_id=role_id)
     notify.notify_new_request("career", reference)
     mailer.enqueue("career", reference)
     track_server_event(request, "enquiry", meta="career application")

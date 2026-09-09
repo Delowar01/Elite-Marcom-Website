@@ -417,6 +417,28 @@ documentation). Non-negotiable rules from it:
   out. `_usage_index` answers the same question for shipped `assets/` artwork
   by scanning the git sources; a stylesheet or script is named but carries no
   link, because there is nowhere for that link to go.
+- **Every vacancy is its own record with its own address** (`server/jobs.py`,
+  `job_posts` in admin.db, permission `careers.manage`). `/careers/<slug>` is
+  server-rendered into `public/job.html` — the template's head between the
+  `job:head` markers and its whole `<main>` are replaced per job, so a job
+  page wears whatever chrome the published bake wears and a crawler reads the
+  whole posting without scripts. `/job` on its own is the template and stays
+  `noindex,follow`; `SITEMAP_SKIP` keeps it out of the sitemap, and
+  `/sitemap.xml` is now a live route so a job published from the panel is
+  offered without a site publish. Four states: draft (404), published (listed
+  and served; a closing date in the past reads as closed on its own), closed
+  (page answers, says "Applications closed", no form, `noindex`, no
+  JobPosting), archived (404). **A slug is chosen once and kept**: renaming a
+  published job does not move it, and a deliberate slug change writes the old
+  one to `job_slugs` for a 301 — a shared link must not rot. `job.html`
+  seeds from `server/data/jobs.json` the first time the table is empty, so the
+  three shipped roles survived the migration. The long fields go through
+  `jobs.sanitize_body` (p, h3/h4, lists, emphasis, safe hrefs; everything else
+  reduced to text) and the JSON-LD is written with `_json_for_script`, because
+  `json.dumps` leaves `</script>` alone and a title is admin input. An
+  application carries its job in the clear (`records.job_id` — a key, not
+  personal data) so the panel counts applications per vacancy without
+  decrypting anything; `?job=` narrows the inbox to one post.
 - Backups (Operations) carry content, design, settings, rentals and media —
   never customer submissions, which stay encrypted with their own retention.
 - Arabic publishes a full RTL edition under `/ar/` when `site.languages`

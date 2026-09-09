@@ -65,8 +65,34 @@ def _connect() -> sqlite3.Connection:
         if "market" not in cols:
             _conn.execute("ALTER TABLE records ADD COLUMN market TEXT NOT NULL DEFAULT ''")
         _conn.execute("CREATE INDEX IF NOT EXISTS idx_records_market ON records(market)")
+        # which vacancy an application is for. A job id is a key into the
+        # panel's own job_posts table, not personal data, so it sits in the
+        # clear beside `market` and the Job Posts screen can count applications
+        # per vacancy without decrypting a single record.
+        if "job_id" not in cols:
+            _conn.execute("ALTER TABLE records ADD COLUMN job_id TEXT NOT NULL DEFAULT ''")
+        _conn.execute("CREATE INDEX IF NOT EXISTS idx_records_job ON records(job_id)")
         _conn.commit()
+        _backfill_job_ids(_conn)
     return _conn
+
+
+def _backfill_job_ids(conn: sqlite3.Connection) -> None:
+    """Applications received before the column existed carry their role only
+    inside the encrypted payload. Read it once and write it beside them; the
+    rows are marked either way, so this never runs twice."""
+    rows = conn.execute("SELECT id, payload FROM records WHERE kind='career' AND job_id=''").fetchall()
+    if not rows:
+        return
+    for rid, blob in rows:
+        job_id = "general"
+        try:
+            payload = json.loads(decrypt(blob).decode("utf-8"))
+            job_id = str(payload.get("roleId") or "general")[:80]
+        except Exception:
+            pass
+        conn.execute("UPDATE records SET job_id=? WHERE id=?", (job_id, rid))
+    conn.commit()
 
 
 def make_reference(prefix: str) -> str:
@@ -77,7 +103,7 @@ def make_reference(prefix: str) -> str:
 
 def save_record(kind: str, payload: dict, ip_hash: str,
                 retention_days: int, cv_bytes: bytes | None = None,
-                file_ext: str = "pdf") -> str:
+                file_ext: str = "pdf", job_id: str = "") -> str:
     prefix = {
         "contact": "EM", "career": "CA",
         "giveaway_enquiry": "GV", "giveaway_notification": "GN",
@@ -105,19 +131,20 @@ def save_record(kind: str, payload: dict, ip_hash: str,
         conn = _connect()
         conn.execute(
             "INSERT INTO records (kind, reference, created_at, expires_at, ip_hash,"
-            " payload, cv_path, market) VALUES (?,?,?,?,?,?,?,?)",
-            (kind, reference, now, expires, ip_hash, blob, cv_path, market),
+            " payload, cv_path, market, job_id) VALUES (?,?,?,?,?,?,?,?,?)",
+            (kind, reference, now, expires, ip_hash, blob, cv_path, market, str(job_id or "")[:80]),
         )
         conn.commit()
     return reference
 
 
 def list_records(kinds: list[str] | None = None, limit: int = 50, offset: int = 0,
-                 q: str = "") -> tuple[list[dict], int]:
+                 q: str = "", job_id: str = "") -> tuple[list[dict], int]:
     """Admin inbox listing: rows with the payload still encrypted.
 
     Returns (rows, total). Decryption happens at the admin layer so every
-    decrypt-on-view is an explicit, audited step."""
+    decrypt-on-view is an explicit, audited step. `job_id` narrows to the
+    applications for one vacancy."""
     sql = "FROM records"
     where, params = [], []
     if kinds:
@@ -126,6 +153,9 @@ def list_records(kinds: list[str] | None = None, limit: int = 50, offset: int = 
     if q:
         where.append("reference LIKE ?")
         params.append(f"%{q.upper()}%")
+    if job_id:
+        where.append("job_id = ?")
+        params.append(job_id[:80])
     if where:
         sql += " WHERE " + " AND ".join(where)
     with _lock:
@@ -140,6 +170,14 @@ def list_records(kinds: list[str] | None = None, limit: int = 50, offset: int = 
         out.append({"id": r[0], "kind": r[1], "reference": r[2], "createdAt": r[3],
                     "expiresAt": r[4], "payload": r[5], "hasFile": bool(r[6])})
     return out, total
+
+
+def applications_by_job() -> dict[str, int]:
+    """job id -> number of applications, from the clear-text column alone."""
+    with _lock:
+        rows = _connect().execute(
+            "SELECT job_id, COUNT(*) FROM records WHERE kind='career' GROUP BY job_id").fetchall()
+    return {r[0]: r[1] for r in rows if r[0]}
 
 
 def get_record(reference: str) -> dict | None:

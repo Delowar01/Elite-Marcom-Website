@@ -73,6 +73,8 @@ PAGES: dict[str, dict] = {
     "services-digital-marketing": {"label": "Services — Digital marketing", "file": "services-digital-marketing.html", "regions": _HERO},
     "product": {"label": "Gift product page", "file": "product.html", "regions": []},
     "rental-item": {"label": "Rental item page", "file": "rental-item.html", "regions": []},
+    # the template a vacancy is rendered into at /careers/<slug> (server/jobs.py)
+    "job": {"label": "Job page", "file": "job.html", "regions": []},
 }
 
 # A page created in the admin panel starts from the shell in blocks.py, which
@@ -618,7 +620,7 @@ def _inject_social(raw: str) -> str:
 # into. On their own — which is the only form an address without an id takes —
 # they are empty shells, so they are pages the site serves but not pages worth
 # offering a search engine.
-SITEMAP_SKIP = {"product", "rental-item"}
+SITEMAP_SKIP = {"product", "rental-item", "job"}
 
 
 def _sitemap_english_only(page: str) -> bool:
@@ -648,6 +650,13 @@ def _sitemap_xml() -> str:
             tail = f"{prefix}{page_address(page)}"
             urls.append(f"  <url><loc>{SITE_ORIGIN}/{tail}</loc>"
                         f"<lastmod>{today}</lastmod></url>")
+    # every open vacancy has an address of its own; English only, since the
+    # Arabic edition of a job page carries the English posting
+    from . import jobs as jobs_mod
+
+    for job in jobs_mod.public_jobs():
+        stamp = time.strftime("%Y-%m-%d", time.gmtime(job["updatedAt"] or job["createdAt"]))
+        urls.append(f"  <url><loc>{job['url']}</loc><lastmod>{stamp}</lastmod></url>")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
             + "\n".join(urls) + "\n</urlset>\n")

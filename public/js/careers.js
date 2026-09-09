@@ -1,5 +1,8 @@
 /* ============================================================
-   ELITE MARCOM — careers: jobs list, role detail, application
+   ELITE MARCOM — careers: open roles, filters, application
+   Every role is a page of its own (/careers/<slug>); a card is
+   the way in. The filters are built from the roles that exist,
+   never from a fixed list that would go stale.
    ============================================================ */
 (function () {
   "use strict";
@@ -9,79 +12,88 @@
   var countEl = document.getElementById("role-count");
   var emptyEl = document.getElementById("role-empty");
   var filterWrap = document.getElementById("role-filters");
+  var selectWrap = document.getElementById("role-selects");
   var roleSelect = document.getElementById("app-role");
-  var dialogScrim = document.getElementById("role-dialog");
-  var dlg = dialogScrim ? EM.dialog(dialogScrim) : null;
-  var dlgContent = document.getElementById("role-dialog-content");
 
   var jobs = [];
-  var activeFilter = "all";
+  var filter = { department: "all", location: "", type: "" };
+
+  function distinct(key) {
+    var seen = {};
+    return jobs.map(function (j) { return j[key] || ""; })
+      .filter(function (v) { return v && !seen[v] && (seen[v] = true); });
+  }
+
+  function matches(j) {
+    return (filter.department === "all" || j.department === filter.department) &&
+      (!filter.location || j.location === filter.location) &&
+      (!filter.type || j.employmentType === filter.type);
+  }
 
   function render() {
     if (!listEl) return;
     listEl.setAttribute("aria-busy", "false");
     listEl.innerHTML = "";
-    var shown = jobs.filter(function (j) { return activeFilter === "all" || j.track === activeFilter; });
+    var shown = jobs.filter(matches);
     shown.forEach(function (job) {
-      var card = document.createElement("button");
-      card.type = "button";
-      card.className = "role-card";
-      card.setAttribute("aria-label", job.title + " — " + job.department + ". View role details.");
+      var card = document.createElement("a");
+      card.className = "role-card" + (job.featured ? " role-card--featured" : "");
+      card.href = "/careers/" + encodeURIComponent(job.slug);
+      card.setAttribute("aria-label", job.title + " — " + job.department + ". View the role.");
       card.innerHTML =
         "<div>" +
-          '<span class="role-card__dept">' + EM.escapeHtml(job.department) + "</span>" +
+          '<span class="role-card__dept">' + EM.escapeHtml(job.department || "Elite Marcom") +
+          (job.featured ? ' <span class="chip chip--featured">Featured</span>' : "") + "</span>" +
           "<h3>" + EM.escapeHtml(job.title) + "</h3>" +
-          '<p class="role-card__sum">' + EM.escapeHtml(job.summary) + "</p>" +
+          '<p class="role-card__sum">' + EM.escapeHtml(job.summary || "") + "</p>" +
           '<span class="role-card__meta">' +
             '<span class="chip">' + EM.escapeHtml(job.location) + "</span>" +
             '<span class="chip chip--violet">' + EM.escapeHtml(job.employmentType) + "</span>" +
+            (job.workplaceType && job.workplaceType !== "Onsite"
+              ? '<span class="chip">' + EM.escapeHtml(job.workplaceType) + "</span>" : "") +
+            (job.closingDate ? '<span class="chip chip--soft">Closes ' + EM.escapeHtml(job.closingDate) + "</span>" : "") +
           "</span>" +
         "</div>" +
-        '<span class="role-card__go" aria-hidden="true">Details →</span>';
-      card.addEventListener("click", function () { openRole(job); });
+        '<span class="role-card__go" aria-hidden="true">View job →</span>';
       listEl.appendChild(card);
     });
     if (countEl) countEl.textContent = shown.length + " open role" + (shown.length === 1 ? "" : "s");
     if (emptyEl) emptyEl.hidden = shown.length !== 0;
   }
 
-  function openRole(job) {
-    if (!dlg) return;
-    var reqs = (job.requirements || []).map(function (r) {
-      return "<li>" + EM.escapeHtml(r) + "</li>";
-    }).join("");
-    dlgContent.innerHTML =
-      '<div class="career-dialog__grid">' +
-        '<img src="' + job.poster + '" alt="" width="640" height="800">' +
-        "<div>" +
-          '<span class="role-card__dept">' + EM.escapeHtml(job.department) + "</span>" +
-          '<h2 id="role-dialog-title" style="margin-top:6px;">' + EM.escapeHtml(job.title) + "</h2>" +
-          "<p>" + EM.escapeHtml(job.summary) + "</p>" +
-          '<p class="role-card__meta" style="display:flex;gap:8px;flex-wrap:wrap;">' +
-            '<span class="chip">' + EM.escapeHtml(job.location) + "</span>" +
-            '<span class="chip chip--violet">' + EM.escapeHtml(job.employmentType) + "</span></p>" +
-          (reqs ? "<h3 style=\"margin-top:20px;\">What you'll bring</h3><ul class=\"service-points\">" + reqs + "</ul>" : "") +
-          '<button class="btn btn--primary" type="button" data-apply-role="' + EM.escapeHtml(job.id) + '" style="margin-top:22px;">Apply for this role</button>' +
-        "</div>" +
-      "</div>";
-    dlgContent.querySelector("[data-apply-role]").addEventListener("click", function () {
-      dlg.close();
-      if (roleSelect) roleSelect.value = job.id;
-      var heading = document.getElementById("apply-h");
-      if (heading) {
-        heading.setAttribute("tabindex", "-1");
-        heading.scrollIntoView({ behavior: EM.reducedMotion() ? "auto" : "smooth", block: "start" });
-        heading.focus({ preventScroll: true });
+  function buildFilters() {
+    if (filterWrap) {
+      var depts = distinct("department");
+      filterWrap.innerHTML =
+        '<button type="button" class="filter-chip" aria-pressed="true" data-role-filter="all">All roles</button>' +
+        depts.map(function (d) {
+          return '<button type="button" class="filter-chip" aria-pressed="false" data-role-filter="' +
+            EM.escapeHtml(d) + '">' + EM.escapeHtml(d) + "</button>";
+        }).join("");
+      filterWrap.hidden = depts.length < 2;
+    }
+    if (selectWrap) {
+      var locs = distinct("location"), types = distinct("employmentType");
+      function sel(id, label, values) {
+        if (values.length < 2) return "";
+        return '<label class="role-select"><span>' + label + '</span><select id="' + id + '">' +
+          '<option value="">All</option>' +
+          values.map(function (v) { return '<option value="' + EM.escapeHtml(v) + '">' + EM.escapeHtml(v) + "</option>"; }).join("") +
+          "</select></label>";
       }
-    });
-    dlg.open();
+      selectWrap.innerHTML = sel("role-loc", "Location", locs) + sel("role-type", "Type", types);
+      selectWrap.hidden = !selectWrap.innerHTML;
+      var loc = document.getElementById("role-loc"), type = document.getElementById("role-type");
+      if (loc) loc.addEventListener("change", function () { filter.location = loc.value; render(); });
+      if (type) type.addEventListener("change", function () { filter.type = type.value; render(); });
+    }
   }
 
   if (filterWrap) {
     filterWrap.addEventListener("click", function (e) {
       var chip = e.target.closest("[data-role-filter]");
       if (!chip) return;
-      activeFilter = chip.getAttribute("data-role-filter");
+      filter.department = chip.getAttribute("data-role-filter");
       filterWrap.querySelectorAll(".filter-chip").forEach(function (c) {
         c.setAttribute("aria-pressed", c === chip ? "true" : "false");
       });
@@ -91,11 +103,7 @@
 
   /* load jobs — no stale browser caching */
   EM.api("/api/careers/jobs?ts=" + Date.now()).then(function (r) {
-    if (r.ok && r.data && Array.isArray(r.data.jobs)) {
-      jobs = r.data.jobs;
-    } else {
-      jobs = [];
-    }
+    jobs = (r.ok && r.data && Array.isArray(r.data.jobs)) ? r.data.jobs : [];
     if (roleSelect) {
       jobs.forEach(function (job) {
         var opt = document.createElement("option");
@@ -103,8 +111,11 @@
         opt.textContent = job.title + " — " + job.department;
         roleSelect.insertBefore(opt, roleSelect.firstChild);
       });
-      roleSelect.value = "general";
+      /* a job page may send someone here with the role already chosen */
+      var wanted = new URLSearchParams(location.search).get("role");
+      roleSelect.value = wanted && jobs.some(function (j) { return j.id === wanted; }) ? wanted : "general";
     }
+    buildFilters();
     render();
   }).catch(function () {
     jobs = [];

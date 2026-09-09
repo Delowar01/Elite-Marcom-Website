@@ -860,3 +860,70 @@ html.reveals-off .sc-anim .sc-rail { opacity: 1; }
      text: keep the styling but stop them dropping below 12px */
   .eyebrow, .section-marker { font-size: 0.76rem; }
 }
+
+/* ---------- careers: the listing and one job's page ---------- */
+.role-card { text-decoration: none; color: inherit; }
+.role-card--featured { border-color: var(--orange-2); }
+.chip--featured {
+  padding: 2px 9px; font-size: 0.66rem; letter-spacing: 0.08em; margin-left: 8px;
+  color: var(--orange-2); border-color: var(--orange-2); vertical-align: middle;
+}
+.chip--soft { color: var(--text-muted); }
+.role-selects { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; }
+.role-select { display: inline-flex; align-items: center; gap: 8px; font-size: 0.86rem; color: var(--text-muted); }
+.role-select select {
+  padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 0.86rem;
+}
+
+.job-hero .lede { max-width: 62ch; }
+.job-poster { margin: 0; max-width: 320px; justify-self: end; }
+.job-poster img { width: 100%; height: auto; border-radius: 16px; border: 1px solid var(--border); }
+.job-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: clamp(28px, 4vw, 56px); align-items: start; }
+.job-sections { display: flex; flex-direction: column; gap: clamp(36px, 5vw, 60px); }
+.job-section h2 { max-width: 22ch; margin: 0 0 14px; }
+.job-body { color: var(--text-soft); font-size: 1rem; line-height: 1.7; max-width: 68ch; }
+.job-body p { margin: 0 0 14px; }
+.job-body h3, .job-body h4 { margin: 22px 0 8px; }
+.job-body ul, .job-body ol { margin: 0 0 14px; padding-left: 22px; }
+.job-body li { margin-bottom: 6px; }
+.job-body li::marker { color: var(--orange-2); }
+.job-body a { color: var(--orange-2); }
+.job-facts {
+  position: sticky; top: 96px; padding: 24px; border-radius: 18px;
+  border: 1px solid var(--border); background: var(--surface);
+}
+.job-facts__title { font-size: 1.05rem; margin: 0 0 14px; }
+.job-facts dl { margin: 0 0 20px; display: grid; gap: 12px; }
+.job-facts dt { font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+.job-facts dd { margin: 3px 0 0; font-weight: 600; }
+.job-facts .btn { width: 100%; justify-content: center; }
+.status-chip {
+  display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px;
+  font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.status-chip--closed { color: var(--text-muted); border: 1px solid var(--border-strong); background: var(--surface); }
+.job-closed {
+  padding: 24px 26px; border-radius: 16px; border: 1px dashed var(--border-strong);
+  background: var(--surface); max-width: 62ch;
+}
+.job-closed p { margin: 12px 0 0; color: var(--text-muted); }
+.job-share { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; vertical-align: middle; }
+.job-share__label { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-right: 4px; }
+.job-share__btn {
+  width: 38px; height: 38px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-soft);
+  cursor: pointer; text-decoration: none; font-weight: 800; font-size: 0.78rem; transition: border-color 0.2s, color 0.2s, transform 0.2s;
+}
+.job-share__btn:hover { border-color: var(--orange-2); color: var(--orange-2); transform: translateY(-2px); }
+.job-share__btn svg { width: 17px; height: 17px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 960px) {
+  .job-layout { grid-template-columns: 1fr; }
+  .job-facts { position: static; }
+  .job-poster { max-width: 240px; justify-self: start; }
+}
+@media (max-width: 640px) {
+  .job-share { margin-left: 0; margin-top: 10px; }
+  .page-hero__actions .job-share { display: flex; }
+}

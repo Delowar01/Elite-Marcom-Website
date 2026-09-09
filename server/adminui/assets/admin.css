@@ -1938,3 +1938,60 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   .coll-item__acts { margin-left: 0; width: 100%; }
   .coll-item__acts .btn { flex: 1 1 auto; }
 }
+
+/* ---------- job posts ---------- */
+.jobs-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.jobs-toolbar input[type="search"] { flex: 1 1 220px; max-width: 360px; }
+.jobs-toolbar select { max-width: 220px; }
+.jobs-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.jobs-chips button {
+  border: 1px solid var(--adm-line-strong); background: var(--panel); color: var(--text-soft);
+  border-radius: 999px; padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+}
+.jobs-chips button[aria-pressed="true"] { background: var(--orange); border-color: var(--orange); color: #fff; }
+.jobs-chips button b { font-weight: 800; opacity: 0.8; margin-left: 4px; }
+.job-title-cell b { display: block; }
+.job-title-cell .muted { font-size: 0.76rem; overflow-wrap: anywhere; }
+.status-pill--draft { color: var(--text-soft); background: var(--adm-inset); }
+.status-pill--published { color: var(--adm-ok); background: var(--adm-ok-bg, rgba(31,138,76,0.12)); }
+.status-pill--closed { color: var(--adm-warn); background: var(--adm-warn-bg); }
+.status-pill--archived { color: var(--text-muted); background: var(--adm-inset); }
+.status-pill--expired { color: var(--adm-warn); background: var(--adm-warn-bg); }
+.job-apps-link { font-weight: 700; text-decoration: none; color: var(--text); }
+.job-apps-link:hover { color: var(--orange); }
+
+.job-editor { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.job-editor__side { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 84px; }
+.job-editor .admin-panel { margin-bottom: 16px; }
+.job-editor__head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.job-editor__head h1 { margin: 0; }
+.job-editor .admin-actions { flex-wrap: wrap; }
+.job-address { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem;
+  overflow-wrap: anywhere; color: var(--text-soft); margin: 6px 0 10px; }
+.slug-row { display: flex; gap: 6px; align-items: center; }
+.slug-row input { flex: 1; }
+.job-check { display: flex; align-items: center; gap: 10px; font-size: 0.86rem; font-weight: 600; }
+.job-check input { width: 18px; height: 18px; accent-color: var(--orange); }
+
+/* the rich-text fields: a small toolbar and an editable surface that looks
+   like every other input */
+.rte { border: 1px solid var(--adm-line-strong); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.rte:focus-within { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(237,108,38,0.14); }
+.rte__bar { display: flex; gap: 2px; flex-wrap: wrap; padding: 6px; border-bottom: 1px solid var(--adm-line); background: var(--adm-inset); }
+.rte__bar button {
+  border: 0; background: none; color: var(--text-soft); border-radius: 6px; cursor: pointer;
+  min-width: 30px; height: 28px; padding: 0 8px; font-size: 0.8rem; font-weight: 700;
+}
+.rte__bar button:hover { background: var(--panel); color: var(--text); }
+.rte__bar .sep { width: 1px; background: var(--adm-line-strong); margin: 4px 4px; }
+.rte__body { min-height: 120px; max-height: 420px; overflow: auto; padding: 12px 14px; font-size: 0.9rem; line-height: 1.6; outline: none; }
+.rte__body:empty::before { content: attr(data-placeholder); color: var(--text-muted); }
+.rte__body p { margin: 0 0 10px; }
+.rte__body ul, .rte__body ol { margin: 0 0 10px; padding-left: 22px; }
+.rte__body h3, .rte__body h4 { margin: 14px 0 6px; }
+.rte__body a { color: var(--orange); }
+.rte--tall .rte__body { min-height: 220px; }
+@media (max-width: 1100px) {
+  .job-editor { grid-template-columns: 1fr; }
+  .job-editor__side { position: static; }
+}

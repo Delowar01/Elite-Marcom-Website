@@ -20,7 +20,7 @@
 <link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
 <link rel="apple-touch-icon" href="/assets/favicon-180.png">
 <link rel="stylesheet" href="/styles.css?v=11">
-<link rel="stylesheet" href="/pages.css?v=15">
+<link rel="stylesheet" href="/pages.css?v=16">
 <script src="/js/theme-init.js?v=2"></script>
 <script type="application/ld+json">
 {
@@ -184,12 +184,8 @@
     <div class="container">
       <p class="section-marker reveal" data-reveal="fade-in">02 — Open roles</p>
       <h2 id="openings-h" class="reveal" data-reveal="fade-up" style="max-width:24ch;">Find the role where your talent creates <span class="accent-i">impact</span>.</h2>
-      <div class="role-filter filter-chips reveal" data-reveal="fade-up" role="group" aria-label="Filter roles" id="role-filters">
-        <button type="button" class="filter-chip" aria-pressed="true" data-role-filter="all">All roles</button>
-        <button type="button" class="filter-chip" aria-pressed="false" data-role-filter="creative">Creative</button>
-        <button type="button" class="filter-chip" aria-pressed="false" data-role-filter="spatial">Spatial</button>
-        <button type="button" class="filter-chip" aria-pressed="false" data-role-filter="business">Business</button>
-      </div>
+      <div class="role-filter filter-chips reveal" data-reveal="fade-up" role="group" aria-label="Filter by department" id="role-filters" hidden></div>
+      <div class="role-selects reveal" data-reveal="fade-up" id="role-selects" hidden></div>
       <p class="catalog-count" id="role-count" role="status" aria-live="polite"></p>
       <div class="role-list" id="role-list" aria-busy="true">
         <div class="skeleton-card"><div class="sk sk-line" style="width:40%;"></div><div class="sk sk-line" style="width:70%;"></div><div class="sk sk-line" style="width:55%;"></div></div>
@@ -272,15 +268,6 @@
     </div>
   </section>
 
-  <!-- Role detail dialog -->
-  <div class="dialog-scrim" id="role-dialog" role="presentation">
-    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="role-dialog-title" tabindex="-1">
-      <button class="icon-btn dialog__close" type="button" aria-label="Close role details">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-      <div id="role-dialog-content"></div>
-    </div>
-  </div>
 </main>
 
 <footer class="site-footer">
@@ -329,6 +316,6 @@
 <script src="/js/site.js?v=6" defer></script>
 <script src="/js/insights.js?v=2" defer></script>
 <script src="/js/forms.js?v=1" defer></script>
-<script src="/js/careers.js?v=1" defer></script>
+<script src="/js/careers.js?v=2" defer></script>
 </body>
 </html>

@@ -441,23 +441,27 @@ def _decrypt_payload(record: dict) -> dict:
 
 @router.get("/api/admin/requests")
 async def admin_requests(request: Request, kind: str = "", status: str = "", q: str = "",
-                         limit: int = 30, offset: int = 0):
+                         limit: int = 30, offset: int = 0, job: str = ""):
     session = require_perm(request, "requests.view")
     from . import storage as st
 
     kinds = [kind] if kind in REQUEST_KINDS else list(REQUEST_KINDS)
+    job = job.strip()[:80]
+    if job:
+        # "applications for this vacancy": a job filter is a career filter
+        kinds = ["career"]
     limit = max(1, min(100, limit))
     offset = max(0, offset)
     if status in aa.REQUEST_STATUSES:
         # workflow status lives in admin.db, so filter across the joined view
-        all_rows, _ = st.list_records(kinds, limit=1000, q=q[:40])
+        all_rows, _ = st.list_records(kinds, limit=1000, q=q[:40], job_id=job)
         meta = aa.request_meta_bulk([r["reference"] for r in all_rows])
         all_rows = [r for r in all_rows
                     if meta.get(r["reference"], {}).get("status", "new") == status]
         total = len(all_rows)
         rows = all_rows[offset:offset + limit]
     else:
-        rows, total = st.list_records(kinds, limit=limit, offset=offset, q=q[:40])
+        rows, total = st.list_records(kinds, limit=limit, offset=offset, q=q[:40], job_id=job)
         meta = aa.request_meta_bulk([r["reference"] for r in rows])
     out = []
     for r in rows:
@@ -1706,6 +1710,162 @@ async def admin_pages_unpublish(request: Request, x_csrf: str | None = Header(de
     removed = content.unpublish_all()
     aa.audit(session, "site.unpublished", "pages", {"removed": removed}, _ip_hash(request))
     return {"ok": True, "removed": removed}
+
+
+# ---------------- job posts ----------------
+
+def _job_err(exc: Exception) -> HTTPException:
+    from .jobs import JobError
+
+    if isinstance(exc, JobError):
+        return HTTPException(status_code=400, detail=str(exc))
+    raise exc
+
+
+class JobBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    values: dict
+    status: str | None = Field(default=None, max_length=20)
+
+
+class JobStatusBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str = Field(max_length=20)
+
+
+class JobSlugBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(default="", max_length=200)
+    location: str = Field(default="", max_length=200)
+    slug: str = Field(default="", max_length=120)
+    id: str = Field(default="", max_length=40)
+
+
+def _job_with_count(job: dict, counts: dict) -> dict:
+    return {**job, "applications": counts.get(job["id"], 0)}
+
+
+@router.get("/api/admin/jobs")
+async def admin_jobs(request: Request):
+    require_perm(request, "careers.manage")
+    from . import jobs as jobs_mod
+    from . import storage as st
+
+    counts = st.applications_by_job()
+    return {"jobs": [_job_with_count(j, counts) for j in jobs_mod.all_jobs()],
+            "employmentTypes": list(jobs_mod.EMPLOYMENT_TYPES),
+            "workplaceTypes": list(jobs_mod.WORKPLACE_TYPES),
+            "statuses": list(jobs_mod.STATUSES),
+            "generalApplications": counts.get("general", 0)}
+
+
+@router.get("/api/admin/jobs/{job_id}")
+async def admin_job_get(request: Request, job_id: str):
+    require_perm(request, "careers.manage")
+    from . import jobs as jobs_mod
+    from . import storage as st
+
+    job = jobs_mod.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job post.")
+    return {"job": _job_with_count(job, st.applications_by_job()),
+            "employmentTypes": list(jobs_mod.EMPLOYMENT_TYPES),
+            "workplaceTypes": list(jobs_mod.WORKPLACE_TYPES)}
+
+
+@router.post("/api/admin/jobs/slug")
+async def admin_job_slug(request: Request, body: JobSlugBody):
+    """Suggest an address for a title, or say whether a typed one is free."""
+    require_perm(request, "careers.manage")
+    from . import jobs as jobs_mod
+
+    if body.slug.strip():
+        try:
+            slug = jobs_mod.check_slug(body.slug, body.id or None)
+        except Exception as exc:
+            raise _job_err(exc)
+        return {"slug": slug, "available": True}
+    suggested = jobs_mod.suggest_slug(body.title, body.location)
+    return {"slug": jobs_mod.unique_slug(suggested, body.id or None), "available": True}
+
+
+@router.post("/api/admin/jobs")
+async def admin_job_create(request: Request, body: JobBody,
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "careers.manage")
+    require_csrf(request, session, x_csrf)
+    from . import jobs as jobs_mod
+
+    try:
+        job = jobs_mod.create(body.values, session["email"], body.status or "draft")
+    except Exception as exc:
+        raise _job_err(exc)
+    aa.audit(session, "job.created", "careers",
+             {"id": job["id"], "slug": job["slug"], "status": job["status"]}, _ip_hash(request))
+    return {"job": job}
+
+
+@router.post("/api/admin/jobs/{job_id}")
+async def admin_job_update(request: Request, job_id: str, body: JobBody,
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "careers.manage")
+    require_csrf(request, session, x_csrf)
+    from . import jobs as jobs_mod
+
+    try:
+        job = jobs_mod.update(job_id, body.values, session["email"], body.status)
+    except Exception as exc:
+        raise _job_err(exc)
+    aa.audit(session, "job.updated", "careers",
+             {"id": job["id"], "slug": job["slug"], "status": job["status"]}, _ip_hash(request))
+    return {"job": job}
+
+
+@router.post("/api/admin/jobs/{job_id}/status")
+async def admin_job_status(request: Request, job_id: str, body: JobStatusBody,
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "careers.manage")
+    require_csrf(request, session, x_csrf)
+    from . import jobs as jobs_mod
+
+    try:
+        job = jobs_mod.set_status(job_id, body.status, session["email"])
+    except Exception as exc:
+        raise _job_err(exc)
+    aa.audit(session, "job." + body.status, "careers", {"id": job_id, "slug": job["slug"]},
+             _ip_hash(request))
+    return {"job": job}
+
+
+@router.post("/api/admin/jobs/{job_id}/duplicate")
+async def admin_job_duplicate(request: Request, job_id: str,
+                              x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "careers.manage")
+    require_csrf(request, session, x_csrf)
+    from . import jobs as jobs_mod
+
+    try:
+        job = jobs_mod.duplicate(job_id, session["email"])
+    except Exception as exc:
+        raise _job_err(exc)
+    aa.audit(session, "job.duplicated", "careers", {"from": job_id, "id": job["id"]},
+             _ip_hash(request))
+    return {"job": job}
+
+
+@router.post("/api/admin/jobs/{job_id}/delete")
+async def admin_job_delete(request: Request, job_id: str,
+                           x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "careers.manage")
+    require_csrf(request, session, x_csrf)
+    from . import jobs as jobs_mod
+
+    job = jobs_mod.get(job_id)
+    if job is None or not jobs_mod.delete(job_id):
+        raise HTTPException(status_code=404, detail="Unknown job post.")
+    aa.audit(session, "job.deleted", "careers", {"id": job_id, "slug": job["slug"],
+                                                  "title": job["title"]}, _ip_hash(request))
+    return {"ok": True}
 
 
 # ---------------- rental inventory (Phase 3) ----------------
