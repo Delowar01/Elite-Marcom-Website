@@ -79,6 +79,36 @@ def _safe_image_path(path: str) -> bool:
     return bool(_IMG_RE.match(path)) and ".." not in path.split("/")
 
 
+def image_dims(path: str) -> tuple[int, int] | None:
+    """The real size of a featured image, so the page can reserve the right
+    box before the file arrives and never draws it in someone else's shape.
+    A library upload is answered from the `media` table; shipped artwork is
+    read off the disk (the header only). Unknown: no size, and the browser
+    lays the picture out from the file itself."""
+    if not path or not _safe_image_path(path):
+        return None
+    try:
+        if path.startswith("/media/"):
+            from . import adminauth as aa
+
+            row = aa._connect().execute(
+                "SELECT width, height FROM media WHERE file=?", (path[len("/media/"):],)).fetchone()
+            if row and row["width"] and row["height"]:
+                return int(row["width"]), int(row["height"])
+            return None
+        from PIL import Image
+
+        with Image.open(config.PUBLIC_DIR / path.lstrip("/")) as im:
+            return int(im.width), int(im.height)
+    except Exception:  # noqa: BLE001 — a missing or odd file is "no size", never a broken page
+        return None
+
+
+def _dims_attr(path: str) -> str:
+    dims = image_dims(path)
+    return f' width="{dims[0]}" height="{dims[1]}"' if dims else ""
+
+
 # ---------------- whitelist sanitizer for the long fields ----------------
 
 _BLOCK_TAGS = {"p", "ul", "ol", "li", "h3", "h4", "br"}
@@ -363,6 +393,8 @@ def public_view(job: dict) -> dict:
             "featuredImage", "featuredImageAlt", "open", "status")
     out = {k: job.get(k) for k in keys}
     out["applicationsClosed"] = not job["open"]
+    dims = image_dims(job.get("featuredImage") or "")
+    out["featuredImageWidth"], out["featuredImageHeight"] = dims if dims else (None, None)
     return out
 
 
@@ -817,7 +849,7 @@ def render_main(job: dict) -> str:
                  '<a class="btn btn--ghost" href="/careers#openings">See open roles</a>')
     poster = (f'<figure class="job-image reveal" data-reveal="zoom-up" data-reveal-delay="160">'
               f'<div class="media-frame media-frame--sheen"><img src="{_esc(job["featuredImage"])}" '
-              f'alt="{_esc(job.get("featuredImageAlt") or "")}" width="774" height="484"></div></figure>'
+              f'alt="{_esc(job.get("featuredImageAlt") or "")}"{_dims_attr(job["featuredImage"])}></div></figure>'
               if job.get("featuredImage") else "")
     sections = (
         _section("about", "01 — About the role", "What this role is", job.get("description", ""))

@@ -1428,7 +1428,7 @@
         imgPreview.innerHTML = image
           ? '<img src="' + esc(image) + '" alt="">'
           : '<span><b>No featured image</b><br>Drop an image here, upload one, or choose from the library.<br>' +
-            '<small>PNG, JPEG or WebP · up to 15 MB · shown as a 16:10 crop</small></span>';
+            '<small>PNG, JPEG or WebP · up to 15 MB · shown whole, at its own ratio</small></span>';
         document.getElementById("jf-img-upload").textContent = image ? "Replace image" : "Upload image";
         /* a .btn is display:inline-flex, which wins over the hidden attribute */
         var rm = document.getElementById("jf-img-remove");

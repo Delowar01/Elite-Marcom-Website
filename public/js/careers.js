@@ -44,7 +44,12 @@
       card.innerHTML =
         (job.featuredImage
           ? '<span class="role-card__image"><img src="' + EM.escapeHtml(job.featuredImage) + '" alt="' +
-            EM.escapeHtml(job.featuredImageAlt || "") + '" loading="lazy" width="320" height="200"></span>' : "") +
+            EM.escapeHtml(job.featuredImageAlt || "") + '" loading="lazy"' +
+            /* the picture's own size, so the card reserves its real shape —
+               it is shown whole, whatever its ratio, never cropped */
+            (job.featuredImageWidth && job.featuredImageHeight
+              ? ' width="' + parseInt(job.featuredImageWidth, 10) + '" height="' + parseInt(job.featuredImageHeight, 10) + '"' : "") +
+            "></span>" : "") +
         "<div>" +
           '<span class="role-card__dept">' + EM.escapeHtml(job.department || "Elite Marcom") +
           (job.featured ? ' <span class="chip chip--featured">Featured</span>' : "") + "</span>" +

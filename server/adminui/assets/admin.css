@@ -2007,7 +2007,7 @@ tr.is-over-below > td { box-shadow: 0 3px 0 -1px var(--orange-2) inset; }
 /* the featured image: the same 16:10 box the site shows, so what the admin
    sees is the crop a visitor gets */
 .job-image-preview {
-  aspect-ratio: 16 / 10; border-radius: 12px; border: 1px dashed var(--adm-line-strong);
+  min-height: 180px; border-radius: 12px; border: 1px dashed var(--adm-line-strong);
   background: var(--adm-inset); display: flex; align-items: center; justify-content: center;
   overflow: hidden; color: var(--text-muted); font-size: 0.82rem; text-align: center;
   padding: 16px; line-height: 1.5; cursor: pointer; transition: border-color 0.15s, background 0.15s;
@@ -2016,7 +2016,8 @@ tr.is-over-below > td { box-shadow: 0 3px 0 -1px var(--orange-2) inset; }
 .job-image-preview b { color: var(--text-soft); }
 .job-image-preview.is-over { border-color: var(--orange); background: rgba(237, 108, 38, 0.06); }
 .job-image-preview.has-image { border-style: solid; padding: 0; cursor: default; }
-.job-image-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* the preview shows the picture whole, at its own ratio — what the site shows */
+.job-image-preview img { display: block; width: auto; height: auto; max-width: 100%; max-height: 360px; margin: 0 auto; }
 .job-image-preview:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
 .job-upload-bar { height: 4px; border-radius: 2px; background: var(--adm-inset); overflow: hidden; margin-top: 8px; }
 .job-upload-bar i { display: block; height: 100%; width: 0; background: var(--orange); transition: width 0.2s; }

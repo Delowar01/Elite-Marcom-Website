@@ -876,23 +876,29 @@ html.reveals-off .sc-anim .sc-rail { opacity: 1; }
   background: var(--surface); color: var(--text); font: inherit; font-size: 0.86rem;
 }
 
-/* one picture per card, one shape for all of them: a portrait or a landscape
-   upload is cropped to the same landscape box, never stretched */
+/* one picture per card, shown whole: the frame takes the picture's own shape
+   (portrait, square or landscape), capped in height so a tall upload does not
+   turn the card into a poster — scaled, never cropped, never stretched */
 .role-card--has-image { grid-template-columns: 200px minmax(0, 1fr) auto; }
-.role-card__image { display: block; aspect-ratio: 16 / 10; border-radius: 12px; overflow: hidden;
-  border: 1px solid var(--border); background: var(--panel-2); align-self: start; }
-.role-card__image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.role-card__image { display: block; width: fit-content; max-width: 100%; border-radius: 12px;
+  overflow: hidden; border: 1px solid var(--border); background: var(--panel-2); align-self: start; }
+.role-card__image img { display: block; width: auto; height: auto; max-width: 100%; max-height: 260px; }
 @media (max-width: 640px) {
   .role-card--has-image { grid-template-columns: 1fr; }
-  .role-card__image { aspect-ratio: 16 / 9; }
+  .role-card__image { justify-self: center; }
 }
 
 .job-hero .lede { max-width: 62ch; }
-.job-image { margin: 0; align-self: center; }
-.job-image .media-frame { aspect-ratio: 16 / 10; }
+/* the hero picture keeps its own ratio too: the frame wraps it, the height is
+   capped so a portrait stays beside the title, and the hover zoom the site's
+   other frames use is off here — a zoom is a crop */
+.job-image { margin: 0; align-self: center; justify-self: center; max-width: 100%; }
+.job-image .media-frame { display: block; width: fit-content; max-width: 100%; }
+.job-image .media-frame img { display: block; width: auto; height: auto; max-width: 100%;
+  max-height: min(72vh, 640px); object-fit: contain; }
+.job-image .media-frame:hover img { transform: none; }
 @media (max-width: 960px) {
   .job-image { max-width: 560px; }
-  .job-image .media-frame { aspect-ratio: 16 / 9; }
 }
 .job-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: clamp(28px, 4vw, 56px); align-items: start; }
 .job-sections { display: flex; flex-direction: column; gap: clamp(36px, 5vw, 60px); }

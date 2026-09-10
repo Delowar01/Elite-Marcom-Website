@@ -459,9 +459,16 @@ documentation). Non-negotiable rules from it:
   one place a picture can be deleted from. Deleting or archiving a job never
   touches the library. The path is checked by `_safe_image_path` — `/media/`
   or `/assets/`, and no `..` segment, because the extension regex allows
-  dots. Card and hero both crop to 16:10 (`object-fit: cover`), so a portrait
-  upload is cropped rather than stretched; with no image there is no
-  placeholder, and og:image / twitter:image / JobPosting.image fall back to
+  dots. **The picture is shown whole, in its own shape** — card, hero and
+  admin preview alike: no aspect-ratio box, no `object-fit: cover`, only a
+  height cap so a portrait scales down rather than turning a card into a
+  poster, and the site's hover zoom is off on the job frame because a zoom
+  is a crop. `jobs.image_dims` supplies the real `width`/`height` (the
+  `media` table for an upload, the file header for shipped artwork) so the
+  page reserves the right box before the file arrives; the careers feed
+  carries them as `featuredImageWidth`/`featuredImageHeight` for the card.
+  With no image there is no placeholder, and og:image / twitter:image /
+  JobPosting.image fall back to
   `FALLBACK_IMAGE`. Changing the picture is an ordinary edit: the slug does
   not move and nothing needs a site publish.
 - Backups (Operations) carry content, design, settings, rentals and media —

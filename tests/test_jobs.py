@@ -519,6 +519,28 @@ def test_a_job_can_carry_a_featured_image_or_none_at_all():
         client.post(f"/api/admin/jobs/{x['id']}/delete", headers=csrf())
 
 
+def test_the_picture_is_shown_whole_in_its_own_shape():
+    """No fixed box: the page and the feed carry the upload's real size, so a
+    portrait is laid out as a portrait and nothing is cropped to fit."""
+    url = _upload("tall.png", _png("blue", size=(300, 500)))
+    job = make({"title": "Tall Picture Role", "location": "Riyadh, Saudi Arabia",
+                "featuredImage": url, "featuredImageAlt": "tall"}, status="published")
+    page = client.get(f"/careers/{job['slug']}").text
+    assert f'<img src="{url}" alt="tall" width="300" height="500">' in page
+    assert 'width="774"' not in page, "the old fixed landscape box is gone"
+    card = [x for x in client.get("/api/careers/jobs").json()["jobs"] if x["id"] == job["id"]][0]
+    assert (card["featuredImageWidth"], card["featuredImageHeight"]) == (300, 500)
+    # shipped artwork is measured off the disk; a size nobody knows is simply absent
+    assert jobs.image_dims(jobs.FALLBACK_IMAGE) is not None
+    assert jobs.image_dims("/assets/does-not-exist.webp") is None
+    assert jobs.image_dims("/media/../server/config.py") is None
+    plain = make({"title": "No Picture Role", "location": "Riyadh, Saudi Arabia"}, status="published")
+    card = [x for x in client.get("/api/careers/jobs").json()["jobs"] if x["id"] == plain["id"]][0]
+    assert card["featuredImageWidth"] is None and card["featuredImageHeight"] is None
+    for x in (job, plain):
+        client.post(f"/api/admin/jobs/{x['id']}/delete", headers=csrf())
+
+
 def test_replacing_or_removing_the_image_never_moves_the_job():
     first, second = _upload("a.png"), _upload("b.png", _png("blue"))
     j = make({"title": "Stand Builder", "location": "Dubai, UAE", "featuredImage": first,
