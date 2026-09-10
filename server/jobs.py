@@ -349,8 +349,11 @@ def resolve_slug(slug: str) -> tuple[dict | None, bool]:
 
 def public_jobs() -> list[dict]:
     """What /careers lists and what the application form offers: published,
-    and not past the closing date."""
-    return [j for j in all_jobs() if j["open"]]
+    and not past the closing date. Featured posts come first — a badge at the
+    bottom of the list is a badge nobody scrolls to — and within each group
+    the admin's own order holds (the sort is stable)."""
+    return sorted((j for j in all_jobs() if j["open"]),
+                  key=lambda j: 0 if j.get("featured") else 1)
 
 
 def public_view(job: dict) -> dict:

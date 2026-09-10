@@ -408,6 +408,24 @@ def test_job_management_is_behind_the_careers_permission():
     assert res.status_code == 403
 
 
+def test_featured_posts_lead_the_careers_list():
+    """A featured job goes to the top of /careers however late it was added;
+    the others keep their own order behind it."""
+    first = make({"title": "Ordinary First", "location": "Riyadh, Saudi Arabia"}, status="published")
+    second = make({"title": "Ordinary Second", "location": "Riyadh, Saudi Arabia"}, status="published")
+    star = make({"title": "Star Role", "location": "Riyadh, Saudi Arabia", "featured": True},
+                status="published")
+    ids = [j["id"] for j in client.get("/api/careers/jobs").json()["jobs"]]
+    assert ids[0] == star["id"], "the featured post leads"
+    assert ids.index(first["id"]) < ids.index(second["id"]), "the rest keep their order"
+    # un-featuring it sends it back into the ordinary order
+    client.post(f"/api/admin/jobs/{star['id']}", headers=csrf(), json={"values": {"featured": False}})
+    ids = [j["id"] for j in client.get("/api/careers/jobs").json()["jobs"]]
+    assert ids.index(star["id"]) > ids.index(second["id"])
+    for x in (first, second, star):
+        client.post(f"/api/admin/jobs/{x['id']}/delete", headers=csrf())
+
+
 # ---------------- the featured image ----------------
 
 def _png(color="red", size=(640, 400)) -> bytes:

@@ -438,7 +438,11 @@ documentation). Non-negotiable rules from it:
   `json.dumps` leaves `</script>` alone and a title is admin input. An
   application carries its job in the clear (`records.job_id` — a key, not
   personal data) so the panel counts applications per vacancy without
-  decrypting anything; `?job=` narrows the inbox to one post.
+  decrypting anything; `?job=` narrows the inbox to one post. `public_jobs`
+  puts **featured posts first** (a stable sort, so the admin's order holds
+  within each group): the badge is meant to be seen, and the same list feeds
+  the careers cards and the application form's role menu, so the two cannot
+  order differently.
   **A job's featured image is a path, not a file.** `featuredImage` /
   `featuredImageAlt` live in the record's JSON (`poster` from before the
   rename is read as `featuredImage` and never written back); the file itself
