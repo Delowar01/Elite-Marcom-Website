@@ -1995,3 +1995,20 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
   .job-editor { grid-template-columns: 1fr; }
   .job-editor__side { position: static; }
 }
+
+/* the featured image: the same 16:10 box the site shows, so what the admin
+   sees is the crop a visitor gets */
+.job-image-preview {
+  aspect-ratio: 16 / 10; border-radius: 12px; border: 1px dashed var(--adm-line-strong);
+  background: var(--adm-inset); display: flex; align-items: center; justify-content: center;
+  overflow: hidden; color: var(--text-muted); font-size: 0.82rem; text-align: center;
+  padding: 16px; line-height: 1.5; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.job-image-preview small { font-size: 0.72rem; opacity: 0.8; }
+.job-image-preview b { color: var(--text-soft); }
+.job-image-preview.is-over { border-color: var(--orange); background: rgba(237, 108, 38, 0.06); }
+.job-image-preview.has-image { border-style: solid; padding: 0; cursor: default; }
+.job-image-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.job-image-preview:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.job-upload-bar { height: 4px; border-radius: 2px; background: var(--adm-inset); overflow: hidden; margin-top: 8px; }
+.job-upload-bar i { display: block; height: 100%; width: 0; background: var(--orange); transition: width 0.2s; }

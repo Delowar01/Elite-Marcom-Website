@@ -876,9 +876,24 @@ html.reveals-off .sc-anim .sc-rail { opacity: 1; }
   background: var(--surface); color: var(--text); font: inherit; font-size: 0.86rem;
 }
 
+/* one picture per card, one shape for all of them: a portrait or a landscape
+   upload is cropped to the same landscape box, never stretched */
+.role-card--has-image { grid-template-columns: 200px minmax(0, 1fr) auto; }
+.role-card__image { display: block; aspect-ratio: 16 / 10; border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--border); background: var(--panel-2); align-self: start; }
+.role-card__image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (max-width: 640px) {
+  .role-card--has-image { grid-template-columns: 1fr; }
+  .role-card__image { aspect-ratio: 16 / 9; }
+}
+
 .job-hero .lede { max-width: 62ch; }
-.job-poster { margin: 0; max-width: 320px; justify-self: end; }
-.job-poster img { width: 100%; height: auto; border-radius: 16px; border: 1px solid var(--border); }
+.job-image { margin: 0; align-self: center; }
+.job-image .media-frame { aspect-ratio: 16 / 10; }
+@media (max-width: 960px) {
+  .job-image { max-width: 560px; }
+  .job-image .media-frame { aspect-ratio: 16 / 9; }
+}
 .job-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: clamp(28px, 4vw, 56px); align-items: start; }
 .job-sections { display: flex; flex-direction: column; gap: clamp(36px, 5vw, 60px); }
 .job-section h2 { max-width: 22ch; margin: 0 0 14px; }
@@ -921,7 +936,6 @@ html.reveals-off .sc-anim .sc-rail { opacity: 1; }
 @media (max-width: 960px) {
   .job-layout { grid-template-columns: 1fr; }
   .job-facts { position: static; }
-  .job-poster { max-width: 240px; justify-self: start; }
 }
 @media (max-width: 640px) {
   .job-share { margin-left: 0; margin-top: 10px; }

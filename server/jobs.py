@@ -53,7 +53,9 @@ _SCHEMA_EMPLOYMENT = {"Full time": "FULL_TIME", "Part time": "PART_TIME", "Contr
 # text fields that carry no markup at all
 _TEXT_FIELDS = {"title": 140, "department": 80, "location": 120, "experience": 120,
                 "salary": 120, "summary": 400, "applyEmail": 200, "seoTitle": 200,
-                "seoDescription": 320, "poster": 240}
+                "seoDescription": 320, "featuredImage": 240, "featuredImageAlt": 200}
+# what a job page and a share card show when the post has no picture of its own
+FALLBACK_IMAGE = "/assets/portfolio/team-experience.webp"
 # long fields that may carry the whitelisted markup below
 RICH_FIELDS = ("description", "responsibilities", "requirements", "qualifications",
                "skills", "benefits")
@@ -68,6 +70,13 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 class JobError(Exception):
     """A sentence the admin can act on."""
+
+
+def _safe_image_path(path: str) -> bool:
+    """/media/… or /assets/… and nothing that walks out of them: the regex
+    allows dots for file extensions, so a `..` segment has to be refused by
+    name."""
+    return bool(_IMG_RE.match(path)) and ".." not in path.split("/")
 
 
 # ---------------- whitelist sanitizer for the long fields ----------------
@@ -241,7 +250,8 @@ def _seed(conn) -> None:
             "summary": str(old.get("summary", ""))[:400],
             "description": f"<p>{html_mod.escape(str(old.get('summary', '')))}</p>",
             "requirements": f"<ul>{reqs}</ul>" if reqs else "",
-            "poster": str(old.get("poster", ""))[:240],
+            "featuredImage": str(old.get("poster", ""))[:240],
+            "featuredImageAlt": f"{old.get('title', '')} — Elite Marcom careers"[:200],
             "applyEmail": "hr@elitemarcom.com",
         })
         slug = slugify(old.get("id") or old["title"]) or f"role-{i + 1}"
@@ -274,9 +284,14 @@ def _defaults() -> dict:
 def _row(r) -> dict:
     data = _defaults()
     try:
-        data.update(json.loads(r["data"] or "{}"))
+        stored = json.loads(r["data"] or "{}")
     except ValueError:
-        pass
+        stored = {}
+    # a record written before the rename kept the picture under `poster`
+    if stored.get("poster") and not stored.get("featuredImage"):
+        stored["featuredImage"] = stored["poster"]
+    stored.pop("poster", None)
+    data.update(stored)
     data.update({"id": r["id"], "slug": r["slug"], "status": r["status"],
                  "sortOrder": r["sort_order"], "createdAt": r["created_at"],
                  "updatedAt": r["updated_at"], "publishedAt": r["published_at"],
@@ -341,8 +356,8 @@ def public_jobs() -> list[dict]:
 def public_view(job: dict) -> dict:
     """The fields a visitor may see. Nothing internal rides along."""
     keys = ("id", "slug", "url", "title", "department", "location", "employmentType",
-            "workplaceType", "experience", "summary", "closingDate", "featured", "poster",
-            "open", "status")
+            "workplaceType", "experience", "summary", "closingDate", "featured",
+            "featuredImage", "featuredImageAlt", "open", "status")
     out = {k: job.get(k) for k in keys}
     out["applicationsClosed"] = not job["open"]
     return out
@@ -404,9 +419,11 @@ def _clean(values: dict, existing: dict | None) -> dict:
         data["featured"] = bool(values["featured"])
     if data.get("applyEmail") and not _EMAIL_RE.match(data["applyEmail"]):
         raise JobError("Application email does not look like an email address.")
-    if data.get("poster") and not _IMG_RE.match(data["poster"]):
-        raise JobError("Poster must be an image from the Media library or the site assets "
-                       "(a path starting /media/ or /assets/).")
+    if data.get("featuredImage") and not _safe_image_path(data["featuredImage"]):
+        raise JobError("The featured image must come from the Media library or the site "
+                       "assets (a path starting /media/ or /assets/).")
+    if data.get("featuredImageAlt") and not data.get("featuredImage"):
+        data["featuredImageAlt"] = ""
     if not data["title"]:
         raise JobError("Job title is required.")
     if not data["location"]:
@@ -598,6 +615,8 @@ def job_posting_ld(job: dict) -> dict | None:
         "url": job["url"],
         "directApply": True,
     }
+    if job.get("featuredImage"):
+        posting["image"] = SITE_ORIGIN + job["featuredImage"]
     if job.get("closingDate"):
         posting["validThrough"] = job["closingDate"] + "T23:59:59"
     if job.get("workplaceType") == "Remote":
@@ -621,7 +640,7 @@ def _head(job: dict, lang: str) -> str:
 
     canonical = job["url"] if lang == "en" else f"{SITE_ORIGIN}/ar/careers/{job['slug']}"
     title, desc = _esc(seo_title(job)), _esc(seo_description(job))
-    image = job.get("poster") or "/assets/portfolio/team-experience.webp"
+    image = job.get("featuredImage") or FALLBACK_IMAGE
     parts = [
         f"<title>{title}</title>",
         _INDEXABLE if job["open"] else _NOINDEX,
@@ -635,6 +654,7 @@ def _head(job: dict, lang: str) -> str:
         '<meta name="twitter:card" content="summary_large_image">',
         f'<meta name="twitter:title" content="{title}">',
         f'<meta name="twitter:description" content="{desc}">',
+        f'<meta name="twitter:image" content="{SITE_ORIGIN}{_esc(image)}">',
     ]
     ld = job_posting_ld(job)
     if ld:
@@ -771,9 +791,10 @@ def render_main(job: dict) -> str:
     apply_btn = ('<a class="btn btn--primary" href="#apply" data-magnetic>Apply for this role</a>'
                  if job["open"] else
                  '<a class="btn btn--ghost" href="/careers#openings">See open roles</a>')
-    poster = (f'<figure class="job-poster reveal" data-reveal="zoom-up" data-reveal-delay="160">'
-              f'<img src="{_esc(job["poster"])}" alt="" width="640" height="800" loading="lazy"></figure>'
-              if job.get("poster") else "")
+    poster = (f'<figure class="job-image reveal" data-reveal="zoom-up" data-reveal-delay="160">'
+              f'<div class="media-frame media-frame--sheen"><img src="{_esc(job["featuredImage"])}" '
+              f'alt="{_esc(job.get("featuredImageAlt") or "")}" width="774" height="484"></div></figure>'
+              if job.get("featuredImage") else "")
     sections = (
         _section("about", "01 — About the role", "What this role is", job.get("description", ""))
         + _section("responsibilities", "02 — Responsibilities", "What you will do", job.get("responsibilities", ""))

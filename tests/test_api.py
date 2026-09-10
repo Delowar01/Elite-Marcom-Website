@@ -700,7 +700,9 @@ def careers_form(form_key: str = "career", **overrides) -> dict:
 def test_careers_jobs():
     data = client.get("/api/careers/jobs").json()
     assert [j["id"] for j in data["jobs"]] == ["2d-designer", "3d-exhibition-designer", "sales-executive"]
-    assert all("poster" in j for j in data["jobs"])
+    # every public job carries the featured-image pair, filled or empty
+    assert all("featuredImage" in j and "featuredImageAlt" in j for j in data["jobs"])
+    assert all("poster" not in j for j in data["jobs"]), "the old key is gone from the public shape"
 
 
 def test_careers_application_with_pdf():

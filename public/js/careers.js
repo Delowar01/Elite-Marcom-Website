@@ -40,7 +40,11 @@
       card.className = "role-card" + (job.featured ? " role-card--featured" : "");
       card.href = "/careers/" + encodeURIComponent(job.slug);
       card.setAttribute("aria-label", job.title + " — " + job.department + ". View the role.");
+      if (job.featuredImage) card.classList.add("role-card--has-image");
       card.innerHTML =
+        (job.featuredImage
+          ? '<span class="role-card__image"><img src="' + EM.escapeHtml(job.featuredImage) + '" alt="' +
+            EM.escapeHtml(job.featuredImageAlt || "") + '" loading="lazy" width="320" height="200"></span>' : "") +
         "<div>" +
           '<span class="role-card__dept">' + EM.escapeHtml(job.department || "Elite Marcom") +
           (job.featured ? ' <span class="chip chip--featured">Featured</span>' : "") + "</span>" +

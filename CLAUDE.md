@@ -439,6 +439,20 @@ documentation). Non-negotiable rules from it:
   application carries its job in the clear (`records.job_id` — a key, not
   personal data) so the panel counts applications per vacancy without
   decrypting anything; `?job=` narrows the inbox to one post.
+  **A job's featured image is a path, not a file.** `featuredImage` /
+  `featuredImageAlt` live in the record's JSON (`poster` from before the
+  rename is read as `featuredImage` and never written back); the file itself
+  is a Media library upload — the editor posts to `/api/admin/media/upload`
+  and the picker is the shared `mediaPicker`, so there is one image store,
+  one validator (bytes sniffed, PIL-opened, re-encoded to WebP, no SVG) and
+  one place a picture can be deleted from. Deleting or archiving a job never
+  touches the library. The path is checked by `_safe_image_path` — `/media/`
+  or `/assets/`, and no `..` segment, because the extension regex allows
+  dots. Card and hero both crop to 16:10 (`object-fit: cover`), so a portrait
+  upload is cropped rather than stretched; with no image there is no
+  placeholder, and og:image / twitter:image / JobPosting.image fall back to
+  `FALLBACK_IMAGE`. Changing the picture is an ordinary edit: the slug does
+  not move and nothing needs a site publish.
 - Backups (Operations) carry content, design, settings, rentals and media —
   never customer submissions, which stay encrypted with their own retention.
 - Arabic publishes a full RTL edition under `/ar/` when `site.languages`

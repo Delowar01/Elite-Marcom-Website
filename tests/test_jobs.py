@@ -208,7 +208,7 @@ def test_a_bad_closing_date_or_vacancy_count_is_refused():
                          ({"vacancies": "many"}, "whole number"),
                          ({"employmentType": "Gig"}, "employment type"),
                          ({"applyEmail": "not-an-email"}, "email"),
-                         ({"poster": "https://evil.example/x.png"}, "Media library")):
+                         ({"featuredImage": "https://evil.example/x.png"}, "Media library")):
         body = {"title": "T", "location": "L", "description": "<p>x</p>", **values}
         res = client.post("/api/admin/jobs", json={"values": body}, headers=csrf())
         assert res.status_code == 400, values
@@ -406,3 +406,139 @@ def test_job_management_is_behind_the_careers_permission():
     res = client.post("/api/admin/jobs", json={"values": {"title": "x", "location": "y",
                                                            "description": "<p>x</p>"}})
     assert res.status_code == 403
+
+
+# ---------------- the featured image ----------------
+
+def _png(color="red", size=(640, 400)) -> bytes:
+    import io
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _upload(name="hero.png", data=None) -> str:
+    res = client.post("/api/admin/media/upload", headers=csrf(),
+                      files={"file": (name, data or _png(), "image/png")}, data={"alt": "x"})
+    assert res.status_code == 200, res.text
+    return "/media/" + res.json()["item"]["file"]
+
+
+def test_a_job_can_carry_a_featured_image_or_none_at_all():
+    plain = make({"title": "Plain Role", "location": "Riyadh, Saudi Arabia"}, status="published")
+    assert plain["featuredImage"] == "" and plain["featuredImageAlt"] == ""
+    page = client.get(f"/careers/{plain['slug']}").text
+    assert 'class="job-image' not in page, "no image means no placeholder either"
+    assert f'<meta property="og:image" content="https://www.elitemarcom.com{jobs.FALLBACK_IMAGE}">' in page
+    assert f'<meta name="twitter:image" content="https://www.elitemarcom.com{jobs.FALLBACK_IMAGE}">' in page
+    ld = json.loads(re.findall(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)[0])
+    assert "image" not in ld
+
+    url = _upload()
+    pictured = make({"title": "Pictured Role", "location": "Riyadh, Saudi Arabia",
+                     "featuredImage": url, "featuredImageAlt": "Our studio floor"}, status="published")
+    assert pictured["featuredImage"] == url and pictured["featuredImageAlt"] == "Our studio floor"
+    page = client.get(f"/careers/{pictured['slug']}").text
+    assert f'<img src="{url}" alt="Our studio floor"' in page
+    assert 'class="job-image' in page
+    assert f'<meta property="og:image" content="https://www.elitemarcom.com{url}">' in page
+    assert f'<meta name="twitter:image" content="https://www.elitemarcom.com{url}">' in page
+    ld = json.loads(re.findall(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)[0])
+    assert ld["image"] == "https://www.elitemarcom.com" + url
+    # the canonical, title and breadcrumb are exactly what they were
+    assert f'<link rel="canonical" href="{pictured["url"]}">' in page
+    assert "<title>Pictured Role — Careers at Elite Marcom</title>" in page
+    # and the listing card gets it too
+    card = [x for x in client.get("/api/careers/jobs").json()["jobs"] if x["id"] == pictured["id"]][0]
+    assert card["featuredImage"] == url and card["featuredImageAlt"] == "Our studio floor"
+    for x in (plain, pictured):
+        client.post(f"/api/admin/jobs/{x['id']}/delete", headers=csrf())
+
+
+def test_replacing_or_removing_the_image_never_moves_the_job():
+    first, second = _upload("a.png"), _upload("b.png", _png("blue"))
+    j = make({"title": "Stand Builder", "location": "Dubai, UAE", "featuredImage": first,
+              "featuredImageAlt": "first"}, status="published")
+    slug = j["slug"]
+    res = client.post(f"/api/admin/jobs/{j['id']}", headers=csrf(),
+                      json={"values": {"featuredImage": second, "featuredImageAlt": "second"}})
+    assert res.status_code == 200
+    assert res.json()["job"]["slug"] == slug and res.json()["job"]["status"] == "published"
+    page = client.get(f"/careers/{slug}").text
+    assert f'<img src="{second}" alt="second"' in page and first not in page
+    # the replaced file is still in the library — nothing was deleted for it
+    assert client.get(first).status_code == 200
+
+    res = client.post(f"/api/admin/jobs/{j['id']}", headers=csrf(),
+                      json={"values": {"featuredImage": "", "featuredImageAlt": "second"}})
+    got = res.json()["job"]
+    assert got["featuredImage"] == "" and got["featuredImageAlt"] == "", "alt without a picture is dropped"
+    assert got["slug"] == slug
+    page = client.get(f"/careers/{slug}").text
+    assert 'class="job-image' not in page and second not in page
+    assert f'content="https://www.elitemarcom.com{jobs.FALLBACK_IMAGE}"' in page
+    client.post(f"/api/admin/jobs/{j['id']}/delete", headers=csrf())
+    # deleting the job does not touch the shared library
+    assert client.get(first).status_code == 200 and client.get(second).status_code == 200
+
+
+def test_a_duplicate_keeps_the_picture_and_its_alt_text():
+    url = _upload("dup.png")
+    j = make({"title": "Rigger", "location": "Riyadh, Saudi Arabia", "featuredImage": url,
+              "featuredImageAlt": "Rigging a truss"})
+    copy = client.post(f"/api/admin/jobs/{j['id']}/duplicate", headers=csrf()).json()["job"]
+    assert copy["featuredImage"] == url and copy["featuredImageAlt"] == "Rigging a truss"
+    for x in (j, copy):
+        client.post(f"/api/admin/jobs/{x['id']}/delete", headers=csrf())
+
+
+def test_the_picture_follows_the_job_through_every_state():
+    url = _upload("life.png")
+    j = make({"title": "Host", "location": "Riyadh, Saudi Arabia", "featuredImage": url,
+              "featuredImageAlt": "Hosts at a stand"}, status="published")
+    assert client.get(f"/careers/{j['slug']}").status_code == 200
+    client.post(f"/api/admin/jobs/{j['id']}/status", json={"status": "closed"}, headers=csrf())
+    page = client.get(f"/careers/{j['slug']}").text
+    assert f'<img src="{url}" alt="Hosts at a stand"' in page and "Applications closed" in page
+    assert "JobPosting" not in page
+    client.post(f"/api/admin/jobs/{j['id']}/status", json={"status": "archived"}, headers=csrf())
+    assert client.get(f"/careers/{j['slug']}").status_code == 404
+    assert client.get(f"/api/admin/jobs/{j['id']}").json()["job"]["featuredImage"] == url
+    client.post(f"/api/admin/jobs/{j['id']}/status", json={"status": "draft"}, headers=csrf())
+    assert client.get(f"/api/admin/jobs/{j['id']}").json()["job"]["featuredImage"] == url
+    client.post(f"/api/admin/jobs/{j['id']}/delete", headers=csrf())
+
+
+def test_a_bad_image_is_refused_before_it_reaches_a_job():
+    for bad in ("https://evil.example/x.png", "/etc/passwd", "/media/../server/config.py",
+                "javascript:alert(1)", "data:image/png;base64,AAAA"):
+        res = client.post("/api/admin/jobs", headers=csrf(), json={"values": {
+            "title": "T", "location": "L", "description": "<p>x</p>", "featuredImage": bad}})
+        assert res.status_code == 400, bad
+        assert "Media library" in res.json()["detail"], bad
+    # and the uploader itself checks the bytes, not the name or the declared type
+    for name, data, mime in (("x.png", b"not-an-image-at-all-" * 20, "image/png"),
+                             ("x.svg", b'<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>', "image/svg+xml"),
+                             ("x.webp", b"RIFF\x00\x00\x00\x00WEBPjunk", "image/webp")):
+        res = client.post("/api/admin/media/upload", headers=csrf(),
+                          files={"file": (name, data, mime)}, data={"alt": ""})
+        assert res.status_code == 400, name
+
+
+def test_a_record_written_before_the_rename_still_has_its_picture():
+    """The three shipped roles were stored with `poster`; they read back as a
+    featured image without anybody re-saving them."""
+    j = make({"title": "Legacy", "location": "Riyadh, Saudi Arabia"})
+    conn = aa._connect()
+    data = json.loads(conn.execute("SELECT data FROM job_posts WHERE id=?", (j["id"],)).fetchone()["data"])
+    data.pop("featuredImage", None); data.pop("featuredImageAlt", None)
+    data["poster"] = "/assets/careers/poster-2d-designer.svg"
+    conn.execute("UPDATE job_posts SET data=? WHERE id=?", (json.dumps(data), j["id"])); conn.commit()
+    got = client.get(f"/api/admin/jobs/{j['id']}").json()["job"]
+    assert got["featuredImage"] == "/assets/careers/poster-2d-designer.svg"
+    assert "poster" not in got
+    seeded = [x for x in client.get("/api/admin/jobs").json()["jobs"] if x["slug"] == "2d-designer"][0]
+    assert seeded["featuredImage"].endswith("poster-2d-designer.svg")
+    client.post(f"/api/admin/jobs/{j['id']}/delete", headers=csrf())

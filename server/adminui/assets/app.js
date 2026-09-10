@@ -1309,7 +1309,7 @@
         workplaceType: "Onsite", experience: "", salary: "", summary: "", description: "",
         responsibilities: "", requirements: "", qualifications: "", skills: "", benefits: "",
         vacancies: 1, applyEmail: "hr@elitemarcom.com", closingDate: "", featured: false,
-        seoTitle: "", seoDescription: "", slug: "", status: "draft", poster: "", applications: 0 };
+        seoTitle: "", seoDescription: "", slug: "", status: "draft", featuredImage: "", featuredImageAlt: "", applications: 0 };
       var ET = r.data.employmentTypes.length ? r.data.employmentTypes : ["Full time", "Part time", "Contract", "Internship", "Temporary"];
       var WT = r.data.workplaceTypes.length ? r.data.workplaceTypes : ["Onsite", "Hybrid", "Remote"];
       var dirty = false, slugTouched = !isNew;
@@ -1384,14 +1384,24 @@
         (!isNew && (j.status === "published" || j.status === "closed")
           ? '<a class="btn btn--ghost btn--small" href="' + esc(j.url) + '" target="_blank" rel="noopener">View on site</a>' : "") +
         "</div></div>" +
+        '<div class="admin-panel"><h2>Featured image</h2>' +
+        '<div class="job-image-preview" id="jf-image-preview" tabindex="0" aria-label="Featured image — drop an image here"></div>' +
+        '<div class="job-upload-bar" id="jf-upload-bar" hidden><i></i></div>' +
+        '<p class="admin-inline-note" id="jf-img-status"></p>' +
+        '<div class="admin-actions" style="margin-top:8px;">' +
+        '<button class="btn btn--ghost btn--small" type="button" id="jf-img-upload">Upload image</button>' +
+        '<button class="btn btn--ghost btn--small" type="button" id="jf-img-choose">Choose from library</button>' +
+        '<button class="btn btn--ghost btn--small" type="button" id="jf-img-remove" hidden>Remove</button></div>' +
+        '<input type="file" id="jf-img-file" accept="image/png,image/jpeg,image/webp" hidden>' +
+        '<div class="admin-form" style="margin-top:12px;"><div class="full"><label for="jf-img-alt">Alt text</label>' +
+        '<input id="jf-img-alt" maxlength="200" value="' + esc(j.featuredImageAlt || "") + '" placeholder="What the picture shows">' +
+        '<span class="field-help">Read out to screen readers and used when the picture cannot load. Shown on the Careers card, the job page and when the link is shared.</span></div></div></div>' +
         '<div class="admin-panel"><h2>Details</h2><div class="admin-form">' +
         '<div class="full"><label for="jf-closing">Application deadline</label><input id="jf-closing" type="date" value="' + esc(j.closingDate) + '">' +
         '<span class="field-help">After this date the page says applications are closed on its own.</span></div>' +
         '<div class="full"><label for="jf-vacancies">Number of vacancies</label><input id="jf-vacancies" type="number" min="1" max="500" value="' + esc(j.vacancies || 1) + '"></div>' +
         '<div class="full"><label for="jf-email">Application email</label><input id="jf-email" type="email" maxlength="200" value="' + esc(j.applyEmail) + '">' +
         '<span class="field-help">Shown under the form for people who prefer to write.</span></div>' +
-        '<div class="full"><label for="jf-poster">Poster / cover image</label><input id="jf-poster" maxlength="240" value="' + esc(j.poster) + '" placeholder="/media/… or /assets/…">' +
-        '<span class="field-help">Optional. Also used as the share image.</span></div>' +
         '<div class="full"><label class="job-check"><input type="checkbox" id="jf-featured"' + (j.featured ? " checked" : "") + "> Featured job</label>" +
         '<span class="field-help">Highlighted on the Careers page.</span></div>' +
         "</div></div>" +
@@ -1405,6 +1415,90 @@
 
       /* ---- unsaved changes ---- */
       function markDirty() { dirty = true; }
+
+      /* ---- the featured image: one path, kept on the job; the file itself
+         lives in the Media library like every other picture ---- */
+      var image = j.featuredImage || "";
+      var imgPreview = document.getElementById("jf-image-preview");
+      var imgStatus = document.getElementById("jf-img-status");
+      var imgFile = document.getElementById("jf-img-file");
+      var imgBar = document.getElementById("jf-upload-bar");
+      function paintImage() {
+        imgPreview.classList.toggle("has-image", !!image);
+        imgPreview.innerHTML = image
+          ? '<img src="' + esc(image) + '" alt="">'
+          : '<span><b>No featured image</b><br>Drop an image here, upload one, or choose from the library.<br>' +
+            '<small>PNG, JPEG or WebP · up to 15 MB · shown as a 16:10 crop</small></span>';
+        document.getElementById("jf-img-upload").textContent = image ? "Replace image" : "Upload image";
+        /* a .btn is display:inline-flex, which wins over the hidden attribute */
+        var rm = document.getElementById("jf-img-remove");
+        rm.hidden = !image;
+        rm.style.display = image ? "" : "none";
+      }
+      function setImage(url, note) {
+        image = url || "";
+        paintImage();
+        imgStatus.textContent = note || (image ? "Save the job to keep this image." : "");
+        markDirty();
+      }
+      function uploadImage(file) {
+        if (!file) return;
+        if (["image/png", "image/jpeg", "image/webp"].indexOf(file.type) === -1 &&
+            !/\.(png|jpe?g|webp)$/i.test(file.name)) {
+          return toast("Please choose a PNG, JPEG or WebP image.", true);
+        }
+        if (file.size > 15 * 1024 * 1024) return toast("Images must be 15 MB or smaller.", true);
+        var fd = new FormData();
+        fd.append("file", file);
+        fd.append("alt", document.getElementById("jf-img-alt").value.trim());
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/admin/media/upload");
+        xhr.setRequestHeader("X-CSRF", me ? me.csrf : "");
+        imgBar.hidden = false; imgBar.firstChild.style.width = "0%";
+        imgStatus.textContent = "Uploading…";
+        ["jf-img-upload", "jf-img-choose", "jf-img-remove"].forEach(function (id) { document.getElementById(id).disabled = true; });
+        xhr.upload.onprogress = function (ev) {
+          if (ev.lengthComputable) imgBar.firstChild.style.width = Math.round(ev.loaded / ev.total * 100) + "%";
+        };
+        xhr.onload = function () {
+          ["jf-img-upload", "jf-img-choose", "jf-img-remove"].forEach(function (id) { document.getElementById(id).disabled = false; });
+          imgBar.hidden = true;
+          var data = {};
+          try { data = JSON.parse(xhr.responseText || "{}"); } catch (e) { /* not json */ }
+          if (xhr.status === 401) { location.replace("/admin"); return; }
+          if (xhr.status !== 200 || !data.item) {
+            imgStatus.textContent = "";
+            return toast((data && data.detail) || "The image could not be uploaded.", true);
+          }
+          setImage("/media/" + data.item.file, "Uploaded to the Media library — save the job to keep it.");
+          toast("Image uploaded.");
+        };
+        xhr.onerror = xhr.onload;
+        xhr.send(fd);
+      }
+      paintImage();
+      document.getElementById("jf-img-upload").addEventListener("click", function () { imgFile.value = ""; imgFile.click(); });
+      imgFile.addEventListener("change", function () { uploadImage(imgFile.files[0]); });
+      document.getElementById("jf-img-choose").addEventListener("click", function () {
+        mediaPicker(function (url) { setImage(url, "Chosen from the library — save the job to keep it."); });
+      });
+      document.getElementById("jf-img-remove").addEventListener("click", function () {
+        if (!confirm("Remove the featured image from this job post? The file stays in the Media library.")) return;
+        setImage("", "Removed — save the job to keep the change.");
+      });
+      ["dragenter", "dragover"].forEach(function (ev) {
+        imgPreview.addEventListener(ev, function (e) { e.preventDefault(); imgPreview.classList.add("is-over"); });
+      });
+      ["dragleave", "drop"].forEach(function (ev) {
+        imgPreview.addEventListener(ev, function (e) { e.preventDefault(); imgPreview.classList.remove("is-over"); });
+      });
+      imgPreview.addEventListener("drop", function (e) {
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) uploadImage(f);
+      });
+      imgPreview.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); imgFile.value = ""; imgFile.click(); }
+      });
       form.addEventListener("input", markDirty);
       form.addEventListener("change", markDirty);
       leaveGuard = function (silent) {
@@ -1452,7 +1546,8 @@
           vacancies: document.getElementById("jf-vacancies").value, applyEmail: document.getElementById("jf-email").value,
           closingDate: document.getElementById("jf-closing").value, featured: document.getElementById("jf-featured").checked,
           seoTitle: document.getElementById("jf-seo-title").value, seoDescription: document.getElementById("jf-seo-desc").value,
-          poster: document.getElementById("jf-poster").value, slug: slugEl.value.trim()
+          featuredImage: image, featuredImageAlt: document.getElementById("jf-img-alt").value,
+          slug: slugEl.value.trim()
         };
       }
       form.addEventListener("submit", function (e) { e.preventDefault(); });
