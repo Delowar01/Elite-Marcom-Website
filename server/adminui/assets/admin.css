@@ -1950,6 +1950,14 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 }
 .jobs-chips button[aria-pressed="true"] { background: var(--orange); border-color: var(--orange); color: #fff; }
 .jobs-chips button b { font-weight: 800; opacity: 0.8; margin-left: 4px; }
+/* Reordering the list: a grip on each row, a drop line above or below the row
+   the drag is over — the same cues as the Sections list. */
+.job-grip, .job-grip-head { width: 22px; padding-right: 0 !important; }
+.job-grip { cursor: grab; opacity: 0.5; user-select: none; text-align: center; }
+tr[draggable="true"] { cursor: default; }
+tr.is-dragging { opacity: 0.45; }
+tr.is-over > td { box-shadow: 0 -3px 0 -1px var(--orange-2) inset; }
+tr.is-over-below > td { box-shadow: 0 3px 0 -1px var(--orange-2) inset; }
 .job-title-cell b { display: block; }
 .job-title-cell .muted { font-size: 0.76rem; overflow-wrap: anywhere; }
 .status-pill--draft { color: var(--text-soft); background: var(--adm-inset); }

@@ -1733,6 +1733,11 @@ class JobStatusBody(BaseModel):
     status: str = Field(max_length=20)
 
 
+class JobOrderBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    order: list[str] = Field(default_factory=list, max_length=500)
+
+
 class JobSlugBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(default="", max_length=200)
@@ -1787,6 +1792,23 @@ async def admin_job_slug(request: Request, body: JobSlugBody):
         return {"slug": slug, "available": True}
     suggested = jobs_mod.suggest_slug(body.title, body.location)
     return {"slug": jobs_mod.unique_slug(suggested, body.id or None), "available": True}
+
+
+@router.post("/api/admin/jobs/order")
+async def admin_job_order(request: Request, body: JobOrderBody,
+                          x_csrf: str | None = Header(default=None)):
+    """The admin's order for the list — declared before /jobs/{job_id} so
+    'order' is never read as an id."""
+    session = require_perm(request, "careers.manage")
+    require_csrf(request, session, x_csrf)
+    from . import jobs as jobs_mod
+    from . import storage as st
+
+    rows = jobs_mod.reorder([str(i)[:40] for i in body.order], session["email"])
+    aa.audit(session, "job.reordered", "careers", {"order": [j["id"] for j in rows]},
+             _ip_hash(request))
+    counts = st.applications_by_job()
+    return {"jobs": [_job_with_count(j, counts) for j in rows]}
 
 
 @router.post("/api/admin/jobs")

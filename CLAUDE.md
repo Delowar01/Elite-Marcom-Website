@@ -442,7 +442,14 @@ documentation). Non-negotiable rules from it:
   puts **featured posts first** (a stable sort, so the admin's order holds
   within each group): the badge is meant to be seen, and the same list feeds
   the careers cards and the application form's role menu, so the two cannot
-  order differently.
+  order differently. The admin's order is `sort_order`, set by
+  `jobs.reorder` (`POST /api/admin/jobs/order`): drag a row by its grip or
+  use Move up / Move down in its menu. A post the order omits keeps its
+  place behind the named ones and an unknown id is ignored, so a stale
+  screen can never lose a post. With a search or filter on, the arrows
+  move past the neighbouring *visible* row but the order saved is the whole
+  list's, and the admin list always shows the admin's order — the featured
+  lift is public-only.
   **A job's featured image is a path, not a file.** `featuredImage` /
   `featuredImageAlt` live in the record's JSON (`poster` from before the
   rename is read as `featuredImage` and never written back); the file itself

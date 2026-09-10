@@ -2851,7 +2851,7 @@
         function rows() {
           var list = shown();
           if (!list.length) {
-            return '<tr><td colspan="10">' + emptyState(
+            return '<tr><td colspan="11">' + emptyState(
               jobs.length ? "No job posts match" : "No job posts yet",
               jobs.length ? "Try another search or status." : "Press + Add job post to write the first vacancy.") + "</td></tr>";
           }
@@ -2861,7 +2861,8 @@
                   ? '<a class="job-apps-link" href="#requests" data-job-apps="' + esc(j.id) + '" title="Open the applications for this job">' + j.applications + "</a>"
                   : "<b>" + j.applications + "</b>")
               : '<span class="muted">0</span>';
-            return '<tr data-id="' + esc(j.id) + '">' +
+            return '<tr data-id="' + esc(j.id) + '" draggable="true">' +
+              '<td class="job-grip" title="Drag to reorder" aria-hidden="true">&#9782;</td>' +
               '<td class="job-title-cell"><b>' + esc(j.title) + "</b>" +
               '<span class="muted">/careers/' + esc(j.slug) + "</span></td>" +
               '<td class="muted">' + esc(j.department || "—") + "</td>" +
@@ -2880,7 +2881,8 @@
           '<div class="job-editor__head"><h1 class="admin-h1" style="margin:0">Job posts</h1>' +
           '<a class="btn btn--primary btn--small" href="#jobs/new">+ Add job post</a></div>' +
           '<p class="admin-sub">Every vacancy is its own post with its own address. Published jobs appear on the ' +
-          'Careers page at once — no site publish needed.' +
+          'Careers page at once — no site publish needed. Drag a row by its handle, or use <b>Move up</b> / ' +
+          '<b>Move down</b> in its menu, to set the order of the Careers page; featured posts always come first there.' +
           (d.generalApplications ? " <b>" + d.generalApplications + "</b> general application" + (d.generalApplications === 1 ? "" : "s") + " not tied to a post." : "") + "</p>" +
           '<div class="admin-panel">' +
           '<div class="jobs-toolbar">' +
@@ -2893,6 +2895,7 @@
           depts.map(function (x) { return '<option value="' + esc(x) + '"' + (st.dept === x ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") +
           "</select></div>" +
           '<div class="table-scroll"><table class="admin-table"><thead><tr>' +
+          '<th class="job-grip-head"><span class="visually-hidden">Order</span></th>' +
           "<th>Job title</th><th>Department</th><th>Location</th><th>Type</th><th>Status</th><th>Published</th>" +
           "<th>Closing</th><th>Applications</th><th>Updated</th><th></th></tr></thead>" +
           '<tbody id="jobs-rows">' + rows() + "</tbody></table></div></div>";
@@ -2909,6 +2912,71 @@
         });
 
         function byId(id) { return jobs.filter(function (j) { return j.id === id; })[0]; }
+        /* Put `moving` before or after `target` in the full list — the whole
+           list, not the rows a search or filter happens to show, so the
+           order the Careers page reads is the one that was saved. */
+        function placeNextTo(moving, target, below) {
+          if (!moving || !target || moving === target) return;
+          var order = jobs.map(function (j) { return j.id; });
+          order.splice(order.indexOf(moving), 1);
+          var at = order.indexOf(target) + (below ? 1 : 0);
+          order.splice(at, 0, moving);
+          api("/api/admin/jobs/order", { order: order }).then(function (r2) {
+            if (!r2.ok) return apiErr(r2);
+            jobs = r2.data.jobs || jobs;
+            repaint();
+            toast("Order saved — the Careers page follows it.");
+          });
+        }
+        /* the arrows move past the neighbouring *visible* row, so they still
+           make sense while a filter is on */
+        function moveBy(id, step) {
+          var ids = shown().map(function (j) { return j.id; });
+          var i = ids.indexOf(id), to = i + step;
+          if (i === -1 || to < 0 || to >= ids.length) return;
+          placeNextTo(id, ids[to], step > 0);
+        }
+        var tbody = document.getElementById("jobs-rows");
+        var dragId = null;
+        function clearOver() {
+          tbody.querySelectorAll("tr").forEach(function (r) { r.classList.remove("is-over", "is-over-below"); });
+        }
+        tbody.addEventListener("dragstart", function (e) {
+          var row = e.target.closest("tr[data-id]");
+          if (!row) return;
+          dragId = row.getAttribute("data-id");
+          row.classList.add("is-dragging");
+          try { e.dataTransfer.setData("text/plain", dragId); } catch (err) { /* older browsers */ }
+          e.dataTransfer.effectAllowed = "move";
+        });
+        tbody.addEventListener("dragend", function () {
+          dragId = null;
+          clearOver();
+          tbody.querySelectorAll("tr").forEach(function (r) { r.classList.remove("is-dragging"); });
+        });
+        tbody.addEventListener("dragover", function (e) {
+          var row = e.target.closest("tr[data-id]");
+          if (!dragId || !row || row.getAttribute("data-id") === dragId) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          var r = row.getBoundingClientRect();
+          var below = e.clientY > r.top + r.height / 2;
+          clearOver();
+          row.classList.toggle("is-over", !below);
+          row.classList.toggle("is-over-below", below);
+        });
+        tbody.addEventListener("dragleave", function (e) {
+          var row = e.target.closest("tr[data-id]");
+          if (row && !row.contains(e.relatedTarget)) row.classList.remove("is-over", "is-over-below");
+        });
+        tbody.addEventListener("drop", function (e) {
+          var row = e.target.closest("tr[data-id]");
+          if (!row) return;
+          e.preventDefault();
+          var below = row.classList.contains("is-over-below");
+          clearOver();
+          placeNextTo(dragId, row.getAttribute("data-id"), below);
+        });
         function act(id, path, body, done) {
           api("/api/admin/jobs/" + encodeURIComponent(id) + path, body || {}).then(function (r2) {
             if (!r2.ok) return apiErr(r2);
@@ -2936,6 +3004,9 @@
             { label: "Edit", action: function () { location.hash = "#jobs/" + j.id; } },
             { label: "Duplicate", action: function () { act(j.id, "/duplicate", {}, function () { toast("Copied as a draft."); }); } },
             { label: "Copy job link", action: function () { copyJobLink(j.url); } },
+            "-",
+            { label: "Move up", action: function () { moveBy(j.id, -1); } },
+            { label: "Move down", action: function () { moveBy(j.id, 1); } },
             "-",
           ];
           if (j.status === "published") {

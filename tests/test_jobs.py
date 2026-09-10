@@ -426,6 +426,50 @@ def test_featured_posts_lead_the_careers_list():
         client.post(f"/api/admin/jobs/{x['id']}/delete", headers=csrf())
 
 
+def test_the_admin_can_put_the_posts_in_any_order():
+    """Reorder from the panel: the admin list and the careers page follow, a
+    post left out of the order keeps its place behind the named ones, and an
+    id that is not a post is ignored rather than failing the save."""
+    a = make({"title": "Order A", "location": "Riyadh, Saudi Arabia"}, status="published")
+    b = make({"title": "Order B", "location": "Riyadh, Saudi Arabia"}, status="published")
+    c = make({"title": "Order C", "location": "Riyadh, Saudi Arabia"}, status="published")
+
+    def admin_ids():
+        return [j["id"] for j in client.get("/api/admin/jobs").json()["jobs"]]
+
+    def public_ids():
+        return [j["id"] for j in client.get("/api/careers/jobs").json()["jobs"]]
+
+    before = admin_ids()
+    assert before.index(a["id"]) < before.index(b["id"]) < before.index(c["id"])
+    others = [i for i in before if i not in (a["id"], b["id"], c["id"])]
+
+    res = client.post("/api/admin/jobs/order", headers=csrf(),
+                      json={"order": [c["id"], "jnotapost", a["id"]] + others})
+    assert res.status_code == 200, res.text
+    after = admin_ids()
+    assert after.index(c["id"]) < after.index(a["id"]), "the named posts take the order given"
+    assert after[-1] == b["id"], "the one left out keeps its place, behind the named ones"
+    assert [j["id"] for j in res.json()["jobs"]] == after, "the reply is the new list"
+    pub = public_ids()
+    assert pub.index(c["id"]) < pub.index(a["id"]) < pub.index(b["id"]), "the careers page follows"
+    # sortOrder is numbered 1..n after a save, and never reaches the public feed
+    orders = [j["sortOrder"] for j in client.get("/api/admin/jobs").json()["jobs"]]
+    assert orders == list(range(1, len(orders) + 1))
+    assert "sortOrder" not in client.get("/api/careers/jobs").json()["jobs"][0]
+    # a featured post still leads in public whatever the admin order says
+    client.post(f"/api/admin/jobs/{b['id']}", headers=csrf(), json={"values": {"featured": True}})
+    assert public_ids()[0] == b["id"]
+    assert admin_ids()[-1] == b["id"], "...but the admin list keeps the admin's order"
+    for x in (a, b, c):
+        client.post(f"/api/admin/jobs/{x['id']}/delete", headers=csrf())
+
+
+def test_reordering_needs_the_csrf_header():
+    res = client.post("/api/admin/jobs/order", json={"order": []})
+    assert res.status_code == 403
+
+
 # ---------------- the featured image ----------------
 
 def _png(color="red", size=(640, 400)) -> bytes:

@@ -563,6 +563,27 @@ def duplicate(job_id: str, by: str) -> dict:
     return create(values, by, "draft")
 
 
+def reorder(order: list[str], by: str) -> list[dict]:
+    """Put the posts in this order. Anything the caller did not mention keeps
+    its place after the ones it did, so a stale screen can never lose a post
+    by omitting it; unknown ids are ignored. This is the admin's order;
+    `public_jobs` still lifts featured posts above it."""
+    from . import adminauth as aa
+
+    _ensure()
+    current = [j["id"] for j in all_jobs()]
+    known = set(current)
+    wanted = [i for i in order if i in known]
+    seen = set(wanted)
+    final = wanted + [i for i in current if i not in seen]
+    with aa._lock:
+        conn = aa._connect()
+        for n, job_id in enumerate(final, start=1):
+            conn.execute("UPDATE job_posts SET sort_order=? WHERE id=?", (n, job_id))
+        conn.commit()
+    return all_jobs()
+
+
 def delete(job_id: str) -> bool:
     from . import adminauth as aa
 
