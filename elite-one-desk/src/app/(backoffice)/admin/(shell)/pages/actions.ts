@@ -384,6 +384,68 @@ export async function moveSection(_prev: ActionState, form: FormData): Promise<A
   });
 }
 
+/**
+ * Applies a whole new order at once — what a drag-and-drop rearrangement
+ * produces. Positions are rewritten from the submitted sequence rather than
+ * swapped pairwise, and ids that are not on this page are ignored, so a stale
+ * screen can reorder what it can see without disturbing anything it cannot.
+ */
+export async function reorderSections(_prev: ActionState, form: FormData): Promise<ActionState> {
+  return runAction("section-reorder", async () => {
+    const session = await guardAction("content.manage", form);
+    const pageId = Number(form.get("pageId"));
+
+    let submitted: number[];
+    try {
+      const parsed = JSON.parse(String(form.get("order") ?? "[]")) as unknown;
+      if (!Array.isArray(parsed)) throw new Error("not an array");
+      submitted = parsed.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    } catch {
+      return fail("That order could not be read. Reload the page and try again.");
+    }
+    if (!submitted.length) return ok();
+
+    const existing = await db
+      .select({ id: pageSections.id })
+      .from(pageSections)
+      .where(eq(pageSections.pageId, pageId));
+    const onThisPage = new Set(existing.map((row) => row.id));
+
+    const ordered = submitted.filter((id) => onThisPage.has(id));
+    // Anything the screen did not know about keeps its place at the end rather
+    // than being silently dropped to position zero.
+    const missing = existing.map((row) => row.id).filter((id) => !ordered.includes(id));
+    const finalOrder = [...ordered, ...missing];
+
+    await db.transaction(async (tx) => {
+      // Two passes: positions are unique-ish per page and a single pass would
+      // collide with the values it has not rewritten yet.
+      for (const [index, id] of finalOrder.entries()) {
+        await tx
+          .update(pageSections)
+          .set({ position: -(index + 1) })
+          .where(and(eq(pageSections.id, id), eq(pageSections.pageId, pageId)));
+      }
+      for (const [index, id] of finalOrder.entries()) {
+        await tx
+          .update(pageSections)
+          .set({ position: index })
+          .where(and(eq(pageSections.id, id), eq(pageSections.pageId, pageId)));
+      }
+    });
+
+    const [page] = await db.select({ slug: pages.slug }).from(pages).where(eq(pages.id, pageId)).limit(1);
+    await logActivity(session, {
+      action: "section.reordered",
+      entityType: "page",
+      entityId: pageId,
+      summary: `Reordered the sections on “${page?.slug ?? pageId}”`,
+    });
+    if (page) refreshPage(page.slug);
+    return ok("Order saved.");
+  });
+}
+
 export async function duplicateSection(_prev: ActionState, form: FormData): Promise<ActionState> {
   return runAction("section-duplicate", async () => {
     const session = await guardAction("content.manage", form);

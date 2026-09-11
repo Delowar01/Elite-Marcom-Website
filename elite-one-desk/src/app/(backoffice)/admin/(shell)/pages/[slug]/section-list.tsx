@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
 import { ConfirmSubmit, InlineAction, SubmitButton } from "@/components/admin/form";
 import { Icon } from "@/components/ui/icon";
@@ -12,6 +12,7 @@ import {
   deleteSection,
   duplicateSection,
   moveSection,
+  reorderSections,
   toggleSection,
 } from "../actions";
 
@@ -50,6 +51,33 @@ export function SectionList({
   canManage: boolean;
 }) {
   const [addState, addAction] = useActionState<ActionState, FormData>(addSection, EMPTY);
+  const [reorderState, reorderAction] = useActionState<ActionState, FormData>(reorderSections, EMPTY);
+
+  // Local order, so a drag lands immediately rather than after a round trip.
+  // The server is the authority: once it answers, the page revalidates and the
+  // prop below replaces this.
+  const [order, setOrder] = useState<SectionRow[]>(sections);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  const submitRef = useRef<HTMLButtonElement>(null);
+  const signature = sections.map((s) => s.id).join(",");
+
+  useEffect(() => {
+    setOrder(sections);
+    // Re-syncs whenever the page sends a different set or a different order.
+  }, [signature, sections]);
+
+  const dropOnto = (target: number) => {
+    if (dragging === null || dragging === target) return;
+    const next = [...order];
+    const [moved] = next.splice(dragging, 1);
+    next.splice(target, 0, moved!);
+    setOrder(next);
+    setDragging(null);
+    setOver(null);
+    // Persist on the next tick, once the hidden input carries the new order.
+    queueMicrotask(() => submitRef.current?.click());
+  };
 
   return (
     <div className="space-y-5">
@@ -57,18 +85,73 @@ export function SectionList({
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--admin-line)] px-4 py-3">
           <h2>Sections</h2>
           <p className="text-[0.74rem] text-muted">
-            {sections.length} section{sections.length === 1 ? "" : "s"} · top to bottom
+            {order.length} section{order.length === 1 ? "" : "s"} · top to bottom
+            {canManage ? " · drag a row, or use the arrows" : null}
           </p>
         </div>
 
-        {sections.length === 0 ? (
+        {reorderState.message && !reorderState.ok ? (
+          <p
+            role="alert"
+            className="border-b border-[var(--admin-line)] px-4 py-2 text-[0.78rem]"
+            style={{ color: "#ffb4ad" }}
+          >
+            {reorderState.message}
+          </p>
+        ) : null}
+
+        {/* Submitted by the drop handler. Keyboard users reorder with the
+            arrow buttons on each row, which post the same way. */}
+        <form action={reorderAction} className="hidden">
+          <input type="hidden" name="_csrf" value={csrf} />
+          <input type="hidden" name="pageId" value={pageId} />
+          <input type="hidden" name="order" value={JSON.stringify(order.map((s) => s.id))} />
+          <button ref={submitRef} type="submit" tabIndex={-1} aria-hidden />
+        </form>
+
+        {order.length === 0 ? (
           <p className="px-4 py-10 text-center text-[0.83rem] text-muted">
             This page has no sections yet. Add one below.
           </p>
         ) : (
           <ul className="divide-y divide-[var(--admin-line)]">
-            {sections.map((section, index) => (
-              <li key={section.id} className="flex flex-wrap items-start gap-3 px-4 py-3.5">
+            {order.map((section, index) => (
+              <li
+                key={section.id}
+                draggable={canManage}
+                onDragStart={(event) => {
+                  setDragging(index);
+                  event.dataTransfer.effectAllowed = "move";
+                  // Firefox will not start a drag without data on the transfer.
+                  event.dataTransfer.setData("text/plain", String(section.id));
+                }}
+                onDragOver={(event) => {
+                  if (dragging === null) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  setOver(index);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  dropOnto(index);
+                }}
+                onDragEnd={() => {
+                  setDragging(null);
+                  setOver(null);
+                }}
+                data-dragging={dragging === index || undefined}
+                data-over={over === index && dragging !== index ? true : undefined}
+                className="flex flex-wrap items-start gap-3 px-4 py-3.5 transition-colors data-[dragging]:opacity-45 data-[over]:bg-[color-mix(in_oklab,var(--color-orange)_12%,transparent)]"
+              >
+                {canManage ? (
+                  <span
+                    aria-hidden
+                    title="Drag to reorder"
+                    className="mt-1.5 shrink-0 cursor-grab select-none text-[0.8rem] leading-none text-muted active:cursor-grabbing"
+                  >
+                    ⠿
+                  </span>
+                ) : null}
                 <span className="mt-1 w-6 shrink-0 text-[0.72rem] tabular-nums text-muted">
                   {String(index + 1).padStart(2, "0")}
                 </span>
@@ -106,7 +189,7 @@ export function SectionList({
                       <IconButton
                         label="Move down"
                         icon="chevronDown"
-                        disabled={index === sections.length - 1}
+                        disabled={index === order.length - 1}
                       />
                     </InlineAction>
                     <InlineAction action={duplicateSection} hidden={{ _csrf: csrf, id: section.id }} className="contents">
