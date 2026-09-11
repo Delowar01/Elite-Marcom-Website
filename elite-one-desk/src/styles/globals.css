@@ -56,8 +56,11 @@
 
   /* --- Space, radius, depth ---------------------------------------------- */
   --spacing-gutter: clamp(1.25rem, 4vw, 4rem);
-  --spacing-section: clamp(4.5rem, 3rem + 6vw, 8.5rem);
-  --spacing-section-tight: clamp(3rem, 2rem + 4vw, 5.5rem);
+  /* Two adjacent sections each apply this, so the figure here is half the gap
+     a reader actually sees. 5.5rem gives ~176px between major sections at
+     1440px — airy without leaving a screen of nothing between them. */
+  --spacing-section: clamp(3.25rem, 2.4rem + 3.6vw, 5.5rem);
+  --spacing-section-tight: clamp(2.5rem, 2rem + 2.2vw, 3.75rem);
 
   --radius-xs: 6px;
   --radius-sm: 10px;
@@ -371,21 +374,33 @@
     overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
   }
 
-  /* Scroll reveal. The class is toggled by components/site/reveal.tsx; the
-     "shown" state is also the state with no JS at all, so content is never
-     trapped invisible. */
+  /* Scroll reveal.
+     The hidden state is scoped to `@media (scripting: enabled)` on purpose. The
+     class starts *visible*, so a visitor with JavaScript turned off — or a
+     print, or a full-page screenshot that never scrolls — gets the finished
+     page rather than a column of blank sections. Only where script can
+     actually run, and therefore actually reveal, does anything start hidden. */
   .reveal {
-    opacity: 0;
-    transform: translate3d(0, 18px, 0);
-    transition:
-      opacity var(--duration-slow) var(--ease-out-expo),
-      transform var(--duration-slow) var(--ease-out-expo);
-    transition-delay: var(--reveal-delay, 0ms);
+    opacity: 1;
+    transform: none;
   }
-  .reveal[data-shown="true"] { opacity: 1; transform: none; }
-  .reveal-left { transform: translate3d(-24px, 0, 0); }
-  [dir="rtl"] .reveal-left { transform: translate3d(24px, 0, 0); }
-  .reveal-scale { transform: scale(0.965); }
+
+  @media (scripting: enabled) {
+    .reveal {
+      opacity: 0;
+      transform: translate3d(0, 18px, 0);
+      transition:
+        opacity var(--duration-slow) var(--ease-out-expo),
+        transform var(--duration-slow) var(--ease-out-expo);
+      transition-delay: var(--reveal-delay, 0ms);
+    }
+    .reveal[data-shown="true"] { opacity: 1; transform: none; }
+    .reveal-left { transform: translate3d(-24px, 0, 0); }
+    [dir="rtl"] .reveal-left { transform: translate3d(24px, 0, 0); }
+    .reveal-scale { transform: scale(0.965); }
+    .reveal-left[data-shown="true"],
+    .reveal-scale[data-shown="true"] { transform: none; }
+  }
 
   .marquee-track {
     display: flex;
@@ -436,6 +451,8 @@
 @media print {
   body { background: #fff; color: #000; }
   .no-print { display: none !important; }
+  /* Whatever had not been scrolled past yet is still part of the document. */
+  .reveal { opacity: 1 !important; transform: none !important; }
 }
 
 /* Hero orbit: the lit section of the route draws itself once, then stops. */

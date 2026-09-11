@@ -23,9 +23,11 @@ const VARIANT_CLASS: Record<string, string> = {
 
 /**
  * Scroll reveal built on IntersectionObserver and two CSS classes rather than a
- * motion library: it is a few hundred bytes, it runs off the compositor, and it
- * fires once. The element is visible in its resting state, so a visitor with no
- * JavaScript — or a crawler — sees the finished page, never an empty one.
+ * motion library: a few hundred bytes, running off the compositor, firing once.
+ *
+ * The hidden state lives inside `@media (scripting: enabled)` in globals.css,
+ * so the element is simply visible wherever script cannot run — no JavaScript,
+ * a print, a reader mode. Nothing here can leave content stranded at opacity 0.
  */
 export function Reveal({
   children,
