@@ -1,0 +1,626 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   ELITE ONE DESK — design system
+   Dark navy ground, orange used sparingly, warm-white islands where a section
+   needs air. Every colour, size, radius and easing below is a token: a
+   component never hard-codes a hex value, so the whole site retunes from here.
+   ========================================================================== */
+
+@theme {
+  /* --- Brand ------------------------------------------------------------- */
+  --color-navy: #151348;          /* brand navy, straight off the logo        */
+  --color-orange: #e56c25;        /* brand orange — accents and CTAs only     */
+  --color-peach: #ffa476;         /* secondary accent, hairlines, hovers      */
+  --color-warm: #f8f7f4;          /* warm white                               */
+
+  /* Ground tones derived from the navy. The page sits darker than the brand
+     colour so the navy itself can be used as a raised surface against it. */
+  --color-ink-900: #07061c;
+  --color-ink-800: #0b0a26;
+  --color-ink-700: #100e33;
+  --color-ink-600: #151348;
+  --color-ink-500: #1d1a58;
+  --color-ink-400: #262268;
+
+  --color-line: color-mix(in oklab, var(--color-warm) 12%, transparent);
+  --color-line-strong: color-mix(in oklab, var(--color-warm) 22%, transparent);
+
+  /* --- Type -------------------------------------------------------------- */
+  --font-display: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-arabic: "IBM Plex Sans Arabic", "Inter", system-ui, sans-serif;
+
+  /* Restrained on purpose: the brief rules out headings that swallow a screen. */
+  --text-display: clamp(2.35rem, 1.5rem + 3.1vw, 4rem);
+  --text-display--line-height: 1.04;
+  --text-display--letter-spacing: -0.028em;
+  --text-h1: clamp(2rem, 1.4rem + 2.2vw, 3.1rem);
+  --text-h1--line-height: 1.1;
+  --text-h1--letter-spacing: -0.024em;
+  --text-h2: clamp(1.6rem, 1.25rem + 1.4vw, 2.35rem);
+  --text-h2--line-height: 1.15;
+  --text-h2--letter-spacing: -0.02em;
+  --text-h3: clamp(1.15rem, 1.06rem + 0.42vw, 1.45rem);
+  --text-h3--line-height: 1.28;
+  --text-h3--letter-spacing: -0.012em;
+  --text-lead: clamp(1.02rem, 0.97rem + 0.25vw, 1.18rem);
+  --text-lead--line-height: 1.62;
+  --text-body: 1rem;
+  --text-body--line-height: 1.68;
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.6;
+  --text-eyebrow: 0.75rem;
+  --text-eyebrow--line-height: 1;
+  --text-eyebrow--letter-spacing: 0.16em;
+
+  /* --- Space, radius, depth ---------------------------------------------- */
+  --spacing-gutter: clamp(1.25rem, 4vw, 4rem);
+  --spacing-section: clamp(4.5rem, 3rem + 6vw, 8.5rem);
+  --spacing-section-tight: clamp(3rem, 2rem + 4vw, 5.5rem);
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 32px;
+
+  --shadow-soft: 0 10px 40px -12px rgb(3 2 14 / 0.55);
+  --shadow-lift: 0 28px 70px -28px rgb(3 2 14 / 0.75);
+  --shadow-ring: 0 0 0 1px color-mix(in oklab, var(--color-warm) 10%, transparent);
+
+  /* --- Motion ------------------------------------------------------------ */
+  --ease-out-soft: cubic-bezier(0.22, 0.61, 0.24, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-fast: 180ms;
+  --duration-base: 380ms;
+  --duration-slow: 760ms;
+
+  --container-site: 1240px;
+  --container-wide: 1440px;
+}
+
+/* --------------------------------------------------------------------------
+   Self-hosted faces. Only latin + arabic subsets ship; the browser fetches a
+   file only when a glyph in its range is actually used.
+   -------------------------------------------------------------------------- */
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/inter-400-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/inter-400-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/inter-500-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/inter-500-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/inter-600-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/inter-600-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/inter-700-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/inter-700-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/jakarta-600-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/jakarta-600-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/jakarta-700-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/jakarta-700-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 800; font-display: swap; src: url("/fonts/jakarta-800-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 800; font-display: swap; src: url("/fonts/jakarta-800-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/plex-ar-400-arabic.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/plex-ar-400-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/plex-ar-500-arabic.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/plex-ar-500-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/plex-ar-600-arabic.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/plex-ar-600-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/plex-ar-700-arabic.woff2") format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC; }
+@font-face { font-family: "IBM Plex Sans Arabic"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/plex-ar-700-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+/* --------------------------------------------------------------------------
+   Base
+   -------------------------------------------------------------------------- */
+@layer base {
+  :root {
+    --surface: color-mix(in oklab, var(--color-ink-600) 62%, transparent);
+    --surface-raised: color-mix(in oklab, var(--color-ink-500) 78%, transparent);
+    --text-strong: var(--color-warm);
+    --text-body-color: color-mix(in oklab, var(--color-warm) 74%, transparent);
+    --text-muted: color-mix(in oklab, var(--color-warm) 55%, transparent);
+    --border-color: var(--color-line);
+    color-scheme: dark;
+  }
+
+  /* A warm-white island. Any component inside picks up the inverted tokens
+     without knowing which ground it is standing on. */
+  [data-tone="light"] {
+    --surface: color-mix(in oklab, var(--color-navy) 4%, white);
+    --surface-raised: #ffffff;
+    --text-strong: #12102f;
+    --text-body-color: color-mix(in oklab, #12102f 76%, transparent);
+    --text-muted: color-mix(in oklab, #12102f 58%, transparent);
+    --border-color: color-mix(in oklab, var(--color-navy) 14%, transparent);
+    color-scheme: light;
+    background-color: var(--color-warm);
+    color: var(--text-strong);
+  }
+
+  * { min-width: 0; }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    /* Header height + a little air, so an in-page anchor is not hidden. */
+    scroll-padding-top: 6.5rem;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-ink-800);
+    color: var(--text-body-color);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: clip;
+  }
+
+  [dir="rtl"] body { font-family: var(--font-arabic); }
+  [dir="rtl"] { letter-spacing: 0 !important; }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    color: var(--text-strong);
+    font-weight: 700;
+    text-wrap: balance;
+    margin: 0;
+  }
+  [dir="rtl"] h1, [dir="rtl"] h2, [dir="rtl"] h3, [dir="rtl"] h4 {
+    font-family: var(--font-arabic);
+  }
+
+  p { margin: 0; text-wrap: pretty; }
+
+  a { color: inherit; text-decoration: none; }
+
+  img, svg, video { display: block; max-width: 100%; height: auto; }
+
+  ::selection { background: color-mix(in oklab, var(--color-orange) 60%, transparent); color: #fff; }
+
+  :focus-visible {
+    outline: 2px solid var(--color-peach);
+    outline-offset: 3px;
+    border-radius: var(--radius-xs);
+  }
+
+  /* Firefox keeps a dotted inner ring on buttons; the ring above is enough. */
+  ::-moz-focus-inner { border: 0; }
+
+  input, textarea, select, button { font: inherit; color: inherit; }
+
+  [hidden] { display: none !important; }
+}
+
+/* --------------------------------------------------------------------------
+   Components
+   -------------------------------------------------------------------------- */
+@layer components {
+  .shell {
+    width: 100%;
+    max-width: var(--container-site);
+    margin-inline: auto;
+    padding-inline: var(--spacing-gutter);
+  }
+  .shell-wide { max-width: var(--container-wide); }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6em;
+    font-family: var(--font-sans);
+    font-size: var(--text-eyebrow);
+    letter-spacing: var(--text-eyebrow--letter-spacing);
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--color-peach);
+  }
+  [dir="rtl"] .eyebrow { text-transform: none; }
+  .eyebrow::before {
+    content: "";
+    inline-size: 1.75rem;
+    block-size: 1px;
+    background: currentColor;
+    opacity: 0.55;
+  }
+
+  .lede {
+    font-size: var(--text-lead);
+    line-height: var(--text-lead--line-height);
+    color: var(--text-muted);
+  }
+
+  /* --- Buttons --------------------------------------------------------- */
+  .btn {
+    --btn-bg: transparent;
+    --btn-fg: var(--text-strong);
+    --btn-border: var(--border-color);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    padding-block: 0.78rem;
+    padding-inline: 1.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--btn-border);
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-family: var(--font-display);
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    line-height: 1;
+    cursor: pointer;
+    isolation: isolate;
+    transition:
+      transform var(--duration-fast) var(--ease-out-soft),
+      background-color var(--duration-fast) var(--ease-out-soft),
+      border-color var(--duration-fast) var(--ease-out-soft),
+      color var(--duration-fast) var(--ease-out-soft),
+      box-shadow var(--duration-base) var(--ease-out-soft);
+  }
+  [dir="rtl"] .btn { font-family: var(--font-arabic); }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn[disabled], .btn[aria-disabled="true"] { opacity: 0.55; pointer-events: none; }
+
+  .btn-primary {
+    --btn-bg: var(--color-orange);
+    --btn-fg: #fff;
+    --btn-border: transparent;
+    box-shadow: 0 12px 30px -14px color-mix(in oklab, var(--color-orange) 85%, transparent);
+  }
+  .btn-primary:hover {
+    --btn-bg: color-mix(in oklab, var(--color-orange) 88%, white);
+    box-shadow: 0 18px 40px -16px color-mix(in oklab, var(--color-orange) 90%, transparent);
+  }
+
+  .btn-ghost {
+    --btn-border: var(--border-color);
+    backdrop-filter: blur(8px);
+  }
+  .btn-ghost:hover {
+    --btn-border: color-mix(in oklab, var(--color-peach) 55%, transparent);
+    --btn-bg: color-mix(in oklab, var(--color-warm) 6%, transparent);
+  }
+  [data-tone="light"] .btn-ghost:hover {
+    --btn-bg: color-mix(in oklab, var(--color-navy) 5%, transparent);
+  }
+
+  .btn-sm { padding-block: 0.58rem; padding-inline: 1.05rem; font-size: 0.85rem; }
+
+  /* Text link that draws its own underline on hover, from the leading edge. */
+  .link-underline {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 600;
+    color: var(--text-strong);
+  }
+  .link-underline::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: 0;
+    inset-block-end: -3px;
+    inline-size: 100%;
+    block-size: 1px;
+    background: var(--color-orange);
+    transform: scaleX(0);
+    transform-origin: inline-start;
+    transition: transform var(--duration-base) var(--ease-out-expo);
+  }
+  .link-underline:hover::after, .link-underline:focus-visible::after { transform: scaleX(1); }
+
+  /* --- Surfaces -------------------------------------------------------- */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    backdrop-filter: blur(14px);
+  }
+
+  .hairline { block-size: 1px; background: var(--border-color); border: 0; }
+
+  /* A quiet, precise grid — the "technical motion" note in the brief, kept as
+     texture rather than decoration. */
+  .grid-texture {
+    background-image:
+      linear-gradient(to right, color-mix(in oklab, var(--color-warm) 4%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklab, var(--color-warm) 4%, transparent) 1px, transparent 1px);
+    background-size: 72px 72px;
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 20%, transparent 78%);
+  }
+
+  /* --- Rich text from the CMS ------------------------------------------ */
+  .prose-eod { color: var(--text-body-color); }
+  .prose-eod > * + * { margin-block-start: 1.05em; }
+  .prose-eod h3 { font-size: var(--text-h3); margin-block-start: 1.9em; }
+  .prose-eod h4 { font-size: 1.05rem; margin-block-start: 1.6em; }
+  .prose-eod ul, .prose-eod ol { padding-inline-start: 1.2em; margin-block: 0.5em; }
+  .prose-eod li + li { margin-block-start: 0.4em; }
+  .prose-eod li::marker { color: var(--color-orange); }
+  .prose-eod a { color: var(--color-peach); text-decoration: underline; text-underline-offset: 3px; }
+  .prose-eod strong { color: var(--text-strong); font-weight: 600; }
+}
+
+/* --------------------------------------------------------------------------
+   Utilities
+   -------------------------------------------------------------------------- */
+@layer utilities {
+  .text-strong { color: var(--text-strong); }
+  .text-body { color: var(--text-body-color); }
+  .text-muted { color: var(--text-muted); }
+  .border-line { border-color: var(--border-color); }
+  .bg-surface { background-color: var(--surface); }
+  .bg-surface-raised { background-color: var(--surface-raised); }
+  .font-display { font-family: var(--font-display); }
+  [dir="rtl"] .font-display { font-family: var(--font-arabic); }
+
+  .section { padding-block: var(--spacing-section); }
+  .section-tight { padding-block: var(--spacing-section-tight); }
+
+  /* Flips a decorative glyph (arrows, chevrons) with the writing direction. */
+  .flip-rtl { transition: transform var(--duration-fast) var(--ease-out-soft); }
+  [dir="rtl"] .flip-rtl { transform: scaleX(-1); }
+
+  .sr-only {
+    position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+
+  /* Scroll reveal. The class is toggled by components/site/reveal.tsx; the
+     "shown" state is also the state with no JS at all, so content is never
+     trapped invisible. */
+  .reveal {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+    transition:
+      opacity var(--duration-slow) var(--ease-out-expo),
+      transform var(--duration-slow) var(--ease-out-expo);
+    transition-delay: var(--reveal-delay, 0ms);
+  }
+  .reveal[data-shown="true"] { opacity: 1; transform: none; }
+  .reveal-left { transform: translate3d(-24px, 0, 0); }
+  [dir="rtl"] .reveal-left { transform: translate3d(24px, 0, 0); }
+  .reveal-scale { transform: scale(0.965); }
+
+  .marquee-track {
+    display: flex;
+    inline-size: max-content;
+    animation: eod-marquee var(--marquee-duration, 44s) linear infinite;
+  }
+  .marquee:hover .marquee-track,
+  .marquee:focus-within .marquee-track { animation-play-state: paused; }
+  [dir="rtl"] .marquee-track { animation-direction: reverse; }
+
+  @keyframes eod-marquee {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-50%, 0, 0); }
+  }
+
+  @keyframes eod-orbit {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes eod-dash {
+    to { stroke-dashoffset: 0; }
+  }
+
+  @keyframes eod-pulse-ring {
+    0%   { transform: scale(0.92); opacity: 0.65; }
+    70%  { transform: scale(1.22); opacity: 0; }
+    100% { transform: scale(1.22); opacity: 0; }
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reduced motion — the brief is explicit, and so is the WCAG guidance:
+   nothing animates itself, and anything that moved on scroll is simply there.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .reveal { opacity: 1 !important; transform: none !important; }
+}
+
+/* Printing a service page should give a client something readable. */
+@media print {
+  body { background: #fff; color: #000; }
+  .no-print { display: none !important; }
+}
+
+/* Hero orbit: the lit section of the route draws itself once, then stops. */
+.eod-arc {
+  animation: eod-arc-draw 2.4s var(--ease-out-expo) both;
+}
+@keyframes eod-arc-draw {
+  from { stroke-dashoffset: 0.42; opacity: 0; }
+  to   { stroke-dashoffset: -0.18; opacity: 1; }
+}
+
+/* Hero entrance. One keyframe pair, reused with delays, so the sequence is a
+   single declaration per element rather than a motion library on the critical
+   path. */
+@keyframes eod-fade-up {
+  from { opacity: 0; transform: translate3d(0, 20px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes eod-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* One Desk diagram: lines draw themselves when the section is reached, then
+   one lit trace repeats along the same route. */
+.converge-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.reveal[data-shown="true"] .converge-path {
+  animation: eod-dash 1.1s var(--ease-out-expo) both;
+  animation-delay: var(--converge-delay, 0ms);
+}
+.converge-pulse {
+  stroke-dasharray: 0.06 0.94;
+  stroke-dashoffset: 1;
+  opacity: 0;
+}
+.reveal[data-shown="true"] .converge-pulse {
+  animation: eod-converge-pulse 3.6s var(--ease-in-out-soft) 1.1s infinite;
+}
+@keyframes eod-converge-pulse {
+  0%        { stroke-dashoffset: 1; opacity: 0; }
+  12%       { opacity: 0.9; }
+  70%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+/* ==========================================================================
+   ADMIN
+   Same tokens as the site so the two never drift, but a denser scale: an
+   operator reads tables and forms here, not marketing copy. Everything is
+   scoped under `.admin` so a component can be shared without inheriting the
+   marketing type sizes.
+   ========================================================================== */
+@layer components {
+  .admin {
+    --admin-bg: #0a0921;
+    --admin-panel: #12102f;
+    --admin-panel-2: #171543;
+    --admin-line: color-mix(in oklab, var(--color-warm) 11%, transparent);
+    --admin-line-strong: color-mix(in oklab, var(--color-warm) 20%, transparent);
+    --text-strong: var(--color-warm);
+    --text-body-color: color-mix(in oklab, var(--color-warm) 76%, transparent);
+    --text-muted: color-mix(in oklab, var(--color-warm) 52%, transparent);
+    --border-color: var(--admin-line);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    background: var(--admin-bg);
+    color: var(--text-body-color);
+  }
+
+  .admin h1 { font-size: 1.35rem; letter-spacing: -0.018em; }
+  .admin h2 { font-size: 1.05rem; letter-spacing: -0.012em; }
+  .admin h3 { font-size: 0.95rem; letter-spacing: -0.006em; }
+
+  .admin-card {
+    background: var(--admin-panel);
+    border: 1px solid var(--admin-line);
+    border-radius: var(--radius-md);
+  }
+
+  .admin-label {
+    display: block;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-block-end: 0.35rem;
+  }
+
+  .admin-input,
+  .admin-select,
+  .admin-textarea {
+    inline-size: 100%;
+    background: color-mix(in oklab, #05041a 60%, transparent);
+    border: 1px solid var(--admin-line);
+    border-radius: var(--radius-sm);
+    padding: 0.55rem 0.7rem;
+    font-size: 0.875rem;
+    color: var(--text-strong);
+    transition: border-color var(--duration-fast) var(--ease-out-soft);
+  }
+  .admin-input:focus, .admin-select:focus, .admin-textarea:focus {
+    outline: none;
+    border-color: color-mix(in oklab, var(--color-peach) 65%, transparent);
+  }
+  .admin-input::placeholder, .admin-textarea::placeholder { color: var(--text-muted); }
+  .admin-textarea { resize: vertical; min-block-size: 4.5rem; line-height: 1.6; }
+  .admin-input[aria-invalid="true"] { border-color: #ef5350; }
+
+  .admin-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.9rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--admin-line);
+    background: transparent;
+    color: var(--text-strong);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background-color var(--duration-fast) var(--ease-out-soft),
+      border-color var(--duration-fast) var(--ease-out-soft),
+      opacity var(--duration-fast) var(--ease-out-soft);
+  }
+  .admin-btn:hover { background: color-mix(in oklab, var(--color-warm) 7%, transparent); }
+  .admin-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .admin-btn-primary {
+    background: var(--color-orange);
+    border-color: transparent;
+    color: #fff;
+  }
+  .admin-btn-primary:hover { background: color-mix(in oklab, var(--color-orange) 88%, white); }
+  .admin-btn-danger { border-color: color-mix(in oklab, #ef5350 55%, transparent); color: #ff9a95; }
+  .admin-btn-danger:hover { background: color-mix(in oklab, #ef5350 14%, transparent); }
+  .admin-btn-sm { padding: 0.34rem 0.6rem; font-size: 0.76rem; }
+
+  .admin-table { inline-size: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  .admin-table th {
+    text-align: start;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-muted);
+    padding: 0.65rem 0.85rem;
+    border-block-end: 1px solid var(--admin-line);
+    white-space: nowrap;
+  }
+  .admin-table td {
+    padding: 0.7rem 0.85rem;
+    border-block-end: 1px solid var(--admin-line);
+    vertical-align: middle;
+  }
+  .admin-table tbody tr:hover { background: color-mix(in oklab, var(--color-warm) 3.5%, transparent); }
+
+  .admin-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    padding: 0.16rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+
+  .admin-nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.48rem 0.7rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.83rem;
+    color: var(--text-body-color);
+    transition: background-color var(--duration-fast), color var(--duration-fast);
+  }
+  .admin-nav-link:hover { background: color-mix(in oklab, var(--color-warm) 6%, transparent); color: var(--text-strong); }
+  .admin-nav-link[aria-current="page"] {
+    background: color-mix(in oklab, var(--color-orange) 16%, transparent);
+    color: var(--color-warm);
+    font-weight: 600;
+  }
+}

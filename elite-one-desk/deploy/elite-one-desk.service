@@ -1,0 +1,43 @@
+# systemd unit — /etc/systemd/system/elite-one-desk.service
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now elite-one-desk
+#   sudo journalctl -u elite-one-desk -f
+#
+# Use this or PM2, not both.
+
+[Unit]
+Description=Elite One Desk (Next.js)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=eliteonedesk
+Group=eliteonedesk
+WorkingDirectory=/var/www/elite-one-desk/app
+EnvironmentFile=/var/www/elite-one-desk/app/.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+# `output: standalone` puts a self-contained server here at build time.
+ExecStart=/usr/bin/node .next/standalone/server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Hardening. The uploads directory is the only path outside the app the
+# process ever writes to.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/elite-one-desk/uploads /var/www/elite-one-desk/app/.next/cache
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
