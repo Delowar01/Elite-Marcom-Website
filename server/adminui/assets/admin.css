@@ -1950,6 +1950,33 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 }
 .jobs-chips button[aria-pressed="true"] { background: var(--orange); border-color: var(--orange); color: #fff; }
 .jobs-chips button b { font-weight: 800; opacity: 0.8; margin-left: 4px; }
+/* ---- rental bulk import ---- */
+.bulk-steps {
+  display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0 0 18px; padding: 0;
+}
+.bulk-steps li {
+  display: flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 999px;
+  border: 1px solid var(--adm-line); background: var(--adm-inset); font-size: 0.8rem;
+  color: var(--text-muted); white-space: nowrap;
+}
+.bulk-steps li span {
+  display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--adm-line); color: var(--text-soft); font-size: 0.72rem; font-weight: 700;
+}
+.bulk-steps li.is-on { border-color: var(--orange); color: var(--text); }
+.bulk-steps li.is-on span { background: var(--orange); color: #fff; }
+.bulk-steps li.is-done span { background: var(--ok, #2e7d5b); color: #fff; }
+.bulk-stage { margin-top: 22px; }
+.bulk-stage:first-of-type { margin-top: 0; }
+.bulk-stage h3 { margin: 0 0 8px; font-size: 1rem; }
+.bulk-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.bulk-check input { width: auto; }
+.bulk-table td { vertical-align: top; }
+.bulk-note { font-size: 0.74rem; margin-top: 4px; max-width: 46ch; }
+@media (max-width: 720px) {
+  .bulk-steps li { flex: 1 1 auto; justify-content: center; }
+}
+
 /* Reordering the list: a grip on each row, a drop line above or below the row
    the drag is over — the same cues as the Sections list. */
 .job-grip, .job-grip-head { width: 22px; padding-right: 0 !important; }

@@ -2457,6 +2457,7 @@
              every other panel in the app */
           '<div class="admin-panel"><div class="panel-head"><h2>Items (' +
           (d.products || []).length + ')</h2>' +
+          '<button class="btn btn--ghost btn--small" id="rent-bulk">Bulk Import</button> ' +
           '<button class="btn btn--primary btn--small" id="rent-new">Add new item</button></div>' +
           '<div class="table-scroll"><table class="admin-table"><thead>' +
           "<tr><th></th><th>Name</th><th>Category</th><th>Stock KSA</th><th>Stock UAE</th><th>Featured</th><th></th></tr></thead><tbody>" +
@@ -2495,7 +2496,76 @@
           '<div><label for="rf-uae">Stock — UAE</label><input id="rf-uae" type="number" min="0" max="100000" value="0"></div>' +
           '<div class="full admin-actions"><button class="btn btn--primary btn--small" type="submit">Save item</button>' +
           '<button class="btn btn--ghost btn--small" type="button" id="rent-cancel">Cancel</button>' +
-          '<span class="admin-inline-note">Changes appear on the public Rental page immediately.</span></div></form></div>';
+          '<span class="admin-inline-note">Changes appear on the public Rental page immediately.</span></div></form></div>' +
+          /* Bulk import — five steps, one panel. Nothing here touches the
+             single-item form above: it posts to its own endpoints and the
+             server turns every row into the same item that form saves. */
+          '<div class="admin-panel bulk" id="rent-bulk-panel" hidden>' +
+          '<div class="panel-head"><h2>Bulk import</h2>' +
+          '<button class="btn btn--ghost btn--small" type="button" id="bulk-close">Close</button></div>' +
+          '<ol class="bulk-steps" id="bulk-steps">' +
+          ['Download template', 'Upload file', 'Validate', 'Import', 'Results']
+            .map(function (label, i) {
+              return '<li data-step="' + (i + 1) + '"><span>' + (i + 1) + '</span>' + label + '</li>';
+            }).join("") + "</ol>" +
+
+          '<section class="bulk-stage" data-stage="1">' +
+          '<h3>Step 1 — Download the template</h3>' +
+          '<p class="admin-inline-note">The template is built from the rental item fields as they are today, ' +
+          'and the Instructions sheet explains every column, the categories that exist and the image rules.</p>' +
+          '<div class="admin-actions">' +
+          '<button class="btn btn--primary btn--small" type="button" data-tpl="xlsx">Download Excel template</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" data-tpl="csv">Download CSV template</button>' +
+          "</div></section>" +
+
+          '<section class="bulk-stage" data-stage="2">' +
+          '<h3>Step 2 — Upload your file</h3>' +
+          '<div class="admin-form">' +
+          '<div><label for="bulk-sheet">Spreadsheet (.xlsx or .csv)</label>' +
+          '<input id="bulk-sheet" type="file" accept=".xlsx,.csv,text/csv,' +
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>' +
+          '<div><label for="bulk-zip">Images ZIP (optional)</label>' +
+          '<input id="bulk-zip" type="file" accept=".zip,application/zip">' +
+          '<span class="field-help">Only needed if your image columns hold file names rather than links.</span></div>' +
+          '<div><label for="bulk-dup">If an item already exists</label>' +
+          '<select id="bulk-dup"><option value="skip">Skip it (recommended)</option>' +
+          '<option value="update">Update it from the sheet</option></select></div>' +
+          '<div><label for="bulk-img">Existing images, when updating</label>' +
+          '<select id="bulk-img"><option value="append">Keep existing and add new</option>' +
+          '<option value="replace">Replace with the ones in the sheet</option></select></div>' +
+          '<div class="full"><label class="bulk-check"><input type="checkbox" id="bulk-cats"> ' +
+          'Create categories that do not exist yet</label>' +
+          '<span class="field-help">Off by default: a typo in a category should stop a row, not invent a category.</span></div>' +
+          '<div class="full admin-actions">' +
+          '<button class="btn btn--primary btn--small" type="button" id="bulk-validate">Validate file</button>' +
+          '<span class="admin-inline-note" id="bulk-status"></span></div></div></section>' +
+
+          '<section class="bulk-stage" data-stage="3" hidden id="bulk-preview-stage">' +
+          '<h3>Step 3 — Check the preview</h3>' +
+          '<div class="stat-row" id="bulk-summary"></div>' +
+          '<div class="table-scroll"><table class="admin-table bulk-table"><thead><tr>' +
+          "<th>Row</th><th>Id</th><th>Name</th><th>Category</th><th>Images</th><th>Result</th>" +
+          '</tr></thead><tbody id="bulk-rows"></tbody></table></div>' +
+          '<div class="admin-actions" style="margin-top:12px">' +
+          '<button class="btn btn--primary btn--small" type="button" id="bulk-run">Import items</button>' +
+          '<button class="btn btn--ghost btn--small" type="button" id="bulk-back">Choose another file</button>' +
+          '<span class="admin-inline-note" id="bulk-run-note"></span></div></section>' +
+
+          '<section class="bulk-stage" data-stage="4" hidden id="bulk-progress-stage">' +
+          '<h3>Step 4 — Importing</h3>' +
+          '<p class="admin-inline-note" id="bulk-progress-text">Starting…</p>' +
+          '<div class="up-bar"><span id="bulk-progress-bar" style="width:0%"></span></div></section>' +
+
+          '<section class="bulk-stage" data-stage="5" hidden id="bulk-result-stage">' +
+          '<h3>Bulk import complete</h3>' +
+          '<div class="stat-row" id="bulk-result"></div>' +
+          '<div class="admin-actions">' +
+          '<button class="btn btn--ghost btn--small" type="button" id="bulk-errors" hidden>Download error report</button>' +
+          '<button class="btn btn--primary btn--small" type="button" id="bulk-done">Back to the list</button>' +
+          "</div></section>" +
+          '<section class="bulk-stage"><h3>Recent imports</h3>' +
+          '<div id="bulk-history" class="admin-inline-note">Loading…</div></section>' +
+          "</div>";
 
         var byId = {};
         (d.products || []).forEach(function (p) { byId[p.id] = p; });
@@ -2670,6 +2740,207 @@
             r2.ok ? (toast("Item saved — live on the site."), views.rentals()) : apiErr(r2);
           });
         });
+
+        /* ---------------- bulk import ---------------- */
+        var bulk = { token: "", poll: 0, busy: false };
+        var bulkPanel = document.getElementById("rent-bulk-panel");
+
+        function bulkStep(n) {
+          document.querySelectorAll("#bulk-steps li").forEach(function (li) {
+            var step = +li.getAttribute("data-step");
+            li.classList.toggle("is-on", step === n);
+            li.classList.toggle("is-done", step < n);
+          });
+        }
+        function stage(id, show) {
+          var el = document.getElementById(id);
+          if (el) el.hidden = !show;
+        }
+        function loadHistory() {
+          api("/api/admin/rentals/import/history").then(function (r2) {
+            var box = document.getElementById("bulk-history");
+            if (!box) return;
+            if (!r2.ok || !(r2.data.imports || []).length) {
+              box.textContent = "No imports yet.";
+              return;
+            }
+            box.innerHTML = '<div class="table-scroll"><table class="admin-table"><thead><tr>' +
+              "<th>When</th><th>By</th><th>File</th><th>Rows</th><th>Created</th><th>Updated</th>" +
+              "<th>Skipped</th><th>Failed</th><th></th></tr></thead><tbody>" +
+              r2.data.imports.map(function (h) {
+                return "<tr><td>" + esc(when(h.ts)) + '</td><td class="muted">' + esc(h.user_email) +
+                  '</td><td class="muted">' + esc(h.filename) + "</td><td>" + esc(h.total) +
+                  "</td><td>" + esc(h.created) + "</td><td>" + esc(h.updated) + "</td><td>" +
+                  esc(h.skipped) + "</td><td>" + (h.failed
+                    ? '<b class="status-pill status-pill--expired">' + esc(h.failed) + "</b>"
+                    : '<span class="muted">0</span>') + "</td>" +
+                  '<td class="cell-actions">' + (h.failed
+                    ? '<button class="btn btn--ghost btn--small" data-hist-err="' + esc(h.id) +
+                      '">Errors</button>' : "") + "</td></tr>";
+              }).join("") + "</tbody></table></div>";
+            box.querySelectorAll("[data-hist-err]").forEach(function (b) {
+              b.addEventListener("click", function () {
+                window.open("/api/admin/rentals/import/errors?entry=" +
+                            encodeURIComponent(b.getAttribute("data-hist-err")), "_blank");
+              });
+            });
+          });
+        }
+        document.getElementById("rent-bulk").addEventListener("click", function () {
+          document.getElementById("rent-form-panel").hidden = true;
+          bulkPanel.hidden = false;
+          bulkStep(1);
+          loadHistory();
+          bulkPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        document.getElementById("bulk-close").addEventListener("click", function () {
+          bulkPanel.hidden = true;
+          if (bulk.poll) { clearInterval(bulk.poll); bulk.poll = 0; }
+        });
+        document.getElementById("bulk-done").addEventListener("click", function () {
+          views.rentals();
+        });
+        bulkPanel.querySelectorAll("[data-tpl]").forEach(function (b) {
+          b.addEventListener("click", function () {
+            window.open("/api/admin/rentals/import/template?format=" +
+                        b.getAttribute("data-tpl"), "_blank");
+            bulkStep(2);
+          });
+        });
+        document.getElementById("bulk-back").addEventListener("click", function () {
+          stage("bulk-preview-stage", false);
+          bulk.token = "";
+          bulkStep(2);
+        });
+
+        document.getElementById("bulk-validate").addEventListener("click", function () {
+          var btn = this;
+          var sheet = document.getElementById("bulk-sheet").files[0];
+          var zip = document.getElementById("bulk-zip").files[0];
+          var note = document.getElementById("bulk-status");
+          if (!sheet) { note.textContent = "Choose a spreadsheet first."; return; }
+          if (bulk.busy) return;
+          bulk.busy = true;
+          btn.disabled = true;
+          note.textContent = "Reading the file and checking every row…";
+          var fd = new FormData();
+          fd.append("file", sheet);
+          if (zip) fd.append("images", zip);
+          fd.append("onDuplicate", document.getElementById("bulk-dup").value);
+          fd.append("imageMode", document.getElementById("bulk-img").value);
+          fd.append("createCategories", document.getElementById("bulk-cats").checked ? "yes" : "no");
+          apiUpload("/api/admin/rentals/import/validate", fd).then(function (r2) {
+            bulk.busy = false;
+            btn.disabled = false;
+            if (!r2.ok) { note.textContent = ""; return apiErr(r2); }
+            note.textContent = "";
+            bulk.token = r2.data.token;
+            renderPreview(r2.data);
+          }).catch(function () {
+            bulk.busy = false; btn.disabled = false;
+            note.textContent = "That upload could not be read.";
+          });
+        });
+
+        function renderPreview(d) {
+          var s2 = d.summary || {};
+          document.getElementById("bulk-summary").innerHTML =
+            [["Rows", s2.total], ["New items", s2.create], ["To update", s2.update],
+             ["Duplicates", s2.duplicates], ["Warnings", s2.warnings],
+             ["Errors", s2.errors], ["Images", s2.images]].map(function (p) {
+              return '<div class="stat-card"><b>' + esc(p[1] || 0) + "</b><span>" + p[0] + "</span></div>";
+            }).join("");
+          document.getElementById("bulk-rows").innerHTML = (d.rows || []).map(function (r2) {
+            var verdict, cls;
+            if (r2.action === "error") {
+              cls = "status-pill--expired";
+              verdict = r2.errors.map(function (e) {
+                return "Error: " + (e.field ? e.field + " — " : "") + e.message;
+              }).join(" · ");
+            } else if (r2.action === "skip") {
+              cls = "status-pill--draft"; verdict = "Skipped — already exists";
+            } else {
+              cls = "status-pill--published";
+              verdict = r2.action === "update" ? "Will update" : "Valid";
+            }
+            var extra = (r2.warnings || []).map(function (w) {
+              return "Warning: " + (w.field ? w.field + " — " : "") + w.message;
+            }).concat(r2.notes || []).join(" · ");
+            return '<tr><td class="muted">' + esc(r2.row) + "</td><td>" + esc(r2.id) +
+              "</td><td>" + esc(r2.name) + '</td><td class="muted">' + esc(r2.category) +
+              "</td><td>" + esc(r2.images) + "</td><td>" +
+              '<span class="status-pill ' + cls + '">' + esc(verdict) + "</span>" +
+              (extra ? '<div class="muted bulk-note">' + esc(extra) + "</div>" : "") +
+              "</td></tr>";
+          }).join("") || '<tr><td colspan="6">' +
+            emptyState("Nothing to import", "That sheet has no data rows.") + "</td></tr>";
+          var runnable = (s2.create || 0) + (s2.update || 0);
+          var run = document.getElementById("bulk-run");
+          run.disabled = !runnable;
+          document.getElementById("bulk-run-note").textContent = runnable
+            ? runnable + " item" + (runnable === 1 ? "" : "s") + " will be written. Nothing has changed yet."
+            : "No row can be imported yet — fix the errors above and upload again.";
+          stage("bulk-preview-stage", true);
+          stage("bulk-result-stage", false);
+          bulkStep(3);
+          document.getElementById("bulk-preview-stage").scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+
+        document.getElementById("bulk-run").addEventListener("click", function () {
+          var btn = this;
+          if (!bulk.token || bulk.busy) return;
+          bulk.busy = true;
+          btn.disabled = true;            /* a second click cannot start it twice */
+          api("/api/admin/rentals/import/run", { token: bulk.token }).then(function (r2) {
+            if (!r2.ok) { bulk.busy = false; btn.disabled = false; return apiErr(r2); }
+            stage("bulk-progress-stage", true);
+            bulkStep(4);
+            document.getElementById("bulk-progress-stage").scrollIntoView({ behavior: "smooth", block: "start" });
+            bulk.poll = setInterval(pollJob, 900);
+            pollJob();
+          });
+        });
+
+        function pollJob() {
+          api("/api/admin/rentals/import/status?token=" + encodeURIComponent(bulk.token))
+            .then(function (r2) {
+              if (!r2.ok) { clearInterval(bulk.poll); bulk.poll = 0; bulk.busy = false; return; }
+              var j = r2.data.job || {};
+              var total = j.total || 0;
+              var done = j.done || 0;
+              document.getElementById("bulk-progress-text").textContent =
+                total ? "Importing " + done + " of " + total + " items…" : "Working…";
+              document.getElementById("bulk-progress-bar").style.width =
+                (total ? Math.round((done / total) * 100) : 0) + "%";
+              if (j.state === "done") {
+                clearInterval(bulk.poll); bulk.poll = 0; bulk.busy = false;
+                showResult(j);
+              }
+            });
+        }
+
+        function showResult(j) {
+          var c = j.counts || {};
+          stage("bulk-progress-stage", false);
+          document.getElementById("bulk-result").innerHTML =
+            [["Total rows", (c.created || 0) + (c.updated || 0) + (c.skipped || 0) + (c.failed || 0)],
+             ["Created", c.created], ["Updated", c.updated],
+             ["Skipped", c.skipped], ["Failed", c.failed]].map(function (p) {
+              return '<div class="stat-card"><b>' + esc(p[1] || 0) + "</b><span>" + p[0] + "</span></div>";
+            }).join("");
+          var errBtn = document.getElementById("bulk-errors");
+          errBtn.hidden = !(c.failed || 0);
+          errBtn.onclick = function () {
+            window.open("/api/admin/rentals/import/errors?token=" +
+                        encodeURIComponent(bulk.token), "_blank");
+          };
+          stage("bulk-result-stage", true);
+          bulkStep(5);
+          loadHistory();
+          toast("Bulk import complete — " + (c.created || 0) + " created, " +
+                (c.updated || 0) + " updated.");
+          document.getElementById("bulk-result-stage").scrollIntoView({ behavior: "smooth", block: "start" });
+        }
       });
     },
 

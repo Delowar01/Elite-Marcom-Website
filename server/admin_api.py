@@ -1951,6 +1951,161 @@ async def admin_rentals_reset(request: Request, x_csrf: str | None = Header(defa
     return {"ok": True, "removed": removed}
 
 
+# ---------------- rental bulk import ----------------
+
+def _import_err(exc: Exception) -> HTTPException:
+    from .rental_import import ImportError_
+
+    if isinstance(exc, (ImportError_, ValueError)):
+        return HTTPException(status_code=400, detail=str(exc))
+    raise exc
+
+
+@router.get("/api/admin/rentals/import/template")
+async def admin_rental_template(request: Request, format: str = "xlsx"):
+    """The template is generated from the rental item itself, so a field that
+    changes shape in the form cannot leave a stale column behind here."""
+    require_perm(request, "rentals.manage")
+    from . import content, rental_import as ri
+
+    products, _ = content.rentals_load()
+    cats = sorted(ri._existing_categories(products))
+    if format == "csv":
+        body, ctype, name = (ri.template_csv(cats), "text/csv; charset=utf-8",
+                             "elite-marcom-rental-import-template.csv")
+    else:
+        try:
+            body = ri.template_xlsx(cats)
+        except ImportError:
+            raise HTTPException(status_code=503, detail=(
+                "XLSX support needs the openpyxl package. Install the site's "
+                "requirements again, or download the CSV template instead."))
+        body, ctype, name = (body,
+                             "application/vnd.openxmlformats-officedocument."
+                             "spreadsheetml.sheet",
+                             "elite-marcom-rental-import-template.xlsx")
+    return Response(content=body, media_type=ctype, headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store"})
+
+
+@router.post("/api/admin/rentals/import/validate")
+async def admin_rental_import_validate(
+        request: Request, file: UploadFile = File(...),
+        images: UploadFile | None = File(default=None),
+        onDuplicate: str = Form(default="skip"),
+        imageMode: str = Form(default="append"),
+        createCategories: str = Form(default="no"),
+        x_csrf: str | None = Header(default=None)):
+    """Parse, validate and resolve every picture — and create nothing. The
+    admin gets a preview and a token; the token is what the import runs on."""
+    session = require_perm(request, "rentals.manage")
+    require_csrf(request, session, x_csrf)
+    from . import content, rental_import as ri
+
+    options = {
+        "onDuplicate": "update" if onDuplicate == "update" else "skip",
+        "imageMode": "replace" if imageMode == "replace" else "append",
+        "createCategories": str(createCategories).lower() in ("yes", "true", "1", "on"),
+    }
+    sheet = await file.read()
+    zip_images = None
+    try:
+        rows = ri.parse_sheet(sheet, file.filename or "")
+        if images is not None and (images.filename or "").strip():
+            zip_bytes = await images.read()
+            if zip_bytes:
+                zip_images = ri.ZipImages(zip_bytes)
+        products, _ = content.rentals_load()
+        resolver = ri._Resolver(zip_images, session["email"])
+        results = ri.validate_rows(rows, products, resolver, options)
+    except Exception as exc:
+        if zip_images is not None:
+            zip_images.close()
+        raise _import_err(exc)
+    token = ri.stage(rows, results, file.filename or "import", options, zip_images,
+                     session["email"])
+    summary = ri.summarise(results)
+    aa.audit(session, "rental.import.validated", "rentals",
+             {"file": (file.filename or "")[:120], **summary}, _ip_hash(request))
+    preview = [{
+        "row": r["row"], "id": r["id"], "name": r["name"], "category": r["category"],
+        "images": r["images"], "action": r["action"],
+        "errors": r["errors"], "warnings": r["warnings"], "notes": r["notes"],
+    } for r in results]
+    return {"token": token, "summary": summary, "rows": preview,
+            "options": options, "hasZip": zip_images is not None,
+            "zipImages": sorted(zip_images.names())[:50] if zip_images else []}
+
+
+class ImportRunBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(max_length=64)
+
+
+@router.post("/api/admin/rentals/import/run")
+async def admin_rental_import_run(request: Request, body: ImportRunBody,
+                                  x_csrf: str | None = Header(default=None)):
+    session = require_perm(request, "rentals.manage")
+    require_csrf(request, session, x_csrf)
+    import asyncio
+
+    from . import rental_import as ri
+
+    job = ri.get_job(body.token, session["email"])
+    if job is None:
+        raise HTTPException(status_code=404, detail=(
+            "That import has expired. Please upload the file again."))
+    if job["state"] != "staged":
+        # a double-click lands here rather than importing twice
+        return {"started": False, "job": ri.job_public(job)}
+    summary = ri.summarise(job["results"])
+    aa.audit(session, "rental.import.started", "rentals",
+             {"file": job["filename"][:120], **summary}, _ip_hash(request))
+    asyncio.get_event_loop().run_in_executor(
+        None, ri.run_job, body.token, session["email"])
+    return {"started": True, "job": ri.job_public(job)}
+
+
+@router.get("/api/admin/rentals/import/status")
+async def admin_rental_import_status(request: Request, token: str):
+    session = require_perm(request, "rentals.manage")
+    from . import rental_import as ri
+
+    job = ri.get_job(token, session["email"])
+    if job is None:
+        raise HTTPException(status_code=404, detail="That import has expired.")
+    return {"job": ri.job_public(job)}
+
+
+@router.get("/api/admin/rentals/import/errors")
+async def admin_rental_import_errors(request: Request, token: str = "", entry: int = 0):
+    session = require_perm(request, "rentals.manage")
+    from . import rental_import as ri
+
+    if entry:
+        failures = ri.history_failures(entry)
+        if failures is None:
+            raise HTTPException(status_code=404, detail="Unknown import.")
+    else:
+        job = ri.get_job(token, session["email"])
+        if job is None:
+            raise HTTPException(status_code=404, detail="That import has expired.")
+        failures = job["failures"]
+    return Response(content=ri.error_report_csv(failures), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition":
+                             'attachment; filename="rental-import-errors.csv"',
+                             "Cache-Control": "no-store"})
+
+
+@router.get("/api/admin/rentals/import/history")
+async def admin_rental_import_history(request: Request):
+    require_perm(request, "rentals.manage")
+    from . import rental_import as ri
+
+    return {"imports": ri.history(20)}
+
+
 # ---------------- site insights (Phase 5) ----------------
 
 @router.get("/api/admin/insights")

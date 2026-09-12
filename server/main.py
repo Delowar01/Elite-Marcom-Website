@@ -38,6 +38,13 @@ app.add_middleware(
 )
 
 MAX_BODY_BYTES = 8 * 1024 * 1024  # generous cap; CV endpoint enforces 5 MB on the file itself
+# A bulk rental import carries a spreadsheet plus an optional archive of
+# photographs, so it is the one admin path allowed past the general cap. The
+# importer enforces its own limits on the sheet, the archive and every picture
+# inside it (server/rental_import.py), and the path is behind an authenticated
+# admin session with the rentals permission.
+LARGE_UPLOAD_PATHS = ("/api/admin/rentals/import/validate",)
+MAX_LARGE_BODY_BYTES = 110 * 1024 * 1024
 
 
 # ---------------- security headers ----------------
@@ -70,7 +77,9 @@ CSP_FRAMEABLE = CSP.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
 async def security_headers(request: Request, call_next):
     if request.method == "POST":
         length = request.headers.get("content-length")
-        if length and length.isdigit() and int(length) > MAX_BODY_BYTES:
+        cap = (MAX_LARGE_BODY_BYTES if request.url.path in LARGE_UPLOAD_PATHS
+               else MAX_BODY_BYTES)
+        if length and length.isdigit() and int(length) > cap:
             return JSONResponse({"detail": "Request too large."}, status_code=413)
     response = await call_next(request)
     frameable = request.url.path.startswith("/admin/visual/")

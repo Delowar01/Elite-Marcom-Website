@@ -471,6 +471,45 @@ documentation). Non-negotiable rules from it:
   JobPosting.image fall back to
   `FALLBACK_IMAGE`. Changing the picture is an ordinary edit: the slug does
   not move and nothing needs a site publish.
+- **Bulk import is a faster way to use the rental form, not a second one**
+  (`server/rental_import.py`, permission `rentals.manage`). Every row is built
+  into the dict the Add Rental Item form posts and handed to
+  `content._clean_rental`, and every picture goes through
+  `media.ingest_library_image` — the same choke point the panel's uploader
+  uses, so a photograph is sniffed, PIL-opened, re-encoded to WebP and
+  content-addressed, which also means the same file named by ten rows is
+  stored once. The columns come from `COLUMNS`, which is what the template is
+  generated from: add a rental field and the template gains it rather than
+  going stale. Two phases, always: `/import/validate` parses, checks and
+  resolves every image but **creates nothing**, staging the job in memory
+  under a token that expires in 30 minutes and takes its copy of the upload
+  with it; `/import/run` is the only thing that writes, and a second click on
+  a staged token is refused rather than importing twice. Items are matched on
+  `id` — the permanent identifier, never the name — and the default is
+  **skip**, so a re-import cannot overwrite. An update applies only the cells
+  that were filled in; a blank cell leaves the value alone and `[clear]` is
+  the one way to empty a field. Images default to keep-existing-and-add.
+  Writing happens in batches of 25 through the inventory's own atomic
+  replace, so a failure late in a long import leaves the rows already written
+  intact. An unknown category is an error, never invented, unless the admin
+  ticks the box. Untrusted input is treated as such: a ZIP member is
+  addressed by its **leaf name only** and nothing is ever extracted to disk
+  (traversal is impossible rather than detected), non-image members are never
+  offered to a row, expansion and entry count are capped; an image URL must
+  resolve to a public address on every answer, redirects are refused rather
+  than followed, and a cell's markup is stripped before the row is built —
+  the public pages escape what they render, so this is about a rental card
+  not reading `<b>Chair</b>`, and the preview reports every cell it changed.
+  Files we write (template, error report) have formula-leading cells prefixed,
+  so a downloaded report cannot execute in Excel. `/api/admin/rentals/import/
+  validate` is the one admin path allowed past `MAX_BODY_BYTES`
+  (`LARGE_UPLOAD_PATHS` in `server/main.py`) because it carries an archive of
+  photographs; it enforces its own limits on the sheet, the archive and each
+  picture. History lives in `rental_imports` (last 50) and every step is
+  audited; the uploaded file itself is never kept. XLSX needs `openpyxl` —
+  pinned in `requirements.txt`, so a deploy must reinstall requirements; CSV
+  works without it and the template endpoint says so rather than failing
+  opaquely.
 - Backups (Operations) carry content, design, settings, rentals and media —
   never customer submissions, which stay encrypted with their own retention.
 - Arabic publishes a full RTL edition under `/ar/` when `site.languages`
