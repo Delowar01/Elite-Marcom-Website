@@ -239,6 +239,128 @@ def test_the_services_page_links_to_every_service_page():
     assert client.get("/services", follow_redirects=False).status_code == 200
 
 
+# ---- SEO phase 1: the five priority pages ----
+
+#: address -> (<title>, <h1>, the Service name in JSON-LD or "" for the hub)
+PRIORITY_SEO = {
+    "/services": (
+        "Exhibition & Event Company Riyadh, Saudi Arabia | Elite Marcom",
+        "Exhibition, Event & Creative Services in Riyadh", ""),
+    "/services/exhibition-stands": (
+        "Exhibition Stand Contractor Riyadh | Design & Build | Elite Marcom",
+        "Exhibition Stand Design & Build in Riyadh, Saudi Arabia",
+        "Exhibition Stand Design & Build"),
+    "/services/corporate-events": (
+        "Event Management Company Riyadh | Corporate Events | Elite Marcom",
+        "Corporate Event Management in Riyadh, Saudi Arabia",
+        "Corporate Event Management"),
+    "/services/corporate-gifts": (
+        "Corporate Gifts Riyadh | Branded Merchandise | Elite Marcom",
+        "Corporate Gifts & Branded Merchandise in Riyadh",
+        "Corporate Gifts & Branded Merchandise"),
+    "/services/event-equipment-rental": (
+        "Event Equipment Rental Riyadh | AV, LED & Furniture | Elite Marcom",
+        "Event Equipment Rental in Riyadh, Saudi Arabia",
+        "Event Equipment Rental"),
+}
+
+
+def _rendered_h1(body: str) -> str:
+    """The H1 as a reader sees it — it is split across two animated spans, so
+    the text has to be read out of the markup rather than matched against it."""
+    import html as _html
+    import re as _re
+
+    inner = _re.findall(r"<h1[^>]*>(.*?)</h1>", body, _re.S)
+    assert len(inner) == 1, "exactly one H1"
+    return _re.sub(r"\s+", " ", _html.unescape(_re.sub(r"<[^>]+>", "", inner[0]))).strip()
+
+
+def test_the_priority_pages_carry_their_approved_title_and_h1():
+    """The five pages SEO phase 1 targets. The H1 is two mask-reveal spans and
+    the title is HTML-escaped, so both are checked as rendered text, not as
+    markup that a design change could reshape."""
+    import html as _html
+    import re as _re
+
+    for url, (title, h1, _service) in PRIORITY_SEO.items():
+        body = client.get(url).text
+        got = _html.unescape(_re.findall(r"<title>(.*?)</title>", body, _re.S)[0])
+        assert got == title, url
+        assert _rendered_h1(body) == h1, url
+        # the page says where the work happens, in server-rendered HTML
+        assert "Riyadh" in body, url
+
+
+def test_the_priority_pages_describe_themselves_the_same_way_everywhere():
+    """One description, reused by the meta tag, Open Graph, Twitter and the
+    JSON-LD page node — four copies that drift apart is how a social card ends
+    up advertising something the page no longer says."""
+    import html as _html
+    import json as _json
+    import re as _re
+
+    for url in PRIORITY_SEO:
+        body = client.get(url).text
+        desc = _html.unescape(
+            _re.search(r'<meta name="description" content="([^"]*)"', body).group(1))
+        assert "Riyadh" in desc or "Saudi Arabia" in desc, url
+        for pat in (r'<meta property="og:description" content="([^"]*)"',
+                    r'<meta name="twitter:description" content="([^"]*)"'):
+            assert _html.unescape(_re.search(pat, body).group(1)) == desc, (url, pat)
+        graph = _json.loads(_re.search(
+            r'<script type="application/ld\+json">(.*?)</script>', body, _re.S).group(1))["@graph"]
+        page = [n for n in graph if n["@type"] in ("WebPage", "CollectionPage")][0]
+        assert page["description"] == desc, url
+        assert page["name"] == _html.unescape(
+            _re.findall(r"<title>(.*?)</title>", body, _re.S)[0]), url
+
+
+def test_each_priority_service_page_offers_one_service_entity():
+    """Service schema naming the service itself, provided by the one
+    Organization the site already declares — never a second provider entity —
+    and serving Riyadh by name."""
+    import json as _json
+    import re as _re
+
+    for url, (_title, _h1, service_name) in PRIORITY_SEO.items():
+        body = client.get(url).text
+        graph = _json.loads(_re.search(
+            r'<script type="application/ld\+json">(.*?)</script>', body, _re.S).group(1))["@graph"]
+        services = [n for n in graph if n["@type"] == "Service"]
+        if not service_name:
+            assert not services, "the hub is a CollectionPage, not a Service"
+            continue
+        assert len(services) == 1, url
+        svc = services[0]
+        assert svc["name"] == service_name, url
+        assert svc["url"] == "https://www.elitemarcom.com" + url, url
+        assert svc["provider"] == {"@id": "https://www.elitemarcom.com/#organization"}, url
+        assert "Riyadh" in [a["name"] for a in svc["areaServed"]], url
+        assert "Saudi Arabia" in [a["name"] for a in svc["areaServed"]], url
+        # the breadcrumb that was already there is still there
+        crumbs = [n for n in graph if n["@type"] == "BreadcrumbList"]
+        assert len(crumbs) == 1 and len(crumbs[0]["itemListElement"]) == 3, url
+        # ...and no page invents a second Organization
+        assert not [n for n in graph if n["@type"] in ("Organization", "LocalBusiness")], url
+
+
+def test_the_home_page_links_to_every_priority_service_page():
+    """A service page nobody links to is a service page nobody crawls. The
+    catalogue links (/giveaways, /rental) stay as they are — they are what a
+    customer wants — so the service pages are reached alongside them."""
+    body = client.get("/").text
+    for url in PRIORITY_SEO:
+        assert f'href="{url}"' in body, url
+
+
+def test_the_projects_page_links_out_to_the_services_that_delivered_the_work():
+    body = client.get("/projects").text
+    for url in ("/services/exhibition-stands", "/services/corporate-events",
+                "/services/event-equipment-rental", "/services/corporate-gifts"):
+        assert f'href="{url}"' in body, url
+
+
 def test_the_service_pages_are_in_the_sitemap_once_each():
     body = client.get("/sitemap.xml").text
     for tail in SERVICE_PAGES:
