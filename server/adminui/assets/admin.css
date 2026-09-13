@@ -1950,6 +1950,80 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 }
 .jobs-chips button[aria-pressed="true"] { background: var(--orange); border-color: var(--orange); color: #fff; }
 .jobs-chips button b { font-weight: 800; opacity: 0.8; margin-left: 4px; }
+/* ---- visual editor: spacing ----
+   One row per CSS side. The row says whether the value is the site's own or
+   an override, because "why is this element different" is the question this
+   panel exists to answer. */
+.ed-sel-what {
+  display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline;
+  margin: -4px 0 10px; font-size: 0.76rem;
+}
+.ed-sel-what code {
+  background: var(--adm-inset); border-radius: 6px; padding: 2px 7px;
+  font-size: 0.72rem; overflow-wrap: anywhere;
+}
+.ed-global-warn {
+  margin: 0 0 10px; padding: 7px 10px; border-radius: 8px; font-size: 0.74rem;
+  background: rgba(124, 92, 255, 0.12); color: var(--text);
+  border: 1px solid rgba(124, 92, 255, 0.34);
+}
+.sp-dot { color: var(--orange); font-weight: 600; font-size: 0.72rem; }
+.sp-model {
+  display: grid; place-items: center; gap: 0; margin-bottom: 12px; padding: 10px;
+  border-radius: 10px; border: 1px dashed var(--adm-line-strong);
+  background: var(--adm-inset); font-size: 0.64rem; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.sp-model__m, .sp-model__p, .sp-model__c {
+  width: 100%; text-align: center; padding: 5px 0; border-radius: 6px;
+}
+.sp-model__p { background: rgba(237, 108, 38, 0.10); margin: 4px 12px; width: auto; min-width: 70%; }
+.sp-model__c { background: var(--adm-line); color: var(--text-soft); width: auto; min-width: 46%; }
+.sp-block { margin-top: 12px; }
+.sp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sp-head b { font-size: 0.84rem; margin-right: 2px; }
+.sp-head .btn { margin-left: auto; }
+.sp-link {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 0.73rem;
+  cursor: pointer; white-space: nowrap; margin-top: 0;
+}
+/* the panel sizes every input to full width; a checkbox has to opt out, the
+   same way .ed-check does */
+.admin-main .ed-panel .ed-fields .sp-link input[type="checkbox"],
+.sp-link input[type="checkbox"] {
+  width: 15px; min-width: 15px; height: 15px; min-height: 15px;
+  flex: 0 0 auto; margin: 0; padding: 0; accent-color: var(--orange-2);
+}
+/* Label and the stepper share the first line; the state sits underneath, so
+   the number itself always has room — the panel is only ~330px wide. */
+.sp-row {
+  display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 2px 8px;
+  align-items: center; margin-top: 8px;
+}
+.sp-row > label { font-size: 0.74rem; color: var(--text-muted); margin: 0; }
+.sp-input { display: flex; align-items: center; gap: 4px; }
+.sp-num {
+  width: 100%; min-width: 0; text-align: center; font-variant-numeric: tabular-nums;
+  padding-inline: 4px;
+}
+.sp-num::placeholder { color: var(--text-muted); opacity: 0.7; }
+.sp-num.is-bad { border-color: var(--adm-danger, #c0392b); }
+.sp-step, .sp-reset {
+  flex: 0 0 auto; width: 26px; height: 30px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--adm-line); background: var(--adm-inset);
+  color: var(--text-soft); font-size: 0.85rem; line-height: 1;
+}
+.sp-step:hover:not(:disabled), .sp-reset:hover:not(:disabled) { border-color: var(--orange); color: var(--orange); }
+.sp-step:disabled, .sp-reset:disabled { opacity: 0.35; cursor: default; }
+.sp-state {
+  grid-column: 2; justify-self: end; font-size: 0.62rem; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.05em; line-height: 1;
+}
+.sp-row.is-set > label { color: var(--text); font-weight: 600; }
+.sp-row.is-set .sp-state { color: var(--orange); }
+.sp-legacy { margin-bottom: 10px; }
+
+
 /* ---- rental bulk import ---- */
 .bulk-steps {
   display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0 0 18px; padding: 0;

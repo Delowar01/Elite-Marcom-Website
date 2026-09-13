@@ -31,6 +31,9 @@ ANIMATIONS = ("fade-up", "fade-in", "slide-left", "slide-right", "zoom",
 _LEN = r"-?\d+(\.\d+)?(px|rem|em|%|vw|vh)"
 _LEN_RE = re.compile(rf"^({_LEN}|0|auto)$")
 _LEN4_RE = re.compile(rf"^({_LEN}|0|auto)( ({_LEN}|0|auto)){{0,3}}$")
+# padding may not be negative and may not be auto
+_PAD = r"\d+(\.\d+)?(px|rem|em|%|vw|vh)"
+_PAD_RE = re.compile(rf"^({_PAD}|0)$")
 _COLOR_RE = re.compile(
     r"^(#[0-9a-fA-F]{3,8}|rgba?\(\s*\d{1,3}(\s*,\s*\d{1,3}){2}(\s*,\s*(0|1|0?\.\d+))?\s*\)"
     r"|var\(--[\w-]+\)|transparent|currentColor)$")
@@ -46,8 +49,26 @@ STYLE_PROPS: dict[str, re.Pattern | tuple] = {
     "text-transform": ("none", "uppercase", "lowercase", "capitalize"),
     "color": _COLOR_RE,
     "background-color": _COLOR_RE,
+    # The shorthands stay for documents saved before the per-side controls
+    # existed; the panel writes the four sides instead. A shorthand carries
+    # !important like everything else here, so "padding: 20px" forced all four
+    # sides and wiped whatever horizontal padding a container was designed
+    # with — which is why spacing looked as though it worked on some elements
+    # and broke the layout on others.
     "padding": _LEN4_RE,
     "margin": _LEN4_RE,
+    # one side at a time: what the Spacing panel actually writes, so an
+    # override touches the side the admin changed and leaves the other three
+    # to the site's own CSS
+    "margin-top": _LEN_RE,
+    "margin-right": _LEN_RE,
+    "margin-bottom": _LEN_RE,
+    "margin-left": _LEN_RE,
+    # padding has no negative form in CSS, and no "auto" either
+    "padding-top": _PAD_RE,
+    "padding-right": _PAD_RE,
+    "padding-bottom": _PAD_RE,
+    "padding-left": _PAD_RE,
     "width": _LEN_RE,
     "max-width": _LEN_RE,
     "height": _LEN_RE,

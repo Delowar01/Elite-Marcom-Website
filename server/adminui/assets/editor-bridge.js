@@ -141,6 +141,47 @@
     return html.replace(/\s+/g, " ").trim();
   }
 
+  /* A short human name for an element: "Paragraph", "Section", "Button".
+     The inspector shows this beside the selector so it is obvious what is
+     about to be changed — a paragraph or the container around it. */
+  var FRIENDLY = {
+    SECTION: "Section", HEADER: "Header", FOOTER: "Footer", MAIN: "Page body",
+    DIV: "Container", ARTICLE: "Card", ASIDE: "Side panel", NAV: "Navigation",
+    UL: "List", OL: "List", LI: "List item", FIGURE: "Figure",
+    FIGCAPTION: "Caption", P: "Paragraph", A: "Link", BUTTON: "Button",
+    IMG: "Image", IFRAME: "Video", FORM: "Form", LABEL: "Label",
+    INPUT: "Input", TEXTAREA: "Text area", SELECT: "Dropdown", SPAN: "Text",
+    H1: "Heading 1", H2: "Heading 2", H3: "Heading 3", H4: "Heading 4",
+    H5: "Heading 5", H6: "Heading 6", BLOCKQUOTE: "Quote", DL: "List",
+    DT: "Term", DD: "Description", HR: "Divider", TABLE: "Table"
+  };
+  function friendlyName(el) {
+    if (!el) return "";
+    if (el.hasAttribute && el.hasAttribute("data-em-sec")) return "Section";
+    var name = FRIENDLY[el.tagName] || el.tagName.toLowerCase();
+    if (el.classList && el.classList.contains("container")) return "Content container";
+    return name;
+  }
+  /* The selector shown to a person — the element's own classes, not the
+     generated path, because ".role-card > p" is what they can recognise. */
+  function readableSelector(el) {
+    var parent = el.parentElement;
+    var own = el.tagName.toLowerCase() +
+      (el.classList && el.classList.length
+        ? "." + Array.prototype.slice.call(el.classList)
+            .filter(function (c) { return c.indexOf("em-") !== 0 && c !== "reveal"; })
+            .slice(0, 2).join(".")
+        : "");
+    if (!parent || parent === document.body) return own;
+    var up = parent.tagName.toLowerCase() +
+      (parent.classList && parent.classList.length
+        ? "." + Array.prototype.slice.call(parent.classList)
+            .filter(function (c) { return c.indexOf("em-") !== 0 && c !== "reveal"; })
+            .slice(0, 1).join(".")
+        : "");
+    return (up + " > " + own).replace(/\.$/, "");
+  }
+
   function metaFor(el) {
     var cs = getComputedStyle(el);
     var secEl = el.closest("[data-em-sec]");
@@ -165,6 +206,10 @@
       emKey: el.getAttribute("data-em"),
       sectionId: secEl ? secEl.getAttribute("data-em-sec") : null,
       isSection: el.hasAttribute("data-em-sec"),
+      friendly: friendlyName(el),
+      readable: readableSelector(el),
+      parentFriendly: (el.parentElement && el.parentElement !== document.body)
+        ? friendlyName(el.parentElement) : "",
       isImg: el.tagName === "IMG",
       isLink: el.tagName === "A",
       hasBg: cs.backgroundImage !== "none",
@@ -183,6 +228,19 @@
         textTransform: cs.textTransform, color: cs.color,
         backgroundColor: cs.backgroundColor, backgroundImage: cs.backgroundImage,
         padding: cs.padding, margin: cs.margin, width: cs.width, height: cs.height,
+        /* Each side on its own, so the Spacing panel can show what the element
+           actually has right now rather than four zeroes. These are the
+           computed values — the site's own CSS plus any override already
+           applied — which is what "effective" means to someone looking at the
+           page. */
+        marginTop: cs.marginTop, marginRight: cs.marginRight,
+        marginBottom: cs.marginBottom, marginLeft: cs.marginLeft,
+        paddingTop: cs.paddingTop, paddingRight: cs.paddingRight,
+        paddingBottom: cs.paddingBottom, paddingLeft: cs.paddingLeft,
+        /* inline elements take horizontal padding and margin, but vertical
+           margin does nothing to them — the panel says so rather than writing
+           a value that will not move anything */
+        isInline: cs.display === "inline",
         maxWidth: cs.maxWidth, borderRadius: cs.borderRadius,
         borderWidth: cs.borderWidth, borderStyle: cs.borderStyle,
         borderColor: cs.borderColor, boxShadow: cs.boxShadow, opacity: cs.opacity,
@@ -602,7 +660,18 @@
         el.innerHTML = d.html;
       });
     } else if (d.type === "em-apply") {
-      if (typeof d.css === "string") liveCss.textContent = d.css;
+      if (typeof d.css === "string") {
+        /* The panel sends the WHOLE current document, not a delta, so from the
+           first apply the live layer is the complete truth. The block the
+           server baked into this preview is switched off at that point —
+           otherwise removing an override could never be seen: the live sheet
+           would simply stop mentioning the property and the baked
+           "!important" underneath would keep winning, so Reset would look
+           like it had done nothing until the frame was reloaded. */
+        var baked = document.getElementById("em-design");
+        if (baked) baked.disabled = true;
+        liveCss.textContent = d.css;
+      }
       (d.attrs || []).forEach(function (op) {
         var el = document.querySelector(op.path);
         if (!el) return;

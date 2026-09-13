@@ -3909,8 +3909,11 @@
             return '<option value="' + esc(o[0]) + '"' + (o[0] === current ? " selected" : "") + ">" + esc(o[1]) + "</option>";
           }).join("") + "</select>";
         }
-        function group(title, inner, open) {
-          return "<details" + (open ? " open" : "") + "><summary>" + esc(title) + "</summary>" +
+        /* `badge` is our own markup (a small state chip), never admin input —
+           the title itself is still escaped. */
+        function group(title, inner, open, badge) {
+          return "<details" + (open ? " open" : "") + "><summary>" + esc(title) +
+                 (badge || "") + "</summary>" +
                  '<div class="ed-fields">' + inner + "</div></details>";
         }
         function bindStyle(id, path, prop, transform) {
@@ -4391,9 +4394,67 @@
               [["", "Default"], ["none", "None"], [SHADOWS.soft, "Soft"], [SHADOWS.strong, "Strong"],
                [SHADOWS.glow, "Orange glow"]], styleVal(path, "box-shadow")) +
             "<label>Opacity (0–1)</label>" + textInput("ed-op", styleVal(path, "opacity"), c.opacity));
-          var space = group("Spacing & size",
-            "<label>Margin (e.g. 10px or 10px 20px)</label>" + textInput("ed-mg", styleVal(path, "margin"), c.margin) +
-            "<label>Padding</label>" + textInput("ed-pd", styleVal(path, "padding"), c.padding) +
+          /* ---------- Spacing: four sides each, on the element selected ----------
+             Every control writes one CSS property (margin-top … padding-left)
+             on the selected path at the current breakpoint, through the same
+             setStyle the rest of the panel uses — so undo, dirty-tracking,
+             save and publish all carry it without knowing it exists. An empty
+             field is not "0": it removes the override and lets the site's own
+             CSS take the side back. */
+          var SIDES = [["top", "Top"], ["right", "Right"], ["bottom", "Bottom"], ["left", "Left"]];
+          function spaceRow(kind, side, label) {
+            var prop = kind + "-" + side;
+            var override = styleVal(path, prop);
+            var effective = (c[kind + side.charAt(0).toUpperCase() + side.slice(1)] || "");
+            return '<div class="sp-row' + (override ? " is-set" : "") + '" data-sp-row="' + prop + '">' +
+              '<label for="sp-' + prop + '">' + label + "</label>" +
+              '<span class="sp-input">' +
+              '<button type="button" class="sp-step" data-sp-step="-1" data-sp-prop="' + prop +
+                '" aria-label="Decrease ' + label + '">&minus;</button>' +
+              '<input id="sp-' + prop + '" class="sp-num" type="text" inputmode="numeric" ' +
+                'autocomplete="off" data-sp-prop="' + prop + '" data-sp-kind="' + kind + '" ' +
+                'value="' + esc(override) + '" placeholder="' + esc(effective) + '">' +
+              '<button type="button" class="sp-step" data-sp-step="1" data-sp-prop="' + prop +
+                '" aria-label="Increase ' + label + '">+</button>' +
+              '<button type="button" class="sp-reset" data-sp-reset="' + prop +
+                '" title="Remove this override"' + (override ? "" : " disabled") + ">&#8635;</button>" +
+              "</span>" +
+              '<span class="sp-state">' + (override ? "override" : "inherited") + "</span></div>";
+          }
+          function spaceBlock(kind, title, hint) {
+            return '<div class="sp-block" data-sp-block="' + kind + '">' +
+              '<div class="sp-head"><b>' + title + "</b>" +
+              '<label class="sp-link"><input type="checkbox" data-sp-link="' + kind + '"> Link sides</label>' +
+              '<button type="button" class="btn btn--ghost btn--small" data-sp-clear="' + kind +
+                '">Reset</button></div>' +
+              '<span class="field-help">' + hint + "</span>" +
+              SIDES.map(function (sd) { return spaceRow(kind, sd[0], sd[1]); }).join("") + "</div>";
+          }
+          var anySpacing = ["margin", "padding"].some(function (k) {
+            return SIDES.some(function (sd) { return !!styleVal(path, k + "-" + sd[0]); });
+          }) || !!styleVal(path, "margin") || !!styleVal(path, "padding");
+          var legacyShorthand = (styleVal(path, "margin") || styleVal(path, "padding"))
+            ? '<p class="admin-inline-note sp-legacy">This element still carries an older combined ' +
+              "value (" + esc([styleVal(path, "margin") ? "margin " + styleVal(path, "margin") : "",
+                               styleVal(path, "padding") ? "padding " + styleVal(path, "padding") : ""]
+                              .filter(Boolean).join(", ")) + "). It is still applied. " +
+              '<button type="button" class="btn btn--ghost btn--small" id="sp-split">Split into sides</button></p>'
+            : "";
+          var spacing = group("Spacing",
+            '<div class="sp-model" aria-hidden="true"><span class="sp-model__m">margin</span>' +
+            '<span class="sp-model__p">padding</span><span class="sp-model__c">content</span></div>' +
+            (meta.isInline
+              ? '<p class="admin-inline-note">This is an inline element. Padding and left/right ' +
+                "margin work on it; top and bottom margin will not move it, so those two are " +
+                "left for you to change on the block around it.</p>"
+              : "") +
+            legacyShorthand +
+            spaceBlock("margin", "Margin", "Space outside the element — moves it away from its neighbours.") +
+            spaceBlock("padding", "Padding", "Space inside the element — pushes its own content inwards.") +
+            '<div class="admin-actions"><button type="button" class="btn btn--ghost btn--small" ' +
+              'id="sp-reset-all">Reset all spacing</button></div>', true,
+            ' <span class="sp-dot"' + (anySpacing ? "" : " hidden") + ">&bull; Modified</span>");
+          var space = group("Size",
             "<label>Width</label>" + textInput("ed-w", styleVal(path, "width"), c.width) +
             "<label>Max width</label>" + textInput("ed-mw", styleVal(path, "max-width"), c.maxWidth) +
             "<label>Height</label>" + textInput("ed-h", styleVal(path, "height"), c.height) +
@@ -4530,18 +4591,198 @@
                 (hidden[b] ? " checked" : "") + "> " + labels[b] + "</label>";
             }).join(""));
           panel.innerHTML =
-            '<div class="ed-sel-head"><span class="chip">' + esc(meta.tag) + "</span>" +
+            /* what is selected, said plainly — so "the paragraph" and "the
+               container around it" are never confused before a spacing change */
+            '<div class="ed-sel-head"><span class="chip">' +
+              esc(meta.friendly || meta.tag) + "</span>" +
             (globalEl ? '<span class="chip chip--violet">site-wide</span>' : "") +
             '<button class="btn btn--ghost btn--small" id="ed-parent">Select parent</button></div>' +
+            '<p class="ed-sel-what"><code>' + esc(meta.readable || meta.tag) + "</code>" +
+            (meta.parentFriendly
+              ? '<span class="muted">Inside: ' + esc(meta.parentFriendly) + "</span>" : "") +
+            "</p>" +
+            (globalEl && !st.pageScopeOnly
+              ? '<p class="ed-global-warn">Editing a global component — changes apply site-wide.</p>'
+              : "") +
             (globalEl ? '<label class="ed-check" style="margin-bottom:10px;"><input type="checkbox" id="ed-scope-page"> Apply changes to this page only</label>' : "") +
             secGroup + elGroup + listGroup +
-            content + media + link + video + typo + box + space + layout + animGroup + vis +
+            content + media + link + video + typo + box + spacing + space + layout + animGroup + vis +
             '<div class="admin-actions" style="margin-top:14px;"><button class="btn btn--ghost btn--small" id="ed-el-reset">Reset this element</button></div>' +
             '<p class="admin-inline-note" style="margin-top:8px;">Style edits apply to the <b>' + esc(st.vw) + "</b> view" +
             (st.vw === "desktop" ? " (and smaller screens unless they override)" : "") + ".</p>";
 
           document.getElementById("ed-parent").addEventListener("click", function () {
             st.postFrame({ type: "em-select-parent" });
+          });
+
+          /* ---------- Spacing behaviour ----------
+             Rules that matter here:
+             • a field writes ONE property on the selected path — never a
+               shorthand, so the three sides the admin did not touch keep
+               whatever the site's CSS gives them;
+             • an empty field REMOVES the override rather than saving 0px;
+             • typing never re-renders the panel, so the caret cannot jump and
+               "3" cannot become "30" while a keystroke is in flight;
+             • one undo entry per editing session, not one per keystroke. */
+          var spPanel = panel.querySelector(".ed-fields") ? panel : null;
+          function spRow(prop) { return panel.querySelector('[data-sp-row="' + prop + '"]'); }
+          function spNormalise(raw, kind) {
+            var v = String(raw == null ? "" : raw).trim().toLowerCase();
+            if (!v) return "";
+            if (v === "auto") return kind === "margin" ? "auto" : "";
+            var m = /^(-?\d+(?:\.\d+)?)\s*(px|rem|em|%|vw|vh)?$/.exec(v);
+            if (!m) return null;                       // malformed: refuse it
+            var n = parseFloat(m[1]);
+            if (kind === "padding" && n < 0) return null;   // no negative padding
+            if (n === 0) return "0";
+            return n + (m[2] || "px");
+          }
+          function spPaint(prop, value) {
+            var row = spRow(prop);
+            if (!row) return;
+            row.classList.toggle("is-set", !!value);
+            var state = row.querySelector(".sp-state");
+            if (state) state.textContent = value ? "override" : "inherited";
+            var rst = row.querySelector("[data-sp-reset]");
+            if (rst) rst.disabled = !value;
+            var dot = panel.querySelector(".sp-dot");
+            var any = ["margin", "padding"].some(function (k) {
+              return SIDES.some(function (sd) { return !!styleVal(path, k + "-" + sd[0]); });
+            });
+            if (dot) dot.hidden = !any;
+          }
+          function spWrite(prop, value, group) {
+            setStyle(path, prop, value, group);
+            spPaint(prop, value);
+          }
+          /* "Link sides" is a live mode, not a saved setting: while it is on,
+             a change goes to all four sides of that block at once. */
+          function spLinked(kind) {
+            var cb = panel.querySelector('[data-sp-link="' + kind + '"]');
+            return !!(cb && cb.checked);
+          }
+          function spApply(prop, kind, value, group) {
+            if (spLinked(kind)) {
+              SIDES.forEach(function (sd, i) {
+                var p2 = kind + "-" + sd[0];
+                spWrite(p2, value, group || i > 0);
+                var input = panel.querySelector('[data-sp-prop="' + p2 + '"].sp-num');
+                if (input && document.activeElement !== input) input.value = value;
+              });
+            } else {
+              spWrite(prop, value, group);
+            }
+          }
+          panel.querySelectorAll("input.sp-num").forEach(function (input) {
+            var prop = input.getAttribute("data-sp-prop");
+            var kind = input.getAttribute("data-sp-kind");
+            var grouped = false;          // one undo entry per focus session
+            input.addEventListener("focus", function () { grouped = false; input.select(); });
+            input.addEventListener("blur", function () {
+              grouped = false;
+              var v = spNormalise(input.value, kind);
+              if (v === null) {           // malformed — put the saved value back
+                input.value = styleVal(path, prop);
+                input.classList.remove("is-bad");
+                return;
+              }
+              input.value = v;
+              input.classList.remove("is-bad");
+            });
+            input.addEventListener("input", function () {
+              var v = spNormalise(input.value, kind);
+              if (v === null) { input.classList.add("is-bad"); return; }
+              input.classList.remove("is-bad");
+              spApply(prop, kind, v, grouped);
+              grouped = true;             // later keystrokes join the same undo step
+            });
+            input.addEventListener("keydown", function (e) {
+              if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+              e.preventDefault();
+              var cur = spNormalise(input.value, kind) || styleVal(path, prop) || "0";
+              var m = /^(-?\d+(?:\.\d+)?)(.*)$/.exec(cur) || ["", "0", "px"];
+              var step = (e.shiftKey ? 10 : 1) * (e.key === "ArrowUp" ? 1 : -1);
+              var next = parseFloat(m[1]) + step;
+              if (kind === "padding" && next < 0) next = 0;
+              var unit = m[2] || "px";
+              var out = next === 0 ? "0" : next + unit;
+              input.value = out;
+              spApply(prop, kind, out, grouped);
+              grouped = true;
+            });
+          });
+          panel.querySelectorAll("[data-sp-step]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var prop = btn.getAttribute("data-sp-prop");
+              var input = panel.querySelector('[data-sp-prop="' + prop + '"].sp-num');
+              var kind = input.getAttribute("data-sp-kind");
+              var cur = spNormalise(input.value, kind) || styleVal(path, prop) || "0";
+              var m = /^(-?\d+(?:\.\d+)?)(.*)$/.exec(cur) || ["", "0", "px"];
+              var next = parseFloat(m[1]) + (+btn.getAttribute("data-sp-step"));
+              if (kind === "padding" && next < 0) next = 0;
+              var out = next === 0 ? "0" : next + (m[2] || "px");
+              input.value = out;
+              spApply(prop, kind, out, false);
+            });
+          });
+          /* Reset REMOVES the override — it never writes 0px. The side goes
+             back to whatever the website's own stylesheet says. */
+          panel.querySelectorAll("[data-sp-reset]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var prop = btn.getAttribute("data-sp-reset");
+              var input = panel.querySelector('[data-sp-prop="' + prop + '"].sp-num');
+              if (input) input.value = "";
+              spWrite(prop, "", false);
+            });
+          });
+          panel.querySelectorAll("[data-sp-clear]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var kind = btn.getAttribute("data-sp-clear");
+              SIDES.forEach(function (sd, i) {
+                var prop = kind + "-" + sd[0];
+                var input = panel.querySelector('[data-sp-prop="' + prop + '"].sp-num');
+                if (input) input.value = "";
+                spWrite(prop, "", i > 0);
+              });
+              setStyle(path, kind, "", true);      // and any older shorthand
+            });
+          });
+          var spAll = document.getElementById("sp-reset-all");
+          if (spAll) spAll.addEventListener("click", function () {
+            var first = true;
+            ["margin", "padding"].forEach(function (kind) {
+              SIDES.forEach(function (sd) {
+                var prop = kind + "-" + sd[0];
+                var input = panel.querySelector('[data-sp-prop="' + prop + '"].sp-num');
+                if (input) input.value = "";
+                spWrite(prop, "", !first);
+                first = false;
+              });
+              setStyle(path, kind, "", true);
+            });
+            toast("Spacing reset — the page's own styling is back.");
+          });
+          /* An older document may hold a combined "20px 10px". Splitting it
+             into four sides is offered rather than done, because rewriting it
+             silently would be a change nobody asked for. */
+          var spSplit = document.getElementById("sp-split");
+          if (spSplit) spSplit.addEventListener("click", function () {
+            var first = true;
+            ["margin", "padding"].forEach(function (kind) {
+              var short = styleVal(path, kind);
+              if (!short) return;
+              var parts = short.split(/\s+/);
+              var four = parts.length === 1 ? [parts[0], parts[0], parts[0], parts[0]]
+                : parts.length === 2 ? [parts[0], parts[1], parts[0], parts[1]]
+                : parts.length === 3 ? [parts[0], parts[1], parts[2], parts[1]]
+                : parts.slice(0, 4);
+              SIDES.forEach(function (sd, i) {
+                spWrite(kind + "-" + sd[0], four[i], !first);
+                first = false;
+              });
+              setStyle(path, kind, "", true);
+            });
+            st.onSelect(meta);   // redraw the panel with the four sides filled in
           });
           var scopeCb = document.getElementById("ed-scope-page");
           if (scopeCb) scopeCb.addEventListener("change", function () {

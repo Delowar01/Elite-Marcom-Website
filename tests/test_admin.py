@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server import adminauth as aa
-from server import security, storage
+from server import design, security, storage
 from server.main import app
 
 
@@ -1534,6 +1534,155 @@ def test_design_save_validate_and_bake_styles():
                        json={"doc": {"elements": {"main"[::-1] + "<script>": {}}}},
                        headers={"X-CSRF": me["csrf"]})
     assert bad3.status_code == 400
+
+
+# ---------------- visual editor: per-side spacing ----------------
+
+#: the eight properties the Spacing panel writes
+SPACING_PROPS = ("margin-top", "margin-right", "margin-bottom", "margin-left",
+                 "padding-top", "padding-right", "padding-bottom", "padding-left")
+
+SPACING_PATH = "[data-em-sec=s0]>div:nth-of-type(2)>div:nth-of-type(1)>h1:nth-of-type(1)"
+
+
+def _save_design(page, doc):
+    me = client.get("/api/admin/me").json()
+    return client.post(f"/api/admin/design/{page}", json={"doc": doc},
+                       headers={"X-CSRF": me["csrf"]})
+
+
+def test_each_spacing_side_is_its_own_property():
+    """The reason spacing used to break a layout: the engine only knew the
+    shorthand, and every declaration carries !important, so setting the top
+    also forced the left and right to whatever the shorthand said. Each side
+    is now written on its own, and the sides nobody touched are simply absent
+    from the generated CSS."""
+    assert all(p in design.STYLE_PROPS for p in SPACING_PROPS)
+    res = _save_design("index", {"elements": {
+        SPACING_PATH: {"styles": {"base": {"padding-top": "35px"}}}}})
+    assert res.status_code == 200, res.text
+    baked = client.get("/admin/visual/index").text
+    assert "padding-top:35px !important" in baked
+    for absent in ("padding-left", "padding-right", "padding-bottom"):
+        assert absent not in baked, f"{absent} must be left to the site's own CSS"
+    assert "padding:" not in baked.split('id="em-design"')[1].split("</style>")[0]
+
+
+def test_all_eight_sides_bake_and_stay_scoped_to_one_selector():
+    css_in = {p: ("12px" if p.startswith("margin") else "8px") for p in SPACING_PROPS}
+    assert _save_design("index", {"elements": {
+        SPACING_PATH: {"styles": {"base": css_in}}}}).status_code == 200
+    baked = client.get("/admin/visual/index").text
+    block = baked.split('id="em-design"')[1].split("</style>")[0]
+    for prop, value in css_in.items():
+        assert f"{prop}:{value} !important" in block, prop
+    # one selector, one rule — the override cannot reach a sibling or a parent
+    assert block.count(SPACING_PATH) == 1
+    assert "body{" not in block and "main{" not in block
+
+
+@pytest.mark.parametrize("prop,value,ok", [
+    ("margin-top", "20px", True), ("margin-top", "-24px", True),
+    ("margin-top", "0", True), ("margin-top", "auto", True),
+    ("margin-left", "2rem", True), ("margin-left", "5%", True),
+    ("margin-top", "20", False), ("margin-top", "red", False),
+    ("margin-top", "20px;color:red", False),
+    ("padding-top", "32px", True), ("padding-top", "0", True),
+    ("padding-top", "1.5rem", True),
+    ("padding-top", "-5px", False),        # negative padding is not a thing
+    ("padding-left", "-1rem", False),
+    ("padding-top", "auto", False),        # nor is auto
+    ("padding-top", "expression(alert(1))", False),
+])
+def test_a_spacing_value_is_validated_before_it_is_saved(prop, value, ok):
+    res = _save_design("index", {"elements": {SPACING_PATH: {"styles": {"base": {prop: value}}}}})
+    assert (res.status_code == 200) is ok, (prop, value, res.status_code)
+
+
+def test_spacing_is_per_breakpoint_and_desktop_stays_the_base():
+    assert _save_design("index", {"elements": {SPACING_PATH: {"styles": {
+        "base": {"padding-top": "40px"},
+        "tablet": {"padding-top": "30px"},
+        "mobile": {"padding-top": "20px"}}}}}).status_code == 200
+    block = client.get("/admin/visual/index").text.split('id="em-design"')[1].split("</style>")[0]
+    desktop, rest = block.split("@media (max-width: 1024px)", 1)
+    tablet, mobile = rest.split("@media (max-width: 640px)", 1)
+    assert "padding-top:40px" in desktop
+    assert "padding-top:30px" in tablet and "padding-top:40px" not in tablet
+    assert "padding-top:20px" in mobile
+    # a mobile-only override leaves the desktop value alone
+    assert _save_design("index", {"elements": {SPACING_PATH: {"styles": {
+        "base": {"padding-top": "40px"}, "mobile": {"padding-top": "6px"}}}}}).status_code == 200
+    block = client.get("/admin/visual/index").text.split('id="em-design"')[1].split("</style>")[0]
+    assert "padding-top:40px" in block.split("@media")[0]
+    assert "padding-top:6px" in block
+
+
+def test_removing_a_side_removes_the_rule_rather_than_writing_zero():
+    """Reset means the site's own CSS takes the side back. Saving 0px instead
+    would look identical on an element whose CSS said 0 and silently flatten
+    one whose CSS said 32px."""
+    assert _save_design("index", {"elements": {SPACING_PATH: {"styles": {
+        "base": {"padding-top": "35px", "margin-bottom": "10px"}}}}}).status_code == 200
+    assert "padding-top:35px" in client.get("/admin/visual/index").text
+    # the panel sends the property back with an empty value
+    assert _save_design("index", {"elements": {SPACING_PATH: {"styles": {
+        "base": {"padding-top": "", "margin-bottom": "10px"}}}}}).status_code == 200
+    baked = client.get("/admin/visual/index").text
+    assert "padding-top" not in baked
+    assert "padding-top:0" not in baked
+    assert "margin-bottom:10px !important" in baked
+
+
+def test_an_element_with_no_spacing_override_adds_no_css_at_all():
+    """The public site must look exactly the same until somebody changes
+    something — so an untouched element contributes nothing."""
+    assert _save_design("index", {"elements": {}}).status_code == 200
+    baked = client.get("/admin/visual/index").text
+    # no generated block at all — the page is exactly the shipped markup plus
+    # the editor's own section stamps
+    assert 'id="em-design"' not in baked
+    assert "!important" not in baked
+
+
+def test_the_older_combined_spacing_values_still_load_and_bake():
+    """Documents saved before the per-side controls existed keep working."""
+    assert _save_design("index", {"elements": {SPACING_PATH: {"styles": {
+        "base": {"padding": "40px 0", "margin": "10px"}}}}}).status_code == 200
+    baked = client.get("/admin/visual/index").text
+    assert "padding:40px 0 !important" in baked and "margin:10px !important" in baked
+    # ...and a per-side value may sit beside one while an admin migrates
+    assert _save_design("index", {"elements": {SPACING_PATH: {"styles": {
+        "base": {"padding": "40px 0", "padding-top": "12px"}}}}}).status_code == 200
+    block = client.get("/admin/visual/index").text.split('id="em-design"')[1].split("</style>")[0]
+    assert "padding:40px 0" in block and "padding-top:12px" in block
+
+
+def test_spacing_survives_publish_to_the_public_page():
+    """The editor preview is not the deliverable — the published page is."""
+    assert _save_design("index", {"elements": {SPACING_PATH: {"styles": {
+        "base": {"padding-top": "35px"}, "mobile": {"padding-top": "11px"}}}}}).status_code == 200
+    me = client.get("/api/admin/me").json()
+    assert client.post("/api/admin/pages-publish",
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    live = client.get("/", follow_redirects=False)
+    assert live.status_code == 200
+    assert "padding-top:35px !important" in live.text
+    assert "padding-top:11px" in live.text
+    assert "@media (max-width: 640px)" in live.text
+
+
+def test_spacing_on_the_header_is_a_global_edit_and_reaches_every_page():
+    me = client.get("/api/admin/me").json()
+    assert client.post("/api/admin/design/_global",
+                       json={"doc": {"elements": {
+                           "header.site-header": {"styles": {"base": {"padding-top": "18px"}}}}}},
+                       headers={"X-CSRF": me["csrf"]}).status_code == 200
+    for page in ("index", "about"):
+        baked = client.get(f"/admin/visual/{page}").text
+        assert "header.site-header{padding-top:18px !important;}" in baked, page
+    client.post("/api/admin/design/_global", json={"doc": {"elements": {}}},
+                headers={"X-CSRF": me["csrf"]})
 
 
 def test_design_animation_attrs_and_media_swap_bake():

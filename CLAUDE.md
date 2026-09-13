@@ -202,6 +202,35 @@ documentation). Non-negotiable rules from it:
   button away with it; only the bake drops it. Dragging an element's orange
   edge handle writes `width`/`height` for the viewport being edited, like any
   other style.
+- **Spacing is eight properties, never a shorthand.** The style engine used
+  to know `margin` and `padding` only as the CSS shorthand, and every
+  declaration `build_css` emits carries `!important` — so "padding: 20px"
+  forced all four sides and wiped whatever horizontal padding a container was
+  designed with. That is why spacing appeared to work on some elements and to
+  break the layout on others, and why a single side could not be set at all.
+  `STYLE_PROPS` now also holds `margin-top/right/bottom/left` and
+  `padding-top/right/bottom/left`; the Spacing panel writes those, so an
+  override touches the side that was changed and leaves the other three to
+  the site's own CSS. The shorthands stay for documents saved before this and
+  are still applied — the panel offers **Split into sides** rather than
+  rewriting them behind the admin's back. Padding is validated separately
+  (`_PAD_RE`): no negative values and no `auto`, because neither exists in
+  CSS; margin keeps both. Everything else was already generic and needed no
+  change — validation is a table lookup, `build_css` and the panel's mirror of
+  it iterate whatever keys a breakpoint holds, and undo, dirty-tracking, save
+  and publish all work on the document rather than on named properties.
+  **An empty value deletes the property**, which is what Reset sends: writing
+  `0px` instead would look identical on an element whose CSS said 0 and
+  silently flatten one whose CSS said 32px. With nothing overridden the page
+  gets no `<style id="em-design">` at all, so the public site is byte-identical
+  until somebody changes something.
+  One consequence worth knowing: the preview's live `<style id="em-live">`
+  carries the **whole** merged document, not a delta, so the bridge switches
+  off the baked `em-design` block on the first apply. Without that, removing
+  an override could never be previewed — the live sheet would simply stop
+  mentioning the property and the baked `!important` underneath would keep
+  winning, so Reset would look like it had done nothing until the frame
+  reloaded.
 - **Repeatable content — the items inside a section** lives in
   `server/collections.py`, and is the other half of the design layer: sections
   are added, duplicated, reordered, hidden and deleted in the visual editor;
