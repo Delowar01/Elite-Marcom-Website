@@ -138,6 +138,47 @@ documentation). Non-negotiable rules from it:
   the server — the admin item page and the product-sheet PDF go through it, so
   the panel shows the video a customer sees and a customer document never
   carries a frame of one.
+- **The Items screen and its catalogue read the snapshot, never the
+  supplier.** Searching, filtering, paging, selecting and generating a PDF all
+  go through `item_list`, which filters the cached products in memory — none
+  of it is a reason to spend one of the five daily calls, and there is a test
+  that fails if any of them reaches `_fetch` or charges the budget. The old
+  "20 items" ceiling was two things and neither was the dataset: the panel
+  offered 25/50/100 and the route clamped `perPage` to 200. The options are
+  now 20/50/100/250/500 (`PER_PAGE_OPTIONS`, `PER_PAGE_MAX`) and search was
+  always across the whole snapshot — only the slice handed to the browser
+  changed. The listing also returns `ids`, every matching id, so **Select all
+  filtered** needs no second request and no five hundred checkboxes in the
+  document.
+  `min_stock` filters on the **viewed market's** available quantity with
+  `>=`, so a minimum of 100 keeps an item sitting on exactly 100; a negative
+  minimum is refused rather than read as zero. `jasani.stock_known(market)`
+  is the honest answer to "is this figure real": the normalized product keeps
+  `stock.available` as a plain integer, so a never-synced market's zeroes are
+  *unknown*, not none-left — they cannot clear a positive minimum and the
+  catalogue prints "Availability unavailable" rather than inventing a zero.
+- **The product catalogue is price-free by construction and by assertion**
+  (`server/catalogue.py`, permission `jasani.view`). A cover, an optional
+  contents page, then exactly one A4 page per product — everything on a page
+  is clipped to fit, because the document's contract is one page each and a
+  reader counting pages has to be able to trust it. Nothing in the module
+  reads a price field, and `assert_price_free` then reads the text back out
+  of the finished PDF before it is handed over. That read matters: reportlab
+  writes ASCII85 over Flate, so a check that scanned raw bytes would pass on
+  every document ever made and prove nothing — `extract_text` decodes the
+  streams, and a test asserts the guard actually bites on a document that
+  does carry a price.
+  Quantities are captured when the rows are read, so page 1 and page 400
+  cannot disagree because the cache moved underneath, and the page prints the
+  **stock synchronisation** timestamp rather than the moment the PDF was
+  made; the cover labels the two dates separately. Photographs come from the
+  supplier's public image host, which is a file read rather than a primary
+  endpoint and is charged to nothing; one unreachable picture costs that
+  product its photograph and nothing else. The build runs on a worker thread
+  (`spawn`) and the panel polls for progress, so five hundred pages — about
+  15 seconds — never hold a request open. The PDF lives in memory under a
+  token that expires, is handed over once and then dropped; generation is
+  audited with the market, the count and the stock timestamp.
 - **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
   whenever a parser change means a stored answer could be improved on; an
   entry written under a lower number is treated as absent and rediscovered.

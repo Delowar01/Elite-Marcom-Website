@@ -1484,14 +1484,30 @@ _SEARCH_FIELDS = {
 }
 
 
+def stock_known(market: str) -> bool:
+    """Has a stock synchronisation ever landed for this market?
+
+    The normalized product carries `stock.available` as a plain integer, so a
+    product whose stock was never fetched is indistinguishable from one the
+    supplier reports as zero. The one honest signal is the market-level stock
+    timestamp: with no stock sync behind it, every figure in the snapshot is
+    *unknown*, not zero — and an unknown quantity must not satisfy a positive
+    minimum-stock filter, nor be printed in a catalogue as though it had been
+    checked.
+    """
+    cached = _read_cache(market)
+    return bool(cached and cached.get("stockAt"))
+
+
 def item_list(market: str, *, terms: list[str] | None = None, field: str = "all",
               stock: str = "", brand: str = "", colour: str = "", category: str = "",
               visibility: str = "", hide_zero: bool = False,
               price_min: float | None = None,
               price_max: float | None = None, sort: str = "featured",
-              with_prices: bool = False) -> dict:
+              with_prices: bool = False, min_stock: int | None = None) -> dict:
     """Search, filter and sort the cached snapshot. Never calls the supplier."""
     products = all_products(market)
+    known = stock_known(market)
     internal = internal_map(market) if with_prices else {}
     hidden = hidden_ids(market)
     drop_zero = hide_zero_stock(market)
@@ -1519,6 +1535,13 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
         price_min = price_max = None
 
     def keep(r: dict) -> bool:
+        if min_stock is not None:
+            # >= , not > : "minimum 100" includes an item with exactly 100.
+            # With no stock sync behind the snapshot the figure is unknown, so
+            # it cannot clear a positive minimum; a minimum of 0 asks for no
+            # filtering at all and still lets everything through.
+            if min_stock > 0 and (not known or r["available"] < min_stock):
+                return False
         if needles:
             hay = " ".join(str(r.get(k, "")) for k in keys).lower()
             if field in ("all", "category"):
@@ -1582,7 +1605,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
         r.pop("_cats", None)
         r.pop("_seq", None)
     return {"rows": kept, "totals": totals, "facets": facets,
-            "lowThreshold": low, "hideZeroStock": drop_zero,
+            "lowThreshold": low, "hideZeroStock": drop_zero, "stockKnown": known,
             "currency": CURRENCY_BY_MARKET.get(market, ""),
             # a snapshot written before the internal store existed carries no
             # prices; say so rather than showing a table of dashes

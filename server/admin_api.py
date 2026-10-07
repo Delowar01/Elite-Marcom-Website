@@ -721,6 +721,26 @@ def _f(value: str | None) -> float | None:
         return None
 
 
+#: what the Items-per-page control offers, and the ceiling the route enforces
+PER_PAGE_OPTIONS = (20, 50, 100, 250, 500)
+PER_PAGE_MAX = 500
+
+
+def _min_stock(raw: str) -> int | None:
+    """Blank means no minimum. A negative figure is not a minimum anybody can
+    mean, so it is refused rather than quietly treated as zero."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        n = int(float(text))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Minimum stock must be a whole number.")
+    if n < 0:
+        raise HTTPException(status_code=400, detail="Minimum stock cannot be negative.")
+    return min(n, 10_000_000)
+
+
 @router.get("/api/admin/jasani/items")
 async def admin_jasani_items(request: Request,
                              market: Literal["ksa", "uae"] = "ksa",
@@ -728,6 +748,7 @@ async def admin_jasani_items(request: Request,
                              brand: str = "", colour: str = "", category: str = "",
                              visibility: str = "", hideZero: bool = False,
                              priceMin: str = "", priceMax: str = "",
+                             minStock: str = "",
                              sort: str = "featured", page: int = 1, perPage: int = 25):
     """The Jasani items table. Reads the cached snapshot only — opening this
     page never spends one of the market's five daily supplier calls."""
@@ -740,10 +761,12 @@ async def admin_jasani_items(request: Request,
     data = jasani.item_list(
         market, terms=terms, field=field, stock=stock, brand=brand, colour=colour,
         category=category, visibility=visibility, hide_zero=bool(hideZero),
-        price_min=_f(priceMin), price_max=_f(priceMax),
+        price_min=_f(priceMin), price_max=_f(priceMax), min_stock=_min_stock(minStock),
         sort=sort, with_prices=prices)
     rows = data.pop("rows")
-    per = max(10, min(200, perPage))
+    # the whole snapshot is searched and filtered either way; this is only how
+    # much of the result is handed to the browser at once
+    per = max(10, min(PER_PAGE_MAX, perPage))
     pages = max(1, (len(rows) + per - 1) // per)
     page = max(1, min(pages, page))
     status = jasani.cache_status(market)
@@ -751,6 +774,11 @@ async def admin_jasani_items(request: Request,
             "pages": pages, "perPage": per, "canSeePrices": prices,
             "canChangeVisibility": aa.has_perm(session["role"], "jasani.visibility"),
             "items": rows[(page - 1) * per: page * per],
+            "perPageOptions": list(PER_PAGE_OPTIONS),
+            "minStock": _min_stock(minStock),
+            # every id the filter matched, so "select all filtered" does not
+            # need the rows on screen
+            "ids": [r["id"] for r in rows],
             "snapshot": {"fetchedAt": status.get("fetchedAt"), "stockAt": status.get("stockAt"),
                          "productsFresh": status.get("productsFresh"),
                          "stockFresh": status.get("stockFresh"),
@@ -766,6 +794,7 @@ async def admin_jasani_items_export(request: Request, format: str = "csv",
                                     brand: str = "", colour: str = "", category: str = "",
                                     visibility: str = "", hideZero: bool = False,
                                     priceMin: str = "", priceMax: str = "",
+                                    minStock: str = "",
                                     sort: str = "featured", scope: str = "filtered"):
     """The item list as CSV, Excel or a branded PDF table."""
     session = require_perm(request, "jasani.view")
@@ -787,6 +816,7 @@ async def admin_jasani_items_export(request: Request, format: str = "csv",
         hide_zero=False if everything else bool(hideZero),
         price_min=None if everything else _f(priceMin),
         price_max=None if everything else _f(priceMax),
+        min_stock=None if everything else _min_stock(minStock),
         sort=sort, with_prices=prices)
     items = data["rows"]
     currency = data["currency"]
@@ -826,6 +856,116 @@ def _sheet_specs(item: dict) -> list[tuple[str, str]]:
         ("Options", ", ".join(item.get("options") or [])[:80]),
     ]
     return [(k, str(v)) for k, v in pairs if v not in (None, "", [])]
+
+
+# ---------------- the product catalogue ----------------
+
+class CatalogueBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market: Literal["ksa", "uae"] = "ksa"
+    title: str = Field(default="", max_length=120)
+    ids: list[str] = Field(default_factory=list, max_length=1000)
+    scope: str = Field(default="selected", max_length=20)
+    minStock: str = Field(default="", max_length=12)
+    q: str = Field(default="", max_length=400)
+    field: str = Field(default="all", max_length=20)
+    stock: str = Field(default="", max_length=20)
+    brand: str = Field(default="", max_length=120)
+    colour: str = Field(default="", max_length=120)
+    category: str = Field(default="", max_length=120)
+    visibility: str = Field(default="", max_length=20)
+    hideZero: bool = False
+    sort: str = Field(default="featured", max_length=20)
+    description: bool = True
+    specs: bool = True
+    stockQty: bool = True
+    stockDate: bool = True
+    code: bool = True
+    contents: bool = False
+
+
+def _catalogue_items(body: CatalogueBody) -> list[dict]:
+    """The products the catalogue will carry, read from the cached snapshot.
+
+    Nothing here touches the supplier: `item_list` filters the snapshot the
+    scheduled synchronisation already wrote, and the detail lookup reads the
+    same cache.
+    """
+    from . import jasani
+
+    terms = [t.strip() for t in re.split(r"[,\n\t]", body.q or "") if t.strip()][:20]
+    data = jasani.item_list(
+        body.market, terms=terms, field=body.field, stock=body.stock,
+        brand=body.brand, colour=body.colour, category=body.category,
+        visibility=body.visibility, hide_zero=bool(body.hideZero),
+        min_stock=_min_stock(body.minStock), sort=body.sort, with_prices=False)
+    rows = data["rows"]
+    if body.scope != "filtered":
+        wanted = {str(i) for i in body.ids}
+        rows = [r for r in rows if r["id"] in wanted]
+    return rows
+
+
+@router.post("/api/admin/jasani/catalogue")
+async def admin_jasani_catalogue(request: Request, body: CatalogueBody,
+                                 x_csrf: str | None = Header(default=None)):
+    """Start a catalogue. Returns a token; the PDF is built in the background
+    so a five-hundred page document never holds the browser."""
+    session = require_perm(request, "jasani.view")
+    require_csrf(request, session, x_csrf)
+    from . import catalogue as cat
+    from . import jasani
+
+    rows = _catalogue_items(body)
+    if not rows:
+        raise HTTPException(status_code=400, detail=(
+            "No products match. Select some items, or widen the filters."))
+    if len(rows) > cat.MAX_ITEMS:
+        raise HTTPException(status_code=400, detail=(
+            f"That is {len(rows):,} products. A catalogue holds at most "
+            f"{cat.MAX_ITEMS}; narrow the filters or select fewer."))
+    status = jasani.cache_status(body.market)
+    token = cat.start(session["email"], body.market, len(rows))
+    aa.audit(session, "jasani.catalogue_generated", "jasani",
+             {"market": body.market, "items": len(rows), "scope": body.scope,
+              "minStock": body.minStock or "none",
+              "stockAt": status.get("stockAt")}, _ip_hash(request))
+    cat.spawn(token, rows, market=body.market,
+              title=body.title or cat.DEFAULT_TITLE,
+              stock_at=status.get("stockAt"),
+              stock_is_known=jasani.stock_known(body.market),
+              options={"description": body.description, "specs": body.specs,
+                       "stock": body.stockQty, "stockDate": body.stockDate,
+                       "code": body.code, "contents": body.contents})
+    return {"token": token, "items": len(rows),
+            "stockAt": status.get("stockAt"),
+            "stockKnown": jasani.stock_known(body.market)}
+
+
+@router.get("/api/admin/jasani/catalogue/status")
+async def admin_jasani_catalogue_status(request: Request, token: str):
+    session = require_perm(request, "jasani.view")
+    from . import catalogue as cat
+
+    job = cat.get(token, session["email"])
+    if job is None:
+        raise HTTPException(status_code=404, detail="That catalogue has expired.")
+    return {"job": cat.public(job)}
+
+
+@router.get("/api/admin/jasani/catalogue/download")
+async def admin_jasani_catalogue_download(request: Request, token: str):
+    session = require_perm(request, "jasani.view")
+    from . import catalogue as cat
+
+    job = cat.get(token, session["email"])
+    if job is None or job["state"] != "done" or not job.get("pdf"):
+        raise HTTPException(status_code=404, detail="That catalogue is not ready.")
+    blob = job["pdf"]
+    cat.collect(token)          # handed over once; nothing is kept on disk
+    return Response(content=blob, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{job["filename"]}"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/api/admin/jasani/items/{market}/{product_id}/sheet")

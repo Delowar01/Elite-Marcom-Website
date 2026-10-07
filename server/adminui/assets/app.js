@@ -122,6 +122,34 @@
   /* Shared Media Library picker. The visual editor has its own inline copy
      bound to its overlay; this one builds its overlay on demand so any screen
      can offer "choose an existing image" without duplicating the markup. */
+  /* A modal built on the same overlay the media picker uses, so the panel has
+     one dialog look rather than two. Returns the box element; the caller wires
+     its own buttons by id. */
+  function openDialog(title, bodyHtml, buttons) {
+    var overlay = document.getElementById("shared-dialog");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "picker-overlay";
+      overlay.id = "shared-dialog";
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", function (e) {
+        if (e.target === overlay || e.target.hasAttribute("data-close")) overlay.hidden = true;
+      });
+    }
+    overlay.innerHTML = '<div class="picker-box dlg-box" role="dialog" aria-modal="true">' +
+      '<div class="picker-head"><h2>' + esc(title) + "</h2>" +
+      '<button class="btn btn--ghost btn--small" type="button" data-close>Close</button></div>' +
+      '<div class="dlg-body">' + bodyHtml + "</div>" +
+      '<div class="admin-actions dlg-foot">' + (buttons || []).map(function (b) {
+        return '<button type="button" class="btn ' +
+          (b.primary ? "btn--primary" : "btn--ghost") + ' btn--small"' +
+          (b.id ? ' id="' + b.id + '"' : "") + (b.close ? " data-close" : "") + ">" +
+          esc(b.label) + "</button>";
+      }).join("") + "</div></div>";
+    overlay.hidden = false;
+    return overlay;
+  }
+
   function mediaPicker(onPick) {
     var overlay = document.getElementById("shared-picker");
     if (!overlay) {
@@ -5991,7 +6019,8 @@
     market: "ksa", terms: [], field: "all", stock: "", brand: "", colour: "",
     category: "", visibility: "", sort: "featured", hideZero: false,
     priceMin: "", priceMax: "",
-    page: 1, perPage: 25, listScroll: 0, gallery: 0, data: null
+    page: 1, perPage: 50, listScroll: 0, gallery: 0, data: null,
+    minStock: "", picked: {}, pickedN: 0
   };
 
   function jzQuery(extra) {
@@ -6001,7 +6030,7 @@
       brand: s.brand, colour: s.colour, category: s.category,
       visibility: s.visibility, hideZero: s.hideZero ? "true" : "false",
       priceMin: s.priceMin, priceMax: s.priceMax,
-      sort: s.sort, page: s.page, perPage: s.perPage
+      sort: s.sort, page: s.page, perPage: s.perPage, minStock: s.minStock
     };
     Object.keys(extra || {}).forEach(function (k) { q[k] = extra[k]; });
     return Object.keys(q).filter(function (k) { return q[k] !== "" && q[k] != null; })
@@ -6119,6 +6148,10 @@
       if (jzState.visibility) chips.push(["visibility", "Website: " +
         ({ visible: "Live", hidden: "Not live", byhand: "Hidden by hand" }[jzState.visibility])]);
       if (jzState.hideZero) chips.push(["hideZero", "Zero stock hidden"]);
+      if (jzState.minStock !== "") {
+        chips.push(["minStock", "Min stock " + jzState.minStock + " (" +
+          jzState.market.toUpperCase() + ")"]);
+      }
       if (jzState.priceMin !== "" || jzState.priceMax !== "") {
         chips.push(["price", "Price " + (jzState.priceMin || "0") + "–" +
           (jzState.priceMax || "any") + " " + cur]);
@@ -6202,8 +6235,25 @@
               '<i aria-hidden="true">–</i>' +
               '<input id="jz-pmax" type="number" min="0" step="0.01" placeholder="Max" aria-label="Maximum price" value="' + esc(jzState.priceMax) + '">' +
               "<em>" + esc(cur) + " ex VAT</em></span>" : "") +
+            /* Minimum stock reads the market being viewed — the toolbar says so,
+               because KSA and UAE quantities are different numbers and silently
+               mixing them would be worse than offering no filter at all. */
+            '<span class="jz-minstock"><label for="jz-minstock">Min stock</label>' +
+            '<input id="jz-minstock" type="number" min="0" step="1" inputmode="numeric" ' +
+              'placeholder="any" aria-label="Minimum available quantity" value="' +
+              esc(jzState.minStock) + '">' +
+            "<em>" + esc(jzState.market.toUpperCase()) + " available</em></span>" +
             '<button class="btn btn--ghost btn--small jz-export" id="jz-export">Export ▾</button>' +
+            '<button class="btn btn--primary btn--small" id="jz-catalogue">Generate PDF Catalogue</button>' +
           "</div>" +
+          /* how old the quantities are, next to the control that filters on
+             them — nothing here ever triggers a sync */
+          '<p class="jz-fresh">' + esc(jzState.market.toUpperCase()) + " stock last synced: <b>" +
+            (d.snapshot && d.snapshot.stockAt ? esc(when(d.snapshot.stockAt))
+              : "never — quantities are unknown") + "</b>" +
+            (d.stockKnown === false
+              ? ' <span class="jz-fresh__warn">A minimum-stock filter cannot be applied until a stock sync has run.</span>'
+              : "") + "</p>" +
           (chips.length ? '<div class="jz-applied"><span class="muted">Filters:</span>' +
             chips.map(function (c) {
               return '<span class="jz-chip">' + esc(c[1]) +
@@ -6231,7 +6281,18 @@
               '<a href="#jasani">Jasani console</a> to do it now. Booked stock arrives with ' +
               "the next stock call.</div>"
             : "") +
+          /* selection lives above the table so it is reachable without
+             scrolling past five hundred rows */
+          '<div class="jz-select-bar">' +
+            '<button type="button" class="btn btn--ghost btn--small" id="jz-pick-page">Select visible</button>' +
+            '<button type="button" class="btn btn--ghost btn--small" id="jz-pick-all">Select all ' +
+              jzNum(d.matched) + "</button>" +
+            '<button type="button" class="btn btn--ghost btn--small" id="jz-pick-none"' +
+              (jzState.pickedN ? "" : " disabled") + ">Clear</button>" +
+            '<b id="jz-pick-count">' + jzNum(jzState.pickedN) + " selected</b></div>" +
           '<div class="table-scroll"><table class="jz-table"><thead><tr>' +
+            '<th class="jz-pick"><input type="checkbox" id="jz-pick-head" ' +
+              'aria-label="Select the items on this page"></th>' +
             "<th>SN</th><th></th><th>SKU</th><th>Name</th><th>Brand</th><th>Colour</th>" +
             (prices ? '<th class="jz-num">Price</th>' : "") +
             '<th class="jz-num">Available</th><th class="jz-num">Incoming</th>' +
@@ -6241,6 +6302,9 @@
               var cls = it.available === 0 ? " jz-stock--out"
                 : (it.available <= d.lowThreshold ? " jz-stock--low" : "");
               return '<tr' + (it.live ? "" : ' class="is-hidden"') + ' data-jzid="' + esc(it.id) + '">' +
+                '<td class="jz-pick"><input type="checkbox" data-jzpick="' + esc(it.id) + '"' +
+                  (jzState.picked[it.id] ? " checked" : "") + ' aria-label="Select ' +
+                  esc(it.name) + '"></td>' +
                 '<td class="jz-sn">' + ((d.page - 1) * d.perPage + i + 1) + "</td>" +
                 '<td class="jz-cell-img"><span class="jz-img">' + (it.image
                   ? '<img src="' + esc(it.image) + '" alt="" loading="lazy">' : "") +
@@ -6267,7 +6331,7 @@
                 '<td class="jz-cell-actions cell-actions"><button class="dots-btn" data-jzrow="' +
                   esc(it.id) + '" aria-label="Actions for ' + esc(it.code) + '">⋮</button></td></tr>';
             }).join("")
-              : '<tr><td colspan="12">' + (t.all
+              : '<tr><td colspan="13">' + (t.all
                   ? emptyState("Nothing matches",
                                "Try removing a filter, or search a different SKU.")
                   /* "try removing a filter" is unhelpful advice when there is
@@ -6281,7 +6345,7 @@
               jzNum(Math.min(d.page * d.perPage, d.matched)) : "0") + " of " + jzNum(d.matched) + "</span>" +
             '<span class="jz-foot__spacer"></span>' +
             '<label style="display:flex;gap:7px;align-items:center;">Per page<select id="jz-per">' +
-            [25, 50, 100].map(function (v) {
+            (d.perPageOptions || [20, 50, 100, 250, 500]).map(function (v) {
               return '<option value="' + v + '"' + (d.perPage === v ? " selected" : "") + ">" + v + "</option>";
             }).join("") + "</select></label>" +
             '<span class="jz-pager">' +
@@ -6316,6 +6380,136 @@
       last = n;
     });
     return html;
+  }
+
+  /* ---------------- PDF catalogue ----------------
+     Everything here reads the snapshot the scheduled sync already wrote. No
+     control on this screen can reach the supplier, so a catalogue never
+     spends one of the market's five daily calls. */
+  function jzCatalogue() {
+    var d = jzState.data || {};
+    var picked = Object.keys(jzState.picked);
+    var filtered = (d.ids || []).length;
+    var scope = picked.length ? "selected" : "filtered";
+    var count = picked.length || filtered;
+    if (!count) {
+      toast("Nothing to put in a catalogue — select some items first.", true);
+      return;
+    }
+    var stamp = (d.snapshot && d.snapshot.stockAt) ? when(d.snapshot.stockAt) : "";
+    var body =
+      '<div class="admin-form cat-form">' +
+      '<div class="full"><label for="cat-title">Catalogue title</label>' +
+      '<textarea id="cat-title" rows="2" maxlength="120">Elite Marcom\nProduct Catalogue</textarea></div>' +
+      '<div><label for="cat-market">Market</label><select id="cat-market">' +
+        ["ksa", "uae"].map(function (m) {
+          return '<option value="' + m + '"' + (jzState.market === m ? " selected" : "") +
+            ">" + m.toUpperCase() + "</option>";
+        }).join("") + "</select></div>" +
+      '<div><label for="cat-min">Minimum stock</label>' +
+      '<input id="cat-min" type="number" min="0" step="1" placeholder="any" value="' +
+        esc(jzState.minStock) + '"></div>' +
+      '<div class="full"><label>Products</label>' +
+      '<div class="cat-scope">' +
+        '<label class="ed-check"><input type="radio" name="cat-scope" value="selected"' +
+          (picked.length ? " checked" : " disabled") + "> Selected items: <b>" +
+          jzNum(picked.length) + "</b></label>" +
+        '<label class="ed-check"><input type="radio" name="cat-scope" value="filtered"' +
+          (picked.length ? "" : " checked") + "> All filtered items: <b>" +
+          jzNum(filtered) + "</b></label></div></div>" +
+      '<div class="full"><label>Include on each page</label><div class="cat-opts">' +
+        [["desc", "Item description", true], ["specs", "Specifications", true],
+         ["qty", "Available quantity", true], ["date", "Stock date", true],
+         ["code", "Item code", true], ["toc", "Contents page", false]].map(function (o) {
+          return '<label class="ed-check"><input type="checkbox" data-cat="' + o[0] + '"' +
+            (o[2] ? " checked" : "") + "> " + o[1] + "</label>";
+        }).join("") + "</div></div>" +
+      '<p class="full admin-inline-note">Quantities come from the stored snapshot' +
+        (stamp ? " — stock as of <b>" + esc(stamp) + "</b>" : "") +
+        ". Generating a catalogue never contacts the supplier. " +
+        "<b>No prices appear in this document.</b></p>" +
+      '<div class="full cat-progress" id="cat-progress" hidden>' +
+        '<p id="cat-progress-text">Preparing catalogue…</p>' +
+        '<div class="up-bar"><span id="cat-bar" style="width:0%"></span></div></div>' +
+      "</div>";
+    var dlg = openDialog("Generate PDF catalogue", body, [
+      { label: "Generate", primary: true, id: "cat-go" },
+      { label: "Cancel", close: true }
+    ]);
+    var go = document.getElementById("cat-go");
+    go.addEventListener("click", function () {
+      if (go.disabled) return;
+      go.disabled = true;                       // one click, one catalogue
+      var opt = function (k) {
+        var el = dlg.querySelector('[data-cat="' + k + '"]');
+        return !!(el && el.checked);
+      };
+      var chosen = dlg.querySelector('input[name="cat-scope"]:checked');
+      var useScope = chosen ? chosen.value : scope;
+      document.getElementById("cat-progress").hidden = false;
+      document.getElementById("cat-progress-text").textContent = "Preparing catalogue…";
+      api("/api/admin/jasani/catalogue", {
+        market: document.getElementById("cat-market").value,
+        title: document.getElementById("cat-title").value,
+        ids: useScope === "selected" ? picked : [],
+        scope: useScope,
+        minStock: document.getElementById("cat-min").value.trim(),
+        q: jzState.terms.join(","), field: jzState.field, stock: jzState.stock,
+        brand: jzState.brand, colour: jzState.colour, category: jzState.category,
+        visibility: jzState.visibility, hideZero: !!jzState.hideZero, sort: jzState.sort,
+        description: opt("desc"), specs: opt("specs"), stockQty: opt("qty"),
+        stockDate: opt("date"), code: opt("code"), contents: opt("toc")
+      }).then(function (r) {
+        if (!r.ok) { go.disabled = false; document.getElementById("cat-progress").hidden = true; return apiErr(r); }
+        jzCatalogueWatch(r.data.token, r.data.items, dlg, go);
+      });
+    });
+  }
+
+  function jzCatalogueWatch(token, total, dlg, go) {
+    var text = document.getElementById("cat-progress-text");
+    var bar = document.getElementById("cat-bar");
+    var timer = setInterval(function () {
+      api("/api/admin/jasani/catalogue/status?token=" + encodeURIComponent(token))
+        .then(function (r) {
+          if (!r.ok) { clearInterval(timer); go.disabled = false; return apiErr(r); }
+          var j = r.data.job || {};
+          var done = j.done || 0;
+          var pct = total ? Math.round((done / total) * 100) : 0;
+          if (bar) bar.style.width = pct + "%";
+          if (text) {
+            text.textContent =
+              j.state === "images" ? "Collecting product images… " + done + " of " + total
+              : j.state === "drawing" ? "Generating PDF… " + done + " of " + total
+              : j.state === "done" ? "Complete — " + jzNum(total) + " products."
+              : j.state === "failed" ? (j.error || "The catalogue could not be built.")
+              : "Preparing catalogue…";
+          }
+          if (j.state === "failed") {
+            clearInterval(timer);
+            go.disabled = false;
+            toast(j.error || "The catalogue could not be built.", true);
+            return;
+          }
+          if (j.state === "done" && j.ready) {
+            clearInterval(timer);
+            if (bar) bar.style.width = "100%";
+            var link = document.getElementById("cat-download");
+            if (!link) {
+              link = document.createElement("a");
+              link.id = "cat-download";
+              link.className = "btn btn--primary btn--small";
+              link.style.marginTop = "10px";
+              link.textContent = "Download PDF";
+              document.getElementById("cat-progress").appendChild(link);
+            }
+            link.href = "/api/admin/jasani/catalogue/download?token=" + encodeURIComponent(token);
+            go.disabled = true;
+            go.textContent = "Generated";
+            toast("Catalogue ready — " + jzNum(total) + " products.");
+          }
+        });
+    }, 900);
   }
 
   function jzReload(resetPage) {
@@ -6421,8 +6615,82 @@
     });
     document.getElementById("jz-per").addEventListener("change", function () {
       jzState.perPage = parseInt(this.value, 10);
+      jzState.page = 1;          // page 7 of 20-per-page is not page 7 of 500
       jzReload();
     });
+
+    /* ---------------- minimum stock ---------------- */
+    var minStock = document.getElementById("jz-minstock");
+    if (minStock) {
+      var minTimer = 0;
+      minStock.addEventListener("input", function () {
+        clearTimeout(minTimer);
+        minTimer = setTimeout(function () {
+          var v = minStock.value.trim();
+          if (v !== "" && (!/^\d+$/.test(v) || +v < 0)) return;   // no negatives
+          jzState.minStock = v;
+          jzState.page = 1;
+          jzReload();
+        }, 420);
+      });
+    }
+
+    /* ---------------- selection ----------------
+       Ids are kept in a map rather than as rows, so "select all filtered"
+       does not need five hundred checkboxes in the document. */
+    function jzPickCount() {
+      jzState.pickedN = Object.keys(jzState.picked).length;
+      var box = document.getElementById("jz-pick-count");
+      if (box) box.textContent = jzNum(jzState.pickedN) + " selected";
+      var none = document.getElementById("jz-pick-none");
+      if (none) none.disabled = !jzState.pickedN;
+      var head = document.getElementById("jz-pick-head");
+      var boxes = main.querySelectorAll("[data-jzpick]");
+      if (head && boxes.length) {
+        var on = 0;
+        boxes.forEach(function (b) { if (b.checked) on++; });
+        head.checked = on === boxes.length;
+        head.indeterminate = on > 0 && on < boxes.length;
+      }
+    }
+    main.querySelectorAll("[data-jzpick]").forEach(function (box) {
+      box.addEventListener("change", function () {
+        var id = box.getAttribute("data-jzpick");
+        if (box.checked) jzState.picked[id] = true; else delete jzState.picked[id];
+        jzPickCount();
+      });
+    });
+    function jzPickVisible(on) {
+      main.querySelectorAll("[data-jzpick]").forEach(function (box) {
+        box.checked = on;
+        var id = box.getAttribute("data-jzpick");
+        if (on) jzState.picked[id] = true; else delete jzState.picked[id];
+      });
+      jzPickCount();
+    }
+    var pickHead = document.getElementById("jz-pick-head");
+    if (pickHead) pickHead.addEventListener("change", function () { jzPickVisible(pickHead.checked); });
+    var pickPage = document.getElementById("jz-pick-page");
+    if (pickPage) pickPage.addEventListener("click", function () { jzPickVisible(true); });
+    var pickNone = document.getElementById("jz-pick-none");
+    if (pickNone) pickNone.addEventListener("click", function () {
+      jzState.picked = {};
+      jzPickVisible(false);
+    });
+    var pickAll = document.getElementById("jz-pick-all");
+    if (pickAll) pickAll.addEventListener("click", function () {
+      /* the server already sent every matching id with the page, so selecting
+         the whole result costs no extra request */
+      ((jzState.data || {}).ids || []).forEach(function (id) { jzState.picked[id] = true; });
+      main.querySelectorAll("[data-jzpick]").forEach(function (b) { b.checked = true; });
+      jzPickCount();
+      toast(jzNum(jzState.pickedN) + " items selected.");
+    });
+    jzPickCount();
+
+    /* ---------------- the catalogue ---------------- */
+    var catBtn = document.getElementById("jz-catalogue");
+    if (catBtn) catBtn.addEventListener("click", function () { jzCatalogue(); });
     main.querySelectorAll("[data-jzpage]").forEach(function (b) {
       b.addEventListener("click", function () {
         var v = b.getAttribute("data-jzpage");
@@ -6452,7 +6720,9 @@
     });
     main.querySelectorAll("tbody tr[data-jzid]").forEach(function (tr) {
       tr.addEventListener("click", function (e) {
-        if (e.target.closest(".dots-btn")) return;
+        // the row opens the item; the menu button and the selection box are
+        // controls of their own and must not navigate away
+        if (e.target.closest(".dots-btn") || e.target.closest(".jz-pick")) return;
         jzState.listScroll = window.scrollY;
         location.hash = "#items/" + jzState.market + "/" +
           encodeURIComponent(tr.getAttribute("data-jzid"));

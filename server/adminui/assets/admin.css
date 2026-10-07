@@ -1950,6 +1950,34 @@ button.stat-card:focus-visible { outline: 2px solid var(--orange-2); outline-off
 }
 .jobs-chips button[aria-pressed="true"] { background: var(--orange); border-color: var(--orange); color: #fff; }
 .jobs-chips button b { font-weight: 800; opacity: 0.8; margin-left: 4px; }
+/* ---- Jasani: minimum stock, selection, catalogue dialog ---- */
+.jz-minstock { display: inline-flex; align-items: center; gap: 6px; }
+.jz-minstock label { font-size: 0.78rem; color: var(--text-muted); margin: 0; }
+.jz-minstock input { width: 86px; }
+.jz-minstock em { font-size: 0.68rem; color: var(--text-muted); font-style: normal; }
+.jz-fresh { margin: 10px 0 0; font-size: 0.76rem; color: var(--text-muted); }
+.jz-fresh b { color: var(--text); }
+.jz-fresh__warn { color: var(--orange); }
+.jz-select-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 0 12px; border-bottom: 1px solid var(--adm-line); margin-bottom: 10px;
+}
+.jz-select-bar b { margin-left: auto; font-size: 0.82rem; }
+th.jz-pick, td.jz-pick { width: 30px; padding-right: 0 !important; text-align: center; }
+.jz-pick input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--orange-2); }
+.dlg-box { max-width: 640px; width: min(640px, 94vw); }
+.dlg-body { padding: 4px 2px 0; max-height: 64vh; overflow: auto; }
+.dlg-foot { margin-top: 14px; justify-content: flex-end; }
+.cat-form textarea { resize: vertical; }
+.cat-scope { display: flex; flex-direction: column; gap: 6px; }
+.cat-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 6px 14px; }
+.cat-progress p { margin: 0 0 6px; font-size: 0.82rem; }
+@media (max-width: 720px) {
+  .jz-select-bar b { margin-left: 0; width: 100%; }
+  .jz-minstock { width: 100%; }
+  .jz-minstock input { flex: 1 1 auto; width: auto; }
+}
+
 /* ---- visual editor: spacing ----
    One row per CSS side. The row says whether the value is the site's own or
    an override, because "why is this element different" is the question this
