@@ -6382,6 +6382,18 @@
     return html;
   }
 
+  /* Suppliers put price text in customer fields — "RRP: SAR 45" in the
+     middle of an otherwise useful description. The catalogue removes it
+     before rendering, and says so: a silent edit to a customer document is
+     worse than an unremarkable note about one. Nothing alarming, and never
+     the figure that was removed. */
+  function catCleanupNote(j) {
+    var n = (j || {}).sanitizedProducts || 0;
+    if (!n) return "";
+    return " Price-related supplier text was removed from "
+      + jzNum(n) + (n === 1 ? " product." : " products.");
+  }
+
   /* ---------------- PDF catalogue ----------------
      Everything here reads the snapshot the scheduled sync already wrote. No
      control on this screen can reach the supplier, so a catalogue never
@@ -6482,6 +6494,7 @@
               j.state === "images" ? "Collecting product images… " + done + " of " + total
               : j.state === "drawing" ? "Generating PDF… " + done + " of " + total
               : j.state === "done" ? "Complete — " + jzNum(total) + " products."
+                  + catCleanupNote(j)
               : j.state === "failed" ? (j.error || "The catalogue could not be built.")
               : "Preparing catalogue…";
           }

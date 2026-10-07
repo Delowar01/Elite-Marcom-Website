@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import time
 
 import pytest
@@ -508,10 +509,16 @@ def test_a_number_that_happens_to_equal_a_price_is_not_a_leak(price, field, valu
     "Retail price: 100 SAR", "Unit price 12", "Billed in AED",
     "List price on request", "RRP 40", "Selling price fixed", "Ex VAT",
 ])
-def test_the_finished_document_guard_still_catches_a_real_indicator(injected):
+def test_the_finished_document_guard_still_catches_a_real_indicator(injected,
+                                                                   monkeypatch):
     """Second line of defence. A price label or a currency, however it got
     onto the page, is refused — and refused at build time, so a document
-    carrying one is never handed to anybody."""
+    carrying one is never handed to anybody.
+
+    The sanitizer is switched off here on purpose: it would remove every one
+    of these before a page was drawn, and then this would be a test of the
+    sanitizer rather than of the guard behind it."""
+    monkeypatch.setattr(cat, "sanitize_catalogue_text", lambda v, f="": v)
     with pytest.raises(cat.CatalogueError) as exc:
         cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 5,
                     "availableKnown": True, "description": injected}], {},
@@ -528,10 +535,15 @@ def test_the_guard_is_not_a_no_op():
                       {}, market="ksa", title="T", stock_at=STOCK_AT,
                       stock_is_known=True)
     assert "Priced fairly" in cat.extract_text(clean)
-    with pytest.raises(cat.CatalogueError):
-        cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 5,
-                    "availableKnown": True, "description": "Priced in SAR."}],
-                  {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
+    #: the sanitizer would remove the currency before a page was drawn, so it
+    #: is switched off to leave the guard the only thing standing
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cat, "sanitize_catalogue_text", lambda v, f="": v)
+        with pytest.raises(cat.CatalogueError):
+            cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 5,
+                        "availableKnown": True, "description": "Priced in SAR."}],
+                      {}, market="ksa", title="T", stock_at=STOCK_AT,
+                      stock_is_known=True)
 
 
 def test_an_honest_description_is_not_mistaken_for_a_price():
@@ -1207,3 +1219,243 @@ def test_the_dto_reads_a_quantity_in_either_shape():
     assert "10 units" in cat.extract_text(
         cat.build([nested], {}, market="ksa", title="T", stock_at=STOCK_AT,
                   stock_is_known=True))
+
+
+# ---------------- the production failure: supplier price text ----------------
+#
+# "a price indicator reached the catalogue: 'rrp'" was a real Jasani product
+# with "RRP: SAR 45" inside its description. Refusing the document is the
+# right last resort, but one careless supplier sentence must not make a
+# catalogue impossible — so the text is cleaned on the way in and the guard
+# then has nothing to find.
+
+def _priced_snapshot(tmp_path, monkeypatch, products):
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    rows = []
+    for n, extra in enumerate(products):
+        row = {"id": str(n + 1), "code": f"ITGL {1291 + n}", "name": f"Item {n}",
+               "brand": "Jasani", "color": "Black", "categories": ["Drinkware"],
+               "description": "", "image": "", "images": [],
+               "stock": {"available": 100, "known": True, "incoming": 0}}
+        row.update(extra)
+        rows.append(row)
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": rows}),
+        encoding="utf-8")
+    return rows
+
+
+def test_a_the_production_record_builds_and_keeps_the_useful_description(tmp_path,
+                                                                        monkeypatch):
+    """Case A — the exact shape that failed in production."""
+    _priced_snapshot(tmp_path, monkeypatch, [{
+        "name": "Premium Bottle",
+        "description": "Premium Bottle. RRP: SAR 45. Capacity 500 ml.",
+        "capacity": "500 ml"}])
+    text = cat.extract_text(pdf_for(["1"]))
+    assert "Premium Bottle" in text
+    assert "Capacity 500 ml" in text or "500 ml" in text
+    assert "rrp" not in text.lower()
+    assert not re.search(r"\b(?:sar|aed|usd)\b", text, re.I)
+    assert not re.search(r"\b45\b", text), "the amount went with its currency"
+    assert "100 units" in text, "the quantity is unaffected"
+
+
+def test_b_a_description_that_is_only_a_price_is_omitted(tmp_path, monkeypatch):
+    """Case B — nothing useful to keep, so the field simply does not print."""
+    _priced_snapshot(tmp_path, monkeypatch, [{
+        "name": "Canvas Tote", "description": "Retail Price: AED 29"}])
+    text = cat.extract_text(pdf_for(["1"]))
+    assert "Canvas Tote" in text
+    assert "Retail Price" not in text and "AED" not in text
+    #: a word boundary, because the product code is ITGL 1291 and a bare "29"
+    #: substring test would be reading the code rather than the amount
+    assert not re.search(r"\b29\b", text)
+
+
+def test_c_ordinary_words_that_look_like_prices_survive(tmp_path, monkeypatch):
+    """Case C — "low cost" is a description, not a price."""
+    _priced_snapshot(tmp_path, monkeypatch, [{
+        "name": "Value Pen",
+        "description": "Low cost, high quality. A price-conscious design."}])
+    text = cat.extract_text(pdf_for(["1"]))
+    assert "Low cost, high quality." in text
+    assert "price-conscious design" in text
+
+
+def test_d_a_capacity_that_equals_a_price_still_prints(tmp_path, monkeypatch):
+    """Case D — the numeric false positive stays fixed: 500 ml beside a
+    supplier price of 500."""
+    _priced_snapshot(tmp_path, monkeypatch, [{
+        "name": "Half Litre Bottle", "capacity": "500 ml",
+        "description": "Holds 500 ml.", "cartonWeight": "9.5 kg"}])
+    text = cat.extract_text(pdf_for(["1"]))
+    assert "500 ml" in text
+    assert "9.5 kg" in text
+
+
+def test_e_a_quantity_that_equals_a_price_still_prints(tmp_path, monkeypatch):
+    """Case E — 100 in stock beside a supplier price of 100."""
+    _priced_snapshot(tmp_path, monkeypatch, [{"name": "Hundred Item"}])
+    assert "100 units" in cat.extract_text(pdf_for(["1"]))
+
+
+def test_f_a_price_option_is_left_out_and_the_others_kept(tmp_path, monkeypatch):
+    """Case F — one bad option costs that option, not the row."""
+    _priced_snapshot(tmp_path, monkeypatch, [{
+        "name": "Three Colours", "options": ["Black", "RRP 20 SAR", "Blue"]}])
+    text = cat.extract_text(pdf_for(["1"]))
+    assert "Black" in text and "Blue" in text
+    assert "RRP" not in text and not re.search(r"\b20\b", text)
+
+
+def test_g_bypassing_the_sanitizer_still_fails_the_document(snapshot, monkeypatch):
+    """Case G — the final guard is still fail-closed. Sanitization is the
+    first answer, never the only one."""
+    def unsanitized(value, field=""):
+        return value                           # the sanitizer, switched off
+
+    monkeypatch.setattr(cat, "sanitize_catalogue_text", unsanitized)
+    with pytest.raises(cat.CatalogueError) as exc:
+        cat.build([{"id": "1", "code": "A", "name": "Leaky",
+                    "description": "Retail Price: 100 SAR"}],
+                  {}, market="ksa", title="T", stock_at=STOCK_AT,
+                  stock_is_known=True)
+    assert "price indicator" in str(exc.value)
+
+
+def test_the_guard_still_runs_on_every_finished_document():
+    """Not a mock: `Document.finish` really calls it, so no path can skip."""
+    import inspect
+
+    assert "assert_price_free" in inspect.getsource(cat.Document.finish)
+    assert "rrp" in cat.PRICE_WORDS, "the indicator was not quietly deleted"
+
+
+@pytest.mark.parametrize("raw,field,expected", [
+    # the four worked examples from the bug report
+    ("Premium stainless steel bottle. RRP: SAR 45. Capacity 500 ml.",
+     "description", "Premium stainless steel bottle. Capacity 500 ml."),
+    ("Material: ABS\nRetail Price: AED 29\nAvailable colours: Black, Blue",
+     "description", "Material: ABS\nAvailable colours: Black, Blue"),
+    ("High quality notebook. RRP available on request.",
+     "description", "High quality notebook."),
+    ("List Price 22.50 SAR", "description", ""),
+    # the label shapes a supplier actually writes
+    ("R.R.P. 99", "description", ""),
+    ("Recommended Retail Price 40", "description", ""),
+    ("Unit Price: 3", "description", ""),
+    ("Selling price 12 AED", "description", ""),
+    ("Reseller Price on request", "description", ""),
+    ("Wholesale Price 12", "description", ""),
+    ("Price: 10", "description", ""),
+    ("Price - 45", "description", ""),
+    ("Quoted ex VAT.", "description", ""),
+    ("Notebook A5. Including VAT.", "description", "Notebook A5."),
+    # and the ordinary words that must survive
+    ("Low cost, high quality.", "description", "Low cost, high quality."),
+    ("A price-conscious design.", "description", "A price-conscious design."),
+    ("Made for the UAE market.", "description", "Made for the UAE market."),
+    ("Saed Classic Pen", "name", "Saed Classic Pen"),
+    ("Priceless craftsmanship.", "description", "Priceless craftsmanship."),
+    # structured values are kept whole or dropped whole
+    ("Black", "color", "Black"),
+    ("500 ml", "capacity", "500 ml"),
+    ("30 x 20 x 15 cm", "cartonDimensions", "30 x 20 x 15 cm"),
+    ("RRP 20 SAR", "option", ""),
+    ("Retail price group", "brand", ""),
+])
+def test_the_sanitizer_on_the_shapes_a_supplier_writes(raw, field, expected):
+    assert cat.sanitize_catalogue_text(raw, field) == expected
+
+
+def test_a_removed_currency_never_leaves_its_amount_behind():
+    """"Retail price: 45 SAR" must not become "45"."""
+    for raw in ("Retail price: 45 SAR", "45 SAR", "SAR 45", "AED 12.50", "USD 5",
+                "R.R.P. 99", "Bottle. RRP - 45. Blue."):
+        out = cat.sanitize_catalogue_text(raw, "description")
+        assert not re.search(r"\b(?:sar|aed|usd)\b", out, re.I), (raw, out)
+        assert not re.search(r"\b(?:45|99|12\.50|5)\b", out), (raw, out)
+
+
+def test_nothing_the_sanitizer_passes_can_trip_the_guard():
+    """The two halves agree: what sanitization keeps, the guard accepts."""
+    for raw in ("Premium bottle. RRP: SAR 45. Holds 500 ml.",
+                "Retail Price: AED 29", "List Price 22.50 SAR", "R.R.P. 99",
+                "Low cost, high quality.", "A price-conscious design.",
+                "Material: ABS\nRetail Price: AED 29\nColours: Black"):
+        kept = cat.sanitize_catalogue_text(raw, "description")
+        if kept:
+            cat.assert_price_free(cat.build(
+                [{"id": "1", "code": "A", "name": "One", "description": kept,
+                  "available": 100, "availableKnown": True}],
+                {}, market="ksa", title="T", stock_at=STOCK_AT,
+                stock_is_known=True))
+
+
+def test_the_cleanup_is_counted_and_reported(tmp_path, monkeypatch):
+    """Silently editing a customer document is worse than saying so. The job
+    carries counts — never the figure that was removed."""
+    _priced_snapshot(tmp_path, monkeypatch, [
+        {"name": "One", "description": "Bottle. RRP: SAR 45. Blue.",
+         "options": ["Black", "Price 20 AED"]},
+        {"name": "Two", "description": "Plain notebook."},
+        {"name": "Three", "description": "Retail Price: AED 29"},
+    ])
+    res = start_catalogue(ids=["1", "2", "3"])
+    assert res.status_code == 200
+    job = finish(res.json()["token"])
+    assert job["state"] == "done"
+    assert job["sanitizedProducts"] == 2, job
+    assert job["sanitizedFields"] == 3, job
+    blob = json.dumps(job)
+    assert "45" not in blob and "29" not in blob, "no removed figure is reported"
+
+
+def test_a_clean_catalogue_reports_no_cleanup(snapshot):
+    res = start_catalogue(ids=["1000"])
+    job = finish(res.json()["token"])
+    assert job["state"] == "done"
+    assert job["sanitizedProducts"] == 0 and job["sanitizedFields"] == 0
+
+
+def test_a_price_name_cannot_slip_in_through_the_contents_page(tmp_path,
+                                                              monkeypatch):
+    """The contents list reads the name separately, so it is sanitized
+    separately — otherwise a priced name would fail the whole document."""
+    _priced_snapshot(tmp_path, monkeypatch, [
+        {"name": "Bottle RRP SAR 45", "description": "A bottle."},
+        {"name": "Notebook", "description": "A notebook."},
+    ])
+    text = cat.extract_text(pdf_for(["1", "2"], contents=True))
+    assert "RRP" not in text and not re.search(r"\b(?:sar|aed)\b", text, re.I)
+    assert not re.search(r"\b45\b", text)
+    assert "Notebook" in text
+
+
+def test_the_audit_script_names_the_field_and_never_the_price(tmp_path,
+                                                              monkeypatch, capsys):
+    """`scripts/audit_catalogue_text.py` answers "which product caused it"
+    from the cache alone — no supplier call, and no supplier price in the
+    output."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "audit_catalogue_text", "scripts/audit_catalogue_text.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod, "CACHE", tmp_path)
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps({"products": [
+        {"id": "1", "code": "ITGL 1291", "name": "Flask",
+         "description": "Steel flask, 500 ml. RRP: SAR 45. Hot for 12 hours.",
+         "options": ["Black", "RRP 20 SAR"]},
+        {"id": "2", "code": "ITGL 1400", "name": "Pad",
+         "description": "Plain notepad."},
+    ]}), encoding="utf-8")
+    hits = mod.audit("ksa")
+    out = capsys.readouterr().out
+    assert hits == 2
+    assert "ITGL 1291" in out and "description" in out
+    assert "ITGL 1400" not in out
+    assert "45" not in out and "20" not in out, "no supplier price is printed"
+    assert "rrp" in out

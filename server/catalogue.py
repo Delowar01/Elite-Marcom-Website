@@ -72,6 +72,120 @@ def clean_text(raw, limit: int = 1200) -> str:
     return text[:limit]
 
 
+# ---------------- supplier price text ----------------
+#
+# A supplier writes what a supplier writes. Real Jasani descriptions carry
+# lines like "RRP: SAR 45", and the finished-document guard — correctly —
+# refuses the whole catalogue over one of them. Refusing is the right last
+# resort and stays; it is the wrong *first* answer, because one careless
+# description must not make a five-hundred page catalogue impossible.
+#
+# So price text is removed from customer-facing fields on the way into the
+# DTO, before a single page is drawn. The guard then has nothing to find —
+# and if it ever does, generation still fails.
+
+#: The labels a price statement wears. Each is an indicator on its own:
+#: "RRP available on request" carries no figure and is still a price
+#: statement.
+_LABELS = r"""(?:
+      r\.?\s?r\.?\s?p\.?\b
+    | recommended\s+retail\s+price
+    | (?:retail|list|unit|selling|resell(?:er)?|whole\s?sale|trade|net|special)
+      \s*-?\s*price
+    | price\s+list
+)"""
+
+#: The currencies the two markets quote in. The finished-document guard
+#: rejects a bare one of these, so the sanitizer has to remove a bare one
+#: too — otherwise a description reading "quoted in SAR" would still fail.
+_CCY = r"(?:sar|aed|usd|dhs)"
+
+#: VAT phrasing, which only ever appears beside a figure.
+_VAT = r"(?:(?:ex(?:cl(?:uding|usive)?)?|incl?(?:uding|usive)?)\.?\s*(?:of\s+)?vat)"
+
+#: "price" alone is far too ordinary a word to treat as a label — a
+#: price-conscious design is a design. It counts only where it is actually
+#: introducing a figure: a colon, a spaced dash, a currency or a number.
+_BARE_PRICE = (r"(?:\bprice\b\s*(?::|\s[-–—]\s)"
+               r"|\bprice\b\s*:?\s*(?:" + _CCY + r"|\d))")
+
+#: A currency with a figure, in either order.
+_CCY_AMOUNT = r"(?:\b" + _CCY + r"\s*\.?\s*\d|\d\s*" + _CCY + r"\b)"
+
+#: Any of these makes the text it sits in a price statement.
+_INDICATOR = re.compile(
+    r"(?:" + _LABELS + r"|" + _VAT + r"|" + _BARE_PRICE + r"|" + _CCY_AMOUNT
+    + r"|\b" + _CCY + r"\b)",
+    re.I | re.X)
+
+#: Where a free-text field may be cut: a sentence of it, or a line of it.
+#: That is the smallest piece worth keeping or dropping on its own.
+_SEGMENT_RE = re.compile(r"[^\n]*?(?:[.;!?](?=\s|$)|$)")
+
+#: A fragment left behind that is nothing but a figure. "R.R.P. 99" splits
+#: into "R.R.P." and "99" — the label goes, and the amount it belonged to
+#: must go with it rather than being printed on its own as a bare number.
+_ONLY_FIGURE = re.compile(r"^[\s\d.,:;%/x\u00d7*+\-\u2013\u2014()\[\]]+$")
+
+#: Fields that are prose, and are therefore cut fragment by fragment.
+#: Everything else is a short structured value — a colour, a material, an
+#: option — where sentence surgery would leave nonsense, so such a value is
+#: kept whole or left out whole.
+FREE_TEXT_FIELDS = ("description", "name")
+
+
+def has_price_text(value) -> bool:
+    """Whether this text carries a supplier price statement."""
+    return bool(value) and bool(_INDICATOR.search(str(value)))
+
+
+def _tidy(text: str) -> str:
+    """Close the gap a removed fragment left, without reflowing the rest."""
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"(?m)^[\s,;:.\-–—]+", "", text)
+    text = re.sub(r"\s+([.,;])", r"\1", text)
+    return text.strip(" \t\n,;:-–—")
+
+
+def sanitize_catalogue_text(value: str, field: str = "") -> str:
+    """Customer text with the supplier's price statements taken out.
+
+    A different job from `clean_text`, which makes a value *printable* — tags
+    gone, control characters gone, "undefined" gone. This one makes a
+    printable value *ours to print*: the description of a bottle is useful to
+    a customer and stays, while the "RRP: SAR 45" in the middle of it is a
+    figure that is not ours to quote and goes.
+
+    Prose is cut fragment by fragment, so one price sentence costs its
+    sentence rather than the whole description. A short structured value is
+    kept whole or dropped whole.
+
+    It never leaves a dangling "RRP:", a stray "SAR", or the amount a deleted
+    currency belonged to: whatever survives is checked again, and a value
+    still carrying an indicator is dropped rather than handed on
+    half-cleaned.
+    """
+    text = value or ""
+    if not text or not _INDICATOR.search(text):
+        return text
+    if field not in FREE_TEXT_FIELDS:
+        return ""                             # a structured value, omitted
+    kept: list[str] = []
+    for line in text.split("\n"):
+        parts = [p for p in _SEGMENT_RE.findall(line) if p.strip()]
+        good = [p.strip() for p in parts
+                if not _INDICATOR.search(p) and not _ONLY_FIGURE.match(p.strip())]
+        if good:
+            kept.append(" ".join(good))
+    out = _tidy("\n".join(kept))
+    #: belt and braces: a value still matching is dropped whole rather than
+    #: printed half-cleaned, because the "45" left behind by a deleted
+    #: "SAR 45" is worse than no sentence at all
+    return "" if _INDICATOR.search(out) else out
+
+
 def _num(value) -> str:
     """1248 → "1,248". Never "1248.000000"."""
     try:
@@ -157,17 +271,30 @@ def _item_known(dto: dict) -> bool:
     return True if known is None else bool(known)
 
 
-def to_dto(item: dict) -> dict:
+def to_dto(item: dict, stats: dict | None = None) -> dict:
     """The record the renderer is given: only allowlisted fields, copied one
-    key at a time out of whatever the snapshot holds.
+    key at a time out of whatever the snapshot holds, each one with the
+    supplier's price text taken out of it.
 
-    This is the whole price guarantee. Nothing is deleted from a supplier
-    dict and passed on — a new price field appearing in a future feed would
-    be carried along by that approach. Here it simply never arrives.
+    Two separate guarantees, and both are needed. The allowlist is why no
+    price *field* can arrive: nothing is deleted from a supplier dict and
+    passed on, because that approach would carry along whatever price key a
+    future feed invents. `sanitize_catalogue_text` is why no price *sentence*
+    can arrive: a description is customer text written by the supplier, and
+    the supplier puts "RRP: SAR 45" in it.
+
+    `stats`, when given, is a counter — `{"products": n, "fields": n}` — so
+    the panel can say that cleanup happened. It carries counts only; a figure
+    that is not ours to show is not ours to log either.
     """
     out: dict = {}
+    touched = 0
     for key in DTO_TEXT_FIELDS:
-        out[key] = clean_text(item.get(key), 1200 if key == "description" else 240)
+        value = clean_text(item.get(key), 1200 if key == "description" else 240)
+        kept = sanitize_catalogue_text(value, key)
+        if kept != value:
+            touched += 1
+        out[key] = kept
     for key in DTO_NUMBER_FIELDS:
         value = item.get(key)
         out[key] = value if isinstance(value, (int, float)) and value > 0 else None
@@ -175,7 +302,16 @@ def to_dto(item: dict) -> dict:
         out[key] = _measure(item.get(key))
     for key in DTO_LIST_FIELDS:
         raw = item.get(key) or []
-        out[key] = [str(v) for v in raw if v][:20] if isinstance(raw, (list, tuple)) else []
+        values = [str(v) for v in raw if v][:20] if isinstance(raw, (list, tuple)) else []
+        if key == "images":
+            out[key] = values                 # URLs, not customer text
+            continue
+        # a category or an option is a short structured value: one that is a
+        # price statement is left out, and the others are unaffected
+        picked = [v for v in values if not has_price_text(v)]
+        if len(picked) != len(values):
+            touched += 1
+        out[key] = picked
     #: The admin rows carry the quantity flat (`_row` lifts it off the
     #: nested stock dict); a normalized product carries it under `stock`.
     #: Read whichever shape arrived, because a DTO that silently dropped the
@@ -196,6 +332,9 @@ def to_dto(item: dict) -> dict:
     #: to the market-level answer, which is how a snapshot written before the
     #: per-product flag existed keeps printing its quantities.
     out["availableKnown"] = None if known is None else bool(known)
+    if stats is not None and touched:
+        stats["products"] = stats.get("products", 0) + 1
+        stats["fields"] = stats.get("fields", 0) + touched
     return out
 
 
@@ -681,6 +820,8 @@ def start(by: str, market: str, total: int) -> str:
             "created": time.time(), "by": by, "market": market,
             "total": total, "done": 0, "state": "preparing", "pdf": None,
             "error": "", "on_finish": None,
+            # how much supplier price text had to be removed — counts only
+            "sanitizedProducts": 0, "sanitizedFields": 0,
             "filename": f"Elite-Marcom-Jasani-Catalogue-"
                         f"{market.upper()}-{stamp}.pdf",
         }
@@ -720,6 +861,9 @@ def collect(token: str) -> None:
 def public(job: dict) -> dict:
     return {"state": job["state"], "done": job["done"], "total": job["total"],
             "error": job["error"], "filename": job["filename"],
+            # ordinary supplier-data cleanup, reported rather than hidden
+            "sanitizedProducts": job.get("sanitizedProducts", 0),
+            "sanitizedFields": job.get("sanitizedFields", 0),
             "ready": job["state"] == "done" and bool(job["pdf"])}
 
 
@@ -776,10 +920,15 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
         heads = []
         for row in rows:
             detail = jasani.item_detail(market, row["id"]) or dict(row)
-            heads.append((clean_text(detail.get("code"), 40) or "—",
-                          clean_text(detail.get("name"), 120) or "Product"))
+            # the same sanitization the page gets: a name carrying a price
+            # statement must not slip into the contents list instead
+            heads.append((sanitize_catalogue_text(
+                              clean_text(detail.get("code"), 40), "code") or "—",
+                          sanitize_catalogue_text(
+                              clean_text(detail.get("name"), 120), "name") or "Product"))
         doc.contents(heads)
     cache: dict[str, bytes | None] = {}
+    stats: dict[str, int] = {}
     job["state"] = "drawing"
     job["done"] = 0
     for n, row in enumerate(rows):
@@ -787,12 +936,14 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
         # the filter's figures win, so the document is one snapshot
         detail["available"] = row.get("available")
         detail["availableKnown"] = row.get("availableKnown")
-        dto = to_dto(detail)
+        dto = to_dto(detail, stats)
         del detail
         photos = await _photos_for(market, dto, cache)
         doc.page(dto, photos)
         del photos, dto                       # released before the next product
         job["done"] = n + 1
+        job["sanitizedProducts"] = stats.get("products", 0)
+        job["sanitizedFields"] = stats.get("fields", 0)
     return doc.finish()
 
 

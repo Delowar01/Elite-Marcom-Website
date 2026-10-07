@@ -940,6 +940,8 @@ async def admin_jasani_catalogue(request: Request, body: CatalogueBody,
                  "jasani.catalogue_generated" if ok else "jasani.catalogue_failed",
                  "jasani",
                  {**detail, "pages": job.get("done", 0),
+                  "sanitizedProducts": job.get("sanitizedProducts", 0),
+                  "sanitizedFields": job.get("sanitizedFields", 0),
                   **({} if ok else {"error": job.get("error", "")[:160]})}, ip)
 
     cat.set_on_finish(token, finished)

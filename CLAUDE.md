@@ -234,6 +234,47 @@ documentation). Non-negotiable rules from it:
   that entry *before* it publishes the terminal state, because the panel
   polls the job from another thread: the other order left a window in which
   the build was over and the log did not yet say so.
+- **A supplier writes what a supplier writes, so customer text is cleaned on
+  the way in.** Production refused a whole catalogue with *"a price indicator
+  reached the catalogue: 'rrp'"* — a real Jasani description carrying
+  "RRP: SAR 45" in the middle of otherwise useful prose. Refusing is the
+  right **last** resort and it stays; it is the wrong first answer, because
+  one careless sentence must not make a five-hundred page document
+  impossible. `sanitize_catalogue_text(value, field)` runs inside `to_dto`,
+  before a page is drawn, and is a different job from `clean_text`:
+  `clean_text` makes a value *printable* (tags, control characters,
+  "undefined"), this makes a printable value *ours to print*.
+  Prose (`FREE_TEXT_FIELDS` — description and name) is cut **fragment by
+  fragment**, so "Premium bottle. RRP: SAR 45. Capacity 500 ml." keeps both
+  real sentences. A short structured value — a colour, a material, an option,
+  a category — is kept whole or dropped whole, because cutting half of a
+  two-word value leaves nonsense: `option = "RRP 20 SAR"` is left out and the
+  Black and Blue beside it are untouched. Three rules worth keeping:
+  - **Nothing is left dangling.** Whatever survives is re-checked, and a
+    value still carrying an indicator is dropped rather than printed
+    half-cleaned — a "45" orphaned by a deleted "SAR 45" is worse than no
+    sentence. `_ONLY_FIGURE` catches the same thing one level down: "R.R.P.
+    99" splits on the abbreviation's dots, and the amount goes with the
+    label.
+  - **A bare currency counts.** The guard rejects a bare `SAR`/`AED`/`USD`,
+    so the sanitizer removes one too; otherwise "quoted in SAR" would still
+    fail the document.
+  - **"price" alone is not a price.** It is far too ordinary a word — a
+    price-conscious design is a design, "low cost" is a description. Bare
+    `price` counts only where it introduces a figure: a colon, a spaced dash,
+    a currency or a number. Every label that *is* unambiguous (RRP, R.R.P.,
+    recommended/retail/list/unit/selling/reseller/wholesale price, ex/incl
+    VAT) counts on its own, because "RRP available on request" carries no
+    figure and is still a price statement.
+  The contents page reads the name separately, so it is sanitized separately.
+  The cleanup is **counted and reported** — `sanitizedProducts` /
+  `sanitizedFields` on the job, in the status payload, in the audit entry and
+  as one unalarming sentence in the panel — because silently editing a
+  customer document is worse than an ordinary note about normal supplier-data
+  cleanup. Counts only: a figure that is not ours to show is not ours to log.
+  `scripts/audit_catalogue_text.py` answers "which product caused it" from
+  the cached snapshot alone — read-only, no supplier call, naming the product
+  code, the field and which indicator matched, never the price.
 - **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
   whenever a parser change means a stored answer could be improved on; an
   entry written under a lower number is treated as absent and rediscovered.
