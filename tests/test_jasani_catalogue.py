@@ -365,7 +365,7 @@ def test_a_five_hundred_product_catalogue_builds_with_real_photographs(snapshot,
     assert "Product Number 000" in text and "Product Number 499" in text
     assert "Page 501" in text and "Page 502" not in text
     assert photos["fetches"] >= 500, "the photographs were really fetched"
-    assert text.count("Image unavailable") == 0, "no page fell back to a placeholder"
+    assert text.count("Photograph unavailable") == 0, "no page fell back to a placeholder"
     assert len(blob) > 500 * 1024, "a catalogue of photographs is not a few bytes"
     assert took < 300, f"took {took:.1f}s"
     print(f"\n  500 products · {photos['fetches']} fetches · "
@@ -433,7 +433,7 @@ def test_one_unreachable_photograph_costs_that_product_only(snapshot, photos,
     monkeypatch.setattr(jasani, "_fetch_image_bytes", flaky)
     blob = pdf_for([str(1000 + i) for i in range(5)])
     text = cat.extract_text(blob)
-    assert text.count("Image unavailable") == 1, "exactly the one that failed"
+    assert text.count("Photograph unavailable") == 1, "exactly the one that failed"
     assert "Product Number 004" in text, "the rest of the catalogue is unharmed"
 
 
@@ -582,8 +582,8 @@ def test_a_generated_catalogue_from_a_priced_snapshot_succeeds(tmp_path, monkeyp
 def test_the_quantity_and_its_date_are_both_on_the_page(snapshot):
     text = cat.extract_text(pdf_for(["1248"]))       # stock 248
     assert "248 units" in text
-    assert "AVAILABLE QUANTITY" in text
-    assert "Stock as of" in text
+    assert "AVAILABLE NOW" in text
+    assert "STOCK UPDATED" in text
     assert time.strftime("%d %B %Y", time.localtime(STOCK_AT)) in text
 
 
@@ -637,7 +637,7 @@ def test_the_stock_date_is_the_sync_not_the_moment_of_generation():
                     {}, market="ksa", title="T", stock_at=old, stock_is_known=True)
     text = cat.extract_text(pdf)
     assert time.strftime("%d %B %Y", time.localtime(old)) in text
-    assert "Catalogue prepared" in text, "the two dates are labelled separately"
+    assert "PREPARED" in text, "the two dates are labelled separately"
 
 
 def test_supplier_html_is_printed_as_words_not_markup():
@@ -684,21 +684,21 @@ def test_a_long_description_and_many_specs_stay_on_one_page():
     text = cat.extract_text(pdf)
     assert "Page 2" in text and "Page 3" not in text
     assert "SPECIFICATIONS" in text and "Units per carton" in text
-    assert "AVAILABLE QUANTITY" in text, "the quantity is never pushed off the page"
+    assert "AVAILABLE NOW" in text, "the quantity is never pushed off the page"
 
 
 def test_a_missing_image_gets_a_placeholder_and_does_not_fail_the_run():
     pdf = cat.build([{"id": "1", "code": "A", "name": "No Photo", "available": 1}],
                     {"1": []}, market="ksa", title="T",
                     stock_at=STOCK_AT, stock_is_known=True)
-    assert "Image unavailable" in cat.extract_text(pdf)
+    assert "Photograph unavailable" in cat.extract_text(pdf)
 
 
 def test_a_corrupt_image_does_not_fail_the_run():
     pdf = cat.build([{"id": "1", "code": "A", "name": "Bad Photo", "available": 1}],
                     {"1": [b"this is not an image"]}, market="ksa", title="T",
                     stock_at=STOCK_AT, stock_is_known=True)
-    assert "Image unavailable" in cat.extract_text(pdf)
+    assert "Photograph unavailable" in cat.extract_text(pdf)
 
 
 def test_the_optional_sections_can_each_be_switched_off(snapshot):
@@ -710,7 +710,7 @@ def test_the_optional_sections_can_each_be_switched_off(snapshot):
     # the cover always names the snapshot date — that is what a cover is for.
     # The option governs the band on the product page, so the phrase appears
     # once rather than twice.
-    assert text.count("Stock as of") == 1
+    assert text.count("STOCK UPDATED") == 1
     assert "248 units" in text
 
 
@@ -727,7 +727,7 @@ def test_the_cover_names_the_market_and_the_count(snapshot):
     text = cat.extract_text(pdf_for([str(1000 + i) for i in range(3)]))
     assert "3 products" in text
     assert "Saudi Arabia" in text and "KSA" in text
-    assert "Catalogue prepared" in text
+    assert "PREPARED" in text and "STOCK UPDATED" in text
 
 
 def test_the_uae_catalogue_is_its_own_market(snapshot):
@@ -842,12 +842,17 @@ def test_a_catalogue_is_recorded_as_requested_then_as_generated(snapshot):
     """Two facts, two entries. "Generated" is written by the worker once the
     document exists — claiming it when the job was merely asked for would be
     an audit trail that records intentions rather than outcomes."""
+    # only this build's entries: other tests in the file generate catalogues
+    # too, and a window of the last 40 rows could pair one build's "requested"
+    # with another's "generated"
+    before = aa.audit_list(1)[0]["id"] if aa.audit_list(1) else 0
     pdf_for(["1000", "1001"], minStock="")
-    actions = [a["action"] for a in aa.audit_list(40)]
+    mine = [a for a in aa.audit_list(60) if a["id"] > before]
+    actions = [a["action"] for a in mine]
     assert "jasani.catalogue_requested" in actions
     assert "jasani.catalogue_generated" in actions
     # requested first, generated after — ids ascend with time
-    entries = {a["action"]: a for a in aa.audit_list(40)
+    entries = {a["action"]: a for a in mine
                if a["action"].startswith("jasani.catalogue")}
     assert entries["jasani.catalogue_requested"]["id"] < \
         entries["jasani.catalogue_generated"]["id"]
@@ -1174,7 +1179,7 @@ def test_a_product_with_three_photographs_draws_and_releases_all_three(photos,
     assert held["pages"] == 8
     assert held["three"] == 8, "every page received all three photographs"
     assert photos["fetches"] == 24, "three per product, fetched once each"
-    assert text.count("Image unavailable") == 0
+    assert text.count("Photograph unavailable") == 0
     assert "Three Shot 0" in text and "Three Shot 7" in text
     # three prepared pictures, not three originals, and released afterwards
     assert held["max"] < 1024 * 1024, held["max"]
@@ -1459,3 +1464,255 @@ def test_the_audit_script_names_the_field_and_never_the_price(tmp_path,
     assert "ITGL 1400" not in out
     assert "45" not in out and "20" not in out, "no supplier price is printed"
     assert "rrp" in out
+
+
+# ---------------- the look of the document ----------------
+#
+# A PDF's appearance cannot be asserted from its text, so these go at the
+# geometry: which pictures the renderer was handed, where each tile was
+# drawn, and how large it is relative to the main one. Rendered pages were
+# reviewed by eye as well — a passing test is not a design review.
+
+class _Tiles:
+    """Every (x, y, w, h) the document draws, split into the cover's hero and
+    the product pages' galleries."""
+
+    def __init__(self):
+        self.all: list[tuple] = []
+        self.cover: list[tuple] = []
+
+    @property
+    def pages(self) -> list[tuple]:
+        return self.all[len(self.cover):]
+
+
+def _tiles(monkeypatch) -> _Tiles:
+    rec = _Tiles()
+    real_tile = cat._photo_tile
+    real_hero = cat._cover_hero
+
+    def watched(c, reader, x, y, w, h, pad=0.0, shadow=False):
+        rec.all.append((round(x, 1), round(y, 1), round(w, 1), round(h, 1)))
+        real_tile(c, reader, x, y, w, h, pad, shadow)
+
+    def hero(c, readers, x, bottom, w, h):
+        start = len(rec.all)
+        real_hero(c, readers, x, bottom, w, h)
+        rec.cover = rec.all[start:]
+
+    monkeypatch.setattr(cat, "_photo_tile", watched)
+    monkeypatch.setattr(cat, "_cover_hero", hero)
+    return rec
+
+
+def _one(photos, **kw):
+    item = {"id": "1", "code": "ITGL 1290", "name": "NAPIER - MagCase - Navy Blue",
+            "brand": "Giftology", "available": 13, "availableKnown": True,
+            "description": "A slim magnetic cardholder.", "categories": ["Mobile"]}
+    item.update(kw)
+    return cat.build([item], {"1": photos}, market="ksa", title="T",
+                     stock_at=STOCK_AT, stock_is_known=True)
+
+
+@pytest.mark.parametrize("n,tiles", [(1, 1), (2, 2), (3, 3), (4, 4), (5, 4), (9, 4)])
+def test_the_gallery_draws_one_tile_per_usable_photograph_up_to_four(n, tiles,
+                                                                    monkeypatch):
+    """Four is the ceiling, not a target: a fifth view would cost the others
+    the room that makes them readable."""
+    rec = _tiles(monkeypatch)
+    _one([jpeg_bytes(seed=i, w=900, h=900) for i in range(n)])
+    assert len(rec.pages) == tiles, rec.pages
+
+
+@pytest.mark.parametrize("n", [2, 3, 4])
+def test_a_secondary_photograph_is_never_a_thumbnail(n, monkeypatch):
+    """The complaint that started this: the main image was large and the rest
+    were 52pt boxes. A supporting view is now a third of the composition."""
+    rec = _tiles(monkeypatch)
+    _one([jpeg_bytes(seed=i, w=900, h=900) for i in range(n)])
+    drawn = rec.pages
+    main = drawn[0][2] * drawn[0][3]
+    for x, y, w, h in drawn[1:]:
+        assert min(w, h) >= 70, f"a {w:.0f}x{h:.0f} tile is a thumbnail"
+        assert w * h >= main * 0.12, "a supporting view must be legible"
+    # and the main picture leads without swallowing the page
+    total = sum(w * h for _, _, w, h in drawn)
+    assert 0.5 <= main / total <= 0.72, main / total
+
+
+def test_one_photograph_fills_the_gallery(monkeypatch):
+    rec = _tiles(monkeypatch)
+    _one([jpeg_bytes(w=900, h=900)])
+    assert len(rec.pages) == 1
+    assert rec.pages[0][2] > cat.PAGE_W - 2 * cat.M - 1, "a single view spans the page"
+
+
+def test_two_photographs_sit_side_by_side(monkeypatch):
+    rec = _tiles(monkeypatch)
+    _one([jpeg_bytes(seed=i, w=900, h=900) for i in range(2)])
+    (x1, y1, w1, h1), (x2, y2, w2, h2) = rec.pages
+    assert x2 > x1 + w1, "the second is beside the first, not beneath it"
+    assert abs(h1 - h2) < 1, "both are full height"
+    assert 0.55 < w1 / (w1 + w2) < 0.70, "roughly a 64/36 split"
+
+
+def test_three_photographs_stack_two_beside_the_main(monkeypatch):
+    rec = _tiles(monkeypatch)
+    _one([jpeg_bytes(seed=i, w=900, h=900) for i in range(3)])
+    main, upper, lower = rec.pages
+    assert upper[0] > main[0] + main[2] - 1 and lower[0] == upper[0]
+    assert upper[1] > lower[1], "stacked, upper first"
+    assert abs(upper[2] - lower[2]) < 1 and abs(upper[3] - lower[3]) < 1
+
+
+def test_four_photographs_stack_three_beside_the_main(monkeypatch):
+    """Not a full-width fourth strip: a portrait product in a 500x75
+    letterbox is a picture nobody can read."""
+    rec = _tiles(monkeypatch)
+    _one([jpeg_bytes(seed=i, w=900, h=900) for i in range(4)])
+    drawn = rec.pages
+    main = drawn[0]
+    for tile in drawn[1:]:
+        assert tile[0] > main[0] + main[2] - 1, "all three are in the side column"
+        assert tile[2] < main[2], "and none is wider than the main picture"
+
+
+def test_a_repeated_photograph_is_shown_once(monkeypatch):
+    """Suppliers list the same file twice. Spending half the gallery on a
+    duplicate is worse than showing one view."""
+    blob = jpeg_bytes(w=900, h=900)
+    rec = _tiles(monkeypatch)
+    _one([blob, blob, blob])
+    assert len(rec.pages) == 1
+
+
+def test_an_unusable_photograph_does_not_take_a_tile(monkeypatch):
+    rec = _tiles(monkeypatch)
+    _one([b"not an image", jpeg_bytes(w=900, h=900), b""])
+    assert len(rec.pages) == 1
+
+
+def test_a_product_with_no_photograph_says_so_once(monkeypatch):
+    rec = _tiles(monkeypatch)
+    text = cat.extract_text(_one([]))
+    assert rec.all == [], "no tile is drawn for a product with no picture"
+    assert text.count("Photograph unavailable") == 1
+    assert "Images can be supplied on request" in text
+
+
+def test_the_cover_shows_real_products_from_this_catalogue(monkeypatch):
+    """A hero composition, built from the catalogue's own first pictures."""
+    rec = _tiles(monkeypatch)
+    items = [{"id": str(n), "code": f"C{n}", "name": f"Item {n}", "available": 5,
+              "availableKnown": True} for n in range(3)]
+    photos = {str(n): [jpeg_bytes(seed=n, w=900, h=900)] for n in range(3)}
+    cat.build(items, photos, market="ksa", title="T", stock_at=STOCK_AT,
+              stock_is_known=True)
+    # three on the cover, then one per product page
+    assert len(rec.cover) == 3 and len(rec.pages) == 3, rec.all
+    cover = rec.cover
+    assert cover[0][2] * cover[0][3] > cover[1][2] * cover[1][3], "one leads"
+    assert all(h > 60 for _, _, _, h in cover), "none of them is a thumbnail"
+
+
+def test_the_cover_hero_is_bounded_to_four_pictures(monkeypatch):
+    rec = _tiles(monkeypatch)
+    items = [{"id": str(n), "code": f"C{n}", "name": f"Item {n}", "available": 5,
+              "availableKnown": True} for n in range(9)]
+    photos = {str(n): [jpeg_bytes(seed=n, w=600, h=600)] for n in range(9)}
+    cat.build(items, photos, market="ksa", title="T", stock_at=STOCK_AT,
+              stock_is_known=True)
+    assert len(rec.cover) == cat.COVER_IMAGES, "the cover never grows past four"
+    assert len(rec.pages) == 9
+
+
+def test_a_catalogue_with_no_pictures_still_has_a_designed_cover(monkeypatch):
+    """A broken placeholder on a cover is worse than a cover without
+    pictures, so the typography takes the page instead."""
+    rec = _tiles(monkeypatch)
+    text = cat.extract_text(cat.build(
+        [{"id": "1", "code": "A", "name": "Item", "available": 2,
+          "availableKnown": True}], {}, market="ksa",
+        title="Elite Marcom\nProduct Catalogue", stock_at=STOCK_AT,
+        stock_is_known=True))
+    assert rec.all == []
+    assert "PRODUCT CATALOGUE" in text and "Elite Marcom" in text
+    assert "Saudi Arabia" in text and "1 product" in text
+
+
+@pytest.mark.parametrize("name,parts", [
+    ("NAPIER - MagCase Phone Cardholder - Navy Blue",
+     ("NAPIER", "MagCase Phone Cardholder", "Navy Blue")),
+    ("Mug - Navy Blue", ("", "Mug", "Navy Blue")),
+    ("Simple Pen", ("", "Simple Pen", "")),
+    ("NAPIER - A rather longer descriptive product name here",
+     ("NAPIER", "A rather longer descriptive product name here", "")),
+])
+def test_a_supplier_name_is_set_as_a_hierarchy(name, parts):
+    assert cat.name_parts(name) == parts
+
+
+def test_every_word_of_the_name_still_reaches_the_page():
+    """The hierarchy is presentation. A name that lost a word would be a
+    different product."""
+    name = "NAPIER - MagCase Phone Cardholder - Navy Blue"
+    text = cat.extract_text(_one([], name=name))
+    for word in ("NAPIER", "MagCase Phone Cardholder", "Navy Blue"):
+        assert word in text, word
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Elite Marcom\nProduct Catalogue", ("Elite Marcom", "Product Catalogue")),
+    ("Corporate Gifts Product Catalogue", ("Corporate Gifts", "Product Catalogue")),
+    ("Ramadan Selection 2026", ("Corporate gifts", "Ramadan Selection 2026")),
+])
+def test_the_cover_title_is_split_into_a_hierarchy(title, expected):
+    assert cat.cover_title(title) == expected
+
+
+def test_a_sparse_product_fills_the_page_rather_than_leaving_a_hole(monkeypatch):
+    """The gallery takes the room the rest of the page does not need."""
+    rec = _tiles(monkeypatch)
+    _one([jpeg_bytes(w=900, h=900)], description="", categories=[])
+    sparse = rec.pages[0][3]
+    rec.all.clear()
+    rec.cover.clear()
+    _one([jpeg_bytes(w=900, h=900)],
+         description="A full sentence about the product. " * 20,
+         brand="B", color="C", material="M", size="S", capacity="500 ml",
+         unitsPerCarton=24, cartonDimensions="40x30x20", cartonWeight="9.5",
+         cartonVolume="0.24", hsCode="1234", barcode="999")
+    loaded = rec.pages[0][3]
+    assert sparse > loaded, "a page with little to say gives the room to the picture"
+    assert cat.GALLERY_MIN <= loaded <= sparse <= cat.GALLERY_MAX
+
+
+def test_twelve_specifications_all_print_on_the_one_page():
+    """The composition exists so nothing is quietly dropped: the gallery
+    yields rather than the specifications being cut."""
+    text = cat.extract_text(_one(
+        [jpeg_bytes(w=900, h=900)],
+        description="A slim magnetic cardholder that attaches to a phone. " * 4,
+        brand="Giftology", color="Navy Blue", material="Recycled PU leather",
+        size="95 x 62 x 6 mm", capacity="3 cards", unitsPerCarton=300,
+        cartonDimensions="48 x 36 x 30 cm", cartonWeight="17.5",
+        cartonVolume="0.24", hsCode="4202.31", barcode="6291108201299",
+        categories=["Mobile Accessories"], options=["Navy", "Black"]))
+    for label in ("Brand", "Colour", "Material", "Size", "Capacity",
+                  "Units per carton", "Carton size", "Carton weight",
+                  "Carton volume", "HS code", "Barcode", "Category", "Options"):
+        assert label in text, label
+    assert "Page 2" in text and "Page 3" not in text, "still one page per product"
+
+
+def test_the_redesign_keeps_every_guarantee():
+    """A visual change must not quietly cost a contract."""
+    text = cat.extract_text(_one(
+        [jpeg_bytes(w=900, h=900)], available=13,
+        description="Premium bottle. RRP: SAR 45. Holds 500 ml."))
+    assert "13 units" in text, "availability"
+    assert "STOCK UPDATED" in text, "the stock timestamp"
+    assert "Giftology" in text, "specifications"
+    assert "Page 2" in text and "Page 3" not in text, "one product, one page"
+    assert "rrp" not in text.lower() and "SAR" not in text, "no price"
+    assert "Holds 500 ml" in text, "and the honest part of the sentence stayed"

@@ -275,6 +275,60 @@ documentation). Non-negotiable rules from it:
   `scripts/audit_catalogue_text.py` answers "which product caused it" from
   the cached snapshot alone — read-only, no supplier call, naming the product
   code, the field and which indicator matched, never the price.
+- **The catalogue is designed, not generated.** The first version was
+  functional and looked it: a cover whose lower half was empty, a product
+  page that read as a specification sheet, one large photograph and a strip
+  of 52pt thumbnails. The layout is now a composition, and these are the
+  rules it keeps.
+  - **The page is composed before anything is drawn.** `_identity_plan`,
+    `_description_height` and `_specs_height` measure first, and the gallery
+    takes what is left between `GALLERY_MIN` and `GALLERY_MAX`. That is why
+    a product with two specifications fills the page with its photograph
+    instead of leaving a hole, and one with thirteen still prints all
+    thirteen — the picture yields, never the content. A measurement and its
+    renderer must agree exactly: when `_specs_height` allowed 26 points for
+    a heading the loop charged 24 for, the composer reserved room for twelve
+    rows and the page printed eleven.
+  - **The gallery adapts to how many pictures there really are**
+    (`usable_photos`, `_gallery`): one spans the page; two sit side by side
+    at 64/36; three are a main with two stacked beside it; four are a main
+    with three. Four is a ceiling, not a target — a fifth view costs the
+    others the room that makes them legible, and a full-width fourth strip
+    was tried and rejected because a portrait product in a 500 x 75
+    letterbox is a picture nobody can read. The main image is 50–72% of the
+    composition, which a test asserts. Duplicates are dropped before
+    layout: a supplier that lists one file twice should not spend half the
+    gallery showing it twice.
+  - **The cover opens on real products.** `Document.cover(photos)` is its own
+    step, fed by `_cover_photos` — one picture from each of the first few
+    products, at most `COVER_IMAGES`, through the same cache the pages use,
+    so building a cover never preloads the catalogue's imagery. One product
+    is a deliberate single-hero presentation rather than an empty page; with
+    no usable picture at all the typography takes the page, because a broken
+    placeholder on a cover is worse than a cover without photographs. The
+    operational facts — market, count, prepared, stock updated, the
+    disclaimer, the address — are a compact band at the foot: they belong on
+    the cover, they are not the cover.
+  - **Type carries the hierarchy.** `cover_title` splits the stored title
+    into an eyebrow and a headline; `name_parts` reads the supplier's own
+    " - " segments as range / product / variant, so "NAPIER - MagCase Phone
+    Cardholder - Navy Blue" is set at three weights. Both are presentation
+    only — every word still prints, and there is a test that says so.
+    `_tracked` draws the letterspaced labels and **must** reset `Tc` to 0
+    before the text object ends: character spacing is page state, so one
+    tracked label left every later string on the page letterspaced, drawing
+    wider than it was wrapped for and running into its neighbour.
+  - **Orange is an accent.** `PAPER`, `SOFT`, `FAINT` are the surfaces; the
+    brand colour is a 2pt rule, a section label, the availability marker and
+    the cover's dilute field. No borders where a tint or a hairline will do:
+    specification rows alternate rather than sitting in a table, and a
+    photograph gets a soft three-pass shadow rather than an outline.
+  - The redesign changed no behaviour: the price guarantee, the sanitizer,
+    the final guard, stock figures and timestamps, one product per page,
+    the bounded per-product image pipeline and the 500-product ceiling are
+    all as they were. 500 products with one photograph each measured 4.01 MB
+    and 111s after the change (3.61 MB before — the extra is per-page vector
+    work, not imagery).
 - **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
   whenever a parser change means a stored answer could be improved on; an
   entry written under a lower number is treated as absent and rediscovered.

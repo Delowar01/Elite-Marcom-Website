@@ -23,6 +23,8 @@ import time
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
+from reportlab.pdfbase.pdfmetrics import stringWidth
+
 from .exports import (GREY, INK, LINE, ORANGE, PAGE_H, PAGE_W, _LOGO_PATH, _draw_contained,
                       _image_box, _wrap)
 
@@ -448,6 +450,176 @@ def prepare_image(raw: bytes):
         return None                          # one bad photo, not a failed run
 
 
+# ---------------- the look of the document ----------------
+#
+# One A4 page per product, and the page is a composition rather than a form:
+# an editorial gallery, then the product's identity, then the reading matter,
+# then availability. The tokens below are the whole palette — orange is an
+# accent and never a surface, the surfaces are warm neutrals, and nothing is
+# boxed in a border where a tint or a hairline will do.
+
+PAPER = (0.992, 0.988, 0.983)     # the page, a warm off-white
+SOFT = (0.957, 0.949, 0.937)      # an image ground
+FAINT = (0.976, 0.971, 0.963)     # an alternating row
+TINT = (0.980, 0.906, 0.851)      # orange, very dilute
+
+#: The gallery takes the room the rest of the page does not need, between
+#: these two. A fixed height is what leaves a hole under a sparse product and
+#: squeezes the specifications off a rich one.
+GALLERY_MIN = 232.0
+GALLERY_MAX = 366.0
+COVER_IMAGES = 4                  # a bounded hero set, never the catalogue
+
+
+def _tracked(c, x: float, y: float, text: str, font: str, size: float,
+             tracking: float = 1.4) -> None:
+    """A letterspaced small-caps label. The canvas has no character spacing,
+    but a text object does."""
+    t = c.beginText(x, y)
+    t.setFont(font, size)
+    t.setCharSpace(tracking)
+    t.textOut(text)
+    #: Tc is page state, not text-object state: without this every later
+    #: string on the page comes out letterspaced, and a measured line then
+    #: draws wider than it was wrapped for and runs into its neighbour
+    t.setCharSpace(0)
+    c.drawText(t)
+
+
+def _tracked_width(text: str, font: str, size: float, tracking: float = 1.4) -> float:
+    return stringWidth(text, font, size) + tracking * max(0, len(text) - 1)
+
+
+def _eyebrow(c, x: float, y: float, text: str, colour=ORANGE, size: float = 7.2) -> None:
+    c.setFillColorRGB(*colour)
+    _tracked(c, x, y, text.upper()[:48], "Helvetica-Bold", size, 1.6)
+
+
+def _panel(c, x: float, y: float, w: float, h: float, fill=SOFT,
+           radius: float = 3.0, shadow: bool = False) -> None:
+    """A surface. The optional shadow is three dilute passes rather than a
+    border, because a hairline around every picture is what makes a document
+    look like a form."""
+    if shadow:
+        c.saveState()
+        for n, (dx, dy, a) in enumerate(((1.6, -1.6, 0.05), (3.0, -3.0, 0.035),
+                                         (5.0, -5.0, 0.022))):
+            c.setFillColorRGB(0.35, 0.33, 0.30)
+            c.setFillAlpha(a)
+            c.roundRect(x + dx, y + dy, w, h, radius, stroke=0, fill=1)
+        c.restoreState()
+    c.setFillColorRGB(*fill)
+    c.roundRect(x, y, w, h, radius, stroke=0, fill=1)
+
+
+def _photo_tile(c, reader, x: float, y: float, w: float, h: float,
+                pad: float = 0.0, shadow: bool = False) -> None:
+    """One picture on its own ground, fitted inside and never stretched."""
+    _panel(c, x, y, w, h, SOFT, 3.0, shadow)
+    if reader is None or reader[0] is None:
+        c.setFont("Helvetica", 7.6)
+        c.setFillColorRGB(*GREY)
+        c.drawCentredString(x + w / 2, y + h / 2 - 3, "Photograph unavailable")
+        return
+    inset = pad if pad else max(10.0, min(w, h) * 0.085)
+    _draw_contained(c, reader, x + inset, y + inset, w - 2 * inset, h - 2 * inset)
+
+
+def usable_photos(photos: list[bytes], limit: int = 4) -> list:
+    """The readers worth drawing, in source order, deduplicated.
+
+    A supplier that lists one photograph twice should not spend half the
+    gallery showing it twice, and showing every picture it has is how a
+    gallery turns into a strip of thumbnails. Quality over completeness:
+    `limit` is a ceiling, not a target.
+    """
+    out, seen = [], set()
+    for blob in photos or []:
+        if not blob:
+            continue
+        key = (len(blob), blob[:64], blob[-64:])
+        if key in seen:
+            continue
+        seen.add(key)
+        reader = _image_box(blob)
+        if reader[0] is not None:
+            out.append(reader)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _gallery(c, readers: list, x: float, top: float, w: float, h: float) -> None:
+    """The editorial gallery, composed for how many pictures there really are.
+
+    The first picture leads, but only by a little: a second view a customer
+    cannot read is worse than no second view, so a supporting image is a
+    third of the composition rather than a 52pt thumbnail.
+    """
+    gap = 10.0
+    bottom = top - h
+    n = len(readers)
+    if n == 0:
+        _panel(c, x, bottom, w, h, FAINT, 3.0)
+        c.setFont("Helvetica", 8.4)
+        c.setFillColorRGB(*GREY)
+        c.drawCentredString(x + w / 2, bottom + h / 2 + 4, "Photograph unavailable")
+        c.setFont("Helvetica", 7.2)
+        c.drawCentredString(x + w / 2, bottom + h / 2 - 9,
+                            "Images can be supplied on request")
+        return
+    if n == 1:
+        _photo_tile(c, readers[0], x, bottom, w, h, shadow=True)
+        return
+    if n == 2:
+        main_w = (w - gap) * 0.64
+        _photo_tile(c, readers[0], x, bottom, main_w, h, shadow=True)
+        _photo_tile(c, readers[1], x + main_w + gap, bottom, w - main_w - gap, h)
+        return
+    if n == 3:
+        main_w = (w - gap) * 0.62
+        side_w = w - main_w - gap
+        side_h = (h - gap) / 2
+        _photo_tile(c, readers[0], x, bottom, main_w, h, shadow=True)
+        _photo_tile(c, readers[1], x + main_w + gap, bottom + side_h + gap, side_w, side_h)
+        _photo_tile(c, readers[2], x + main_w + gap, bottom, side_w, side_h)
+        return
+    # four: a tall main and three stacked views. A full-width fourth strip was
+    # the other option and it is wrong for this catalogue — a portrait product
+    # in a 500 x 75 letterbox is a picture nobody can read.
+    main_w = (w - gap) * 0.62
+    side_w = w - main_w - gap
+    side_h = (h - 2 * gap) / 3
+    _photo_tile(c, readers[0], x, bottom, main_w, h, shadow=True)
+    for i, reader in enumerate(readers[1:4]):
+        _photo_tile(c, reader, x + main_w + gap, bottom + (2 - i) * (side_h + gap),
+                    side_w, side_h)
+
+
+def name_parts(name: str) -> tuple[str, str, str]:
+    """(lead, headline, tail) from the supplier's own " - " segments.
+
+    "NAPIER - MagCase Phone Cardholder - Navy Blue" is a range, a product and
+    a colour written as one string, and setting all of it at one size is what
+    makes a catalogue page look generated. This is presentation only: every
+    character of the stored name is still printed, just at three weights.
+    """
+    parts = [p.strip() for p in re.split(r"\s+[-–—]\s+", name or "") if p.strip()]
+    if len(parts) < 2:
+        return "", (name or "").strip(), ""
+    if len(parts) == 2:
+        if len(parts[1]) <= 28:               # "Mug - Navy Blue": name, variant
+            return "", parts[0], parts[1]
+        if len(parts[0]) <= 28:               # "NAPIER - a longer product name"
+            return parts[0], parts[1], ""
+        return "", (name or "").strip(), ""
+    #: a long first segment is the product's own name, not a range, so it
+    #: stays the headline and the short segments after it become the variant
+    lead = parts[0] if len(parts[0]) <= 28 else ""
+    rest = parts[1:] if lead else parts
+    return lead, rest[0], " - ".join(rest[1:])
+
+
 # ---------------- page furniture ----------------
 
 def _logo(c, x: float, y: float, height: float = 26.0) -> float:
@@ -468,64 +640,203 @@ def _logo(c, x: float, y: float, height: float = 26.0) -> float:
     return 20.0
 
 
+def _page_ground(c) -> None:
+    c.setFillColorRGB(*PAPER)
+    c.rect(0, 0, PAGE_W, PAGE_H, stroke=0, fill=1)
+
+
+def _header(c, market: str) -> float:
+    """Light and editorial: the mark, a quiet label, one hairline with a short
+    orange lead. Returns the y the page content starts at."""
+    top = PAGE_H - 44
+    _logo(c, M, top, 19)
+    c.setFillColorRGB(*GREY)
+    _tracked(c, PAGE_W - M - _tracked_width("CORPORATE GIFTS CATALOGUE",
+                                            "Helvetica", 6.8, 1.5),
+             top - 12, "CORPORATE GIFTS CATALOGUE", "Helvetica", 6.8, 1.5)
+    label = MARKET_LABEL.get(market, (market or "").upper())
+    if label:
+        c.setFont("Helvetica-Bold", 7.6)
+        c.setFillColorRGB(*INK)
+        c.drawRightString(PAGE_W - M, top - 24, label)
+    rule_y = top - 36
+    c.setFillColorRGB(*LINE)
+    c.rect(M, rule_y, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
+    c.setFillColorRGB(*ORANGE)
+    c.rect(M, rule_y, 44, 1.6, stroke=0, fill=1)
+    return rule_y - 20
+
+
 def _footer(c, page_no: int) -> None:
-    c.setStrokeColorRGB(*LINE)
-    c.setLineWidth(0.6)
-    c.line(M, 46, PAGE_W - M, 46)
-    c.setFont("Helvetica", 7.4)
+    c.setFillColorRGB(*LINE)
+    c.rect(M, 46, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
+    c.setFont("Helvetica", 7.2)
     c.setFillColorRGB(*GREY)
     c.drawString(M, 33, SITE)
+    c.drawCentredString(PAGE_W / 2, 33, "Elite Marcom  ·  Corporate Gifts")
+    c.setFont("Helvetica-Bold", 7.2)
+    c.setFillColorRGB(*INK)
     c.drawRightString(PAGE_W - M, 33, f"Page {page_no}")
 
 
 # ---------------- the pages ----------------
 
-def _cover(c, *, title: str, market: str, count: int, stock_at, generated: float) -> None:
-    y = PAGE_H - 92
-    _logo(c, M, y, 34)
-    y -= 150
+def _cover_ground(c) -> None:
+    """A designed surface rather than a blank one: a dilute orange field in
+    the upper corner, one architectural hairline, a grounding band at the
+    foot. Nothing here competes with a photograph."""
+    _page_ground(c)
+    c.saveState()
     c.setFillColorRGB(*ORANGE)
-    c.rect(M, y + 54, 96, 3, stroke=0, fill=1)
-    c.setFont("Helvetica-Bold", 30)
+    c.setFillAlpha(0.07)
+    c.circle(PAGE_W - 40, PAGE_H - 70, 250, stroke=0, fill=1)
+    c.setFillAlpha(0.05)
+    c.circle(PAGE_W - 40, PAGE_H - 70, 150, stroke=0, fill=1)
     c.setFillColorRGB(*INK)
-    for line in _wrap(title, "Helvetica-Bold", 30, PAGE_W - 2 * M - 40)[:3]:
-        c.drawString(M, y, line)
-        y -= 36
-    y -= 16
-    c.setFont("Helvetica", 12)
+    c.setFillAlpha(0.028)
+    c.rect(0, 0, PAGE_W, 196, stroke=0, fill=1)
+    c.restoreState()
+    c.setFillColorRGB(*LINE)
+    c.rect(M, 196, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
+
+
+def _cover_hero(c, readers: list, x: float, bottom: float, w: float, h: float) -> None:
+    """Up to four real products from this catalogue, layered. With none, the
+    space belongs to the typography instead — a broken placeholder on a cover
+    is worse than a cover without pictures."""
+    gap = 12.0
+    n = len(readers)
+    if n == 0:
+        return
+    if n == 1:
+        # one product is a deliberate presentation, not an empty page
+        pw = w * 0.74
+        _photo_tile(c, readers[0], x + (w - pw) / 2, bottom, pw, h, shadow=True)
+        return
+    if n == 2:
+        main_w = (w - gap) * 0.62
+        _photo_tile(c, readers[0], x, bottom, main_w, h, shadow=True)
+        _photo_tile(c, readers[1], x + main_w + gap, bottom + h * 0.16,
+                    w - main_w - gap, h * 0.68, shadow=True)
+        return
+    main_w = (w - gap) * 0.58
+    side_w = w - main_w - gap
+    _photo_tile(c, readers[0], x, bottom, main_w, h, shadow=True)
+    if n == 3:
+        side_h = (h - gap) / 2
+        _photo_tile(c, readers[1], x + main_w + gap, bottom + side_h + gap,
+                    side_w, side_h, shadow=True)
+        _photo_tile(c, readers[2], x + main_w + gap, bottom, side_w, side_h, shadow=True)
+        return
+    side_h = (h - 2 * gap) / 3
+    for i, reader in enumerate(readers[1:4]):
+        _photo_tile(c, reader, x + main_w + gap,
+                    bottom + (2 - i) * (side_h + gap), side_w, side_h, shadow=True)
+
+
+def _cover_meta(c, *, market: str, count: int, stock_at, generated: float) -> None:
+    """The operational facts, compact and at the foot. They have to be on the
+    cover; they do not have to be the cover."""
+    y = 150.0
+    cols = [
+        (f"{market.upper()} CATALOGUE",
+         f"{count:,} product{'' if count == 1 else 's'}"),
+        ("PREPARED", time.strftime("%d %b %Y", time.localtime(generated))),
+        ("STOCK UPDATED",
+         (time.strftime("%d %b %Y  ·  %H:%M", time.localtime(float(stock_at)))
+          if stock_at else "not available")),
+    ]
+    w = (PAGE_W - 2 * M) / 3
+    for i, (label, value) in enumerate(cols):
+        x = M + i * w
+        c.setFillColorRGB(*GREY)
+        _tracked(c, x, y, label, "Helvetica", 6.6, 1.4)
+        c.setFont("Helvetica-Bold", 10.5)
+        c.setFillColorRGB(*INK)
+        c.drawString(x, y - 17, value[:38])
+    c.setFillColorRGB(*LINE)
+    c.rect(M, 108, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
+    c.setFont("Helvetica", 7.4)
     c.setFillColorRGB(*GREY)
-    c.drawString(M, y, MARKET_LABEL.get(market, market.upper()) + f"  ·  {market.upper()}")
-    y -= 26
-    c.setFont("Helvetica-Bold", 13)
+    ty = 92.0
+    for line in _wrap("Quantities are those recorded at the last stock synchronisation "
+                      "shown above and are not a reservation. Please confirm "
+                      "availability before committing to a quantity.",
+                      "Helvetica", 7.4, PAGE_W - 2 * M - 150)[:3]:
+        c.drawString(M, ty, line)
+        ty -= 10.5
+    c.setFont("Helvetica-Bold", 8.2)
     c.setFillColorRGB(*INK)
-    c.drawString(M, y, f"{count:,} product{'' if count == 1 else 's'}")
-    y -= 44
-    c.setStrokeColorRGB(*LINE)
-    c.setLineWidth(0.8)
-    c.line(M, y, PAGE_W - M, y)
+    c.drawRightString(PAGE_W - M, 92, SITE)
+
+
+def cover_title(title: str) -> tuple[str, str]:
+    """(eyebrow, headline) — the hierarchy the cover is set in.
+
+    The stored title is one string ("Elite Marcom / Product Catalogue") and
+    setting all of it at 36pt is what made the old cover read as a label. The
+    first line becomes the small line above, the rest becomes the headline,
+    and a leading "Corporate Gifts" is lifted out rather than printed twice.
+    Presentation only: every word of the title is still on the page.
+    """
+    text = (title or "").strip()
+    head, _, rest = text.partition("\n")
+    if rest.strip():
+        return head.strip()[:40], rest.strip()
+    low = text.lower()
+    for lead in ("elite marcom", "corporate gifts"):
+        if low.startswith(lead) and len(text) > len(lead) + 2:
+            return text[:len(lead)], text[len(lead):].lstrip(" -·—").strip()
+    return "Corporate gifts", text
+
+
+def _cover(c, *, title: str, market: str, count: int, stock_at, generated: float,
+           photos: list[bytes] | None = None) -> None:
+    """The opening page. Hero first, then the title, then the facts."""
+    _cover_ground(c)
+    _logo(c, M, PAGE_H - 52, 26)
+    label = MARKET_LABEL.get(market, market.upper())
+    c.setFillColorRGB(*GREY)
+    _tracked(c, PAGE_W - M - _tracked_width(f"{label}  ·  {market.upper()}",
+                                            "Helvetica", 7.4, 1.5),
+             PAGE_H - 66, f"{label}  ·  {market.upper()}", "Helvetica", 7.4, 1.5)
+
+    readers = usable_photos(photos or [], COVER_IMAGES)
+
+    # ---- the title block is anchored to the foot, and the hero takes the
+    # ---- room above it: that is what stops a cover ending in dead space ----
+    eyebrow, headline = cover_title(title)
+    head_size = 36.0 if readers else 50.0
+    lines = _wrap(headline.upper(), "Helvetica-Bold", head_size, PAGE_W - 2 * M)
+    if len(lines) > 2:
+        head_size = 27.0 if readers else 38.0
+        lines = _wrap(headline.upper(), "Helvetica-Bold", head_size, PAGE_W - 2 * M)
+    lines = lines[:3]
+    #: the market line lands here, a measured distance above the facts band at
+    #: 196, and the block is laid out upwards from it — so the cover ends on a
+    #: deliberate interval rather than on whatever was left over
+    y = 240.0 + head_size * 0.95 * len(lines) + 24
+    hero_top = PAGE_H - 112
+    hero_h = max(214.0, min(352.0, hero_top - (y + 34) - 44))
+    if readers:
+        _cover_hero(c, readers, M, hero_top - hero_h, PAGE_W - 2 * M, hero_h)
+    else:
+        #: no pictures: the type is the page, set low with an open field above
+        y = 262.0 + head_size * 0.95 * len(lines) + 24
+    c.setFillColorRGB(*ORANGE)
+    c.rect(M, y + 32, 38, 2.2, stroke=0, fill=1)
+    _eyebrow(c, M, y + 14, eyebrow, ORANGE, 8.0)
+    c.setFont("Helvetica-Bold", head_size)
+    c.setFillColorRGB(*INK)
+    for line in lines:
+        y -= head_size * 0.95
+        c.drawString(M, y, line)
     y -= 24
-    c.setFont("Helvetica", 9)
+    c.setFont("Helvetica", 11)
     c.setFillColorRGB(*GREY)
-    # the two dates are different things and are labelled as different things
-    c.drawString(M, y, "Catalogue prepared")
-    c.setFillColorRGB(*INK)
-    c.drawString(M + 128, y, when(generated))
-    y -= 16
-    c.setFillColorRGB(*GREY)
-    c.drawString(M, y, "Stock as of")
-    c.setFillColorRGB(*INK)
-    c.drawString(M + 128, y, when(stock_at) or "synchronisation date unavailable")
-    y -= 40
-    c.setFont("Helvetica", 8.4)
-    c.setFillColorRGB(*GREY)
-    for line in _wrap("Quantities are those recorded at the last stock synchronisation shown "
-                      "above and are not a reservation. Please confirm availability before "
-                      "committing to a quantity.", "Helvetica", 8.4, PAGE_W - 2 * M):
-        c.drawString(M, y, line)
-        y -= 11
-    c.setFont("Helvetica", 8)
-    c.setFillColorRGB(*GREY)
-    c.drawString(M, 60, SITE)
+    c.drawString(M, y, f"{label}  ·  {market.upper()}  ·  "
+                       + time.strftime("%Y", time.localtime(generated)))
+    _cover_meta(c, market=market, count=count, stock_at=stock_at, generated=generated)
     c.showPage()
 
 
@@ -535,173 +846,270 @@ def _contents(c, entries: list[tuple[str, str, int]], start_page: int) -> int:
     i = 0
     while i < len(entries):
         used += 1
-        y = PAGE_H - 70
-        _logo(c, M, y, 22)
-        c.setFont("Helvetica-Bold", 13)
+        _page_ground(c)
+        y = _header(c, "") + 6
+        c.setFont("Helvetica-Bold", 20)
         c.setFillColorRGB(*INK)
-        c.drawRightString(PAGE_W - M, y - 12, "Contents")
+        c.drawString(M, y - 20, "Contents")
         y -= 44
-        c.setStrokeColorRGB(*ORANGE)
-        c.setLineWidth(2)
-        c.line(M, y, PAGE_W - M, y)
-        y -= 20
-        c.setFont("Helvetica", 7.6)
         c.setFillColorRGB(*GREY)
-        c.drawString(M, y, "ITEM CODE")
-        c.drawString(M + 112, y, "PRODUCT")
+        _tracked(c, M, y, "ITEM CODE", "Helvetica", 6.8, 1.4)
+        _tracked(c, M + 116, y, "PRODUCT", "Helvetica", 6.8, 1.4)
         c.drawRightString(PAGE_W - M, y, "PAGE")
-        y -= 14
-        while i < len(entries) and y > 70:
+        y -= 8
+        c.setFillColorRGB(*LINE)
+        c.rect(M, y, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
+        y -= 18
+        band = 0
+        while i < len(entries) and y > 76:
             code, name, page_no = entries[i]
-            c.setFont("Helvetica", 8.6)
+            if band % 2 == 0:
+                c.setFillColorRGB(*FAINT)
+                c.rect(M - 6, y - 4, PAGE_W - 2 * M + 12, 15, stroke=0, fill=1)
+            c.setFont("Helvetica", 8.4)
             c.setFillColorRGB(*GREY)
             c.drawString(M, y, code[:18])
+            c.setFont("Helvetica", 8.8)
             c.setFillColorRGB(*INK)
-            name_w = PAGE_W - M - 46 - (M + 112)
-            c.drawString(M + 112, y, _wrap(name, "Helvetica", 8.6, name_w)[0])
+            name_w = PAGE_W - M - 46 - (M + 116)
+            c.drawString(M + 116, y, _wrap(name, "Helvetica", 8.8, name_w)[0])
+            c.setFont("Helvetica-Bold", 8.4)
             c.drawRightString(PAGE_W - M, y, str(page_no))
-            y -= 13
+            y -= 15
             i += 1
+            band += 1
         _footer(c, start_page + used - 1)
         c.showPage()
     return used
 
 
-def _product_page(c, item: dict, photos: list[bytes], *, page_no: int, options: dict,
-                  stock_at, stock_is_known: bool) -> None:
-    """One A4 portrait page. Everything is clipped to fit: a product never
-    spills onto a second page, because the catalogue's contract is one page
-    each and a reader counting pages must be able to trust it."""
-    y = PAGE_H - 54
-    _logo(c, M, y, 22)
-    c.setFont("Helvetica", 7.4)
-    c.setFillColorRGB(*GREY)
-    c.drawRightString(PAGE_W - M, y - 7, "Corporate gifts · Product catalogue")
-    c.drawRightString(PAGE_W - M, y - 18, MARKET_LABEL.get(options.get("market", ""), ""))
-    y -= 36
-    c.setFillColorRGB(*ORANGE)
-    c.rect(M, y, PAGE_W - 2 * M, 2.4, stroke=0, fill=1)
-    y -= 18
-
-    # ---- the picture, given the room it deserves ----
-    box_h = 250.0
-    box_w = PAGE_W - 2 * M
-    c.setFillColorRGB(0.98, 0.975, 0.97)
-    c.rect(M, y - box_h, box_w, box_h, stroke=0, fill=1)
-    main = None
-    for blob in photos:
-        reader = _image_box(blob)
-        if reader[0] is not None:
-            main = reader
-            break
-    if main is not None:
-        _draw_contained(c, main, M + 10, y - box_h + 10, box_w - 20, box_h - 20)
-    else:
-        c.setFont("Helvetica", 9)
-        c.setFillColorRGB(*GREY)
-        c.drawCentredString(PAGE_W / 2, y - box_h / 2 - 3, "Image unavailable")
-    y -= box_h + 8
-
-    # a small strip of further photographs, only when there is room for it
-    extras = []
-    for blob in photos[1:4]:
-        reader = _image_box(blob)
-        if reader[0] is not None:
-            extras.append(reader)
-    if extras:
-        strip_h = 52.0
-        tile = 68.0
-        x = M
-        for reader in extras:
-            c.setFillColorRGB(0.98, 0.975, 0.97)
-            c.rect(x, y - strip_h, tile, strip_h, stroke=0, fill=1)
-            _draw_contained(c, reader, x + 4, y - strip_h + 4, tile - 8, strip_h - 8)
-            x += tile + 8
-        y -= strip_h + 10
-
-    # ---- name and code ----
-    name = clean_text(item.get("name"), 220) or "Product"
-    size = 17.0
-    lines = _wrap(name, "Helvetica-Bold", size, PAGE_W - 2 * M)
-    if len(lines) > 3:                      # an unusually long name steps down
-        size = 14.0
-        lines = _wrap(name, "Helvetica-Bold", size, PAGE_W - 2 * M)
-    c.setFont("Helvetica-Bold", size)
-    c.setFillColorRGB(*INK)
-    for line in lines[:3]:
-        c.drawString(M, y - size, line)
-        y -= size + 4
-    y -= 4
-    if options.get("code", True):
+def _identity_plan(item: dict, w: float, show_code: bool) -> dict:
+    """What the identity block will be, and how tall. Measured and drawn by
+    the same rules, so the page can be composed before anything is on it."""
+    cats = [clean_text(v, 40) for v in (item.get("categories") or [])]
+    cats = [v for v in cats if v]
+    lead, headline, tail = name_parts(clean_text(item.get("name"), 220) or "Product")
+    size = 21.0
+    lines = _wrap(headline, "Helvetica-Bold", size, w)
+    if len(lines) > 2:
+        size = 16.5
+        lines = _wrap(headline, "Helvetica-Bold", size, w)
+    lines = lines[:3]
+    bits = []
+    if tail:
+        bits.append(tail)
+    if show_code:
         code = clean_text(item.get("code"), 60)
         if code:
-            c.setFont("Helvetica", 9.2)
-            c.setFillColorRGB(*GREY)
-            c.drawString(M, y - 9, code)
-            y -= 18
+            bits.append(code)
+    height = (16 if cats else 0) + (17 if lead else 0) + size * 0.96 * len(lines) \
+        + 15 + (14 if bits else 0)
+    return {"category": cats[0] if cats else "", "lead": lead, "lines": lines,
+            "size": size, "bits": bits, "height": height}
 
-    # ---- description ----
-    if options.get("description", True):
-        body = clean_text(item.get("description"), 900)
-        if body:
-            y -= 6
-            c.setFont("Helvetica-Bold", 8.6)
-            c.setFillColorRGB(*ORANGE)
-            c.drawString(M, y - 8, "DESCRIPTION")
-            y -= 20
-            c.setFont("Helvetica", 9)
-            c.setFillColorRGB(*INK)
-            for line in _wrap(body, "Helvetica", 9, PAGE_W - 2 * M)[:7]:
-                c.drawString(M, y - 9, line)
-                y -= 12
-            y -= 4
 
-    # ---- specifications ----
-    if options.get("specs", True):
-        rows = spec_rows(item)
-        if rows:
-            room = int(max(0, (y - 150) // 13))
-            rows = rows[:max(0, min(len(rows), room))]
-        if rows:
-            y -= 4
-            c.setFont("Helvetica-Bold", 8.6)
-            c.setFillColorRGB(*ORANGE)
-            c.drawString(M, y - 8, "SPECIFICATIONS")
-            y -= 20
-            for label, value in rows:
-                c.setFont("Helvetica", 8.8)
-                c.setFillColorRGB(*GREY)
-                c.drawString(M, y - 8, label)
-                c.setFont("Helvetica-Bold", 8.8)
-                c.setFillColorRGB(*INK)
-                c.drawString(M + 132, y - 8,
-                             _wrap(value, "Helvetica-Bold", 8.8, PAGE_W - M - (M + 132))[0])
-                y -= 13
-            y -= 4
-
-    # ---- availability, pinned above the footer so every page agrees ----
-    if options.get("stock", True):
-        band_h = 60.0
-        by = 62.0
-        c.setFillColorRGB(0.98, 0.975, 0.97)
-        c.rect(M, by, PAGE_W - 2 * M, band_h, stroke=0, fill=1)
-        c.setFillColorRGB(*ORANGE)
-        c.rect(M, by, 3, band_h, stroke=0, fill=1)
-        c.setFont("Helvetica", 7.6)
+def _identity(c, plan: dict, x: float, top: float) -> float:
+    """Category, then the name in its own hierarchy, then the variant and the
+    code. Returns the y it finished at."""
+    y = top
+    if plan["category"]:
+        _eyebrow(c, x, y, plan["category"], ORANGE, 7.2)
+        y -= 16
+    if plan["lead"]:
         c.setFillColorRGB(*GREY)
-        c.drawString(M + 16, by + band_h - 16, "AVAILABLE QUANTITY")
-        headline, _ = stock_sentence(item.get("available"), stock_is_known)
-        c.setFont("Helvetica-Bold", 16)
+        _tracked(c, x, y, plan["lead"].upper()[:40], "Helvetica-Bold", 9.0, 1.8)
+        y -= 17
+    c.setFont("Helvetica-Bold", plan["size"])
+    c.setFillColorRGB(*INK)
+    for line in plan["lines"]:
+        y -= plan["size"] * 0.96
+        c.drawString(x, y, line)
+    y -= 15
+    if plan["bits"]:
+        c.setFont("Helvetica", 9.6)
+        c.setFillColorRGB(*GREY)
+        c.drawString(x, y, "   ·   ".join(plan["bits"])[:90])
+        y -= 14
+    return y
+
+
+def _description_height(body: str, w: float) -> float:
+    """What the description wants, capped: no single field may own the page."""
+    if not body:
+        return 0.0
+    lines = min(len(_wrap(body, "Helvetica", 9.0, w)), 14)
+    return 26 + lines * 12.6
+
+
+def _specs_height(rows: list[tuple[str, str]], w: float) -> float:
+    if not rows:
+        return 0.0
+    label_w = max(78.0, min(118.0, w * 0.42))
+    #: 24 for the heading, then exactly what the loop below will consume —
+    #: the two have to agree or the composer reserves room for twelve rows
+    #: and the renderer prints eleven
+    total = 24.0
+    for _, value in rows:
+        total += 13.0 if len(_wrap(value, "Helvetica-Bold", 8.5,
+                                   w - label_w - 8)) == 1 else 23.0
+    return total
+
+
+def _description(c, body: str, x: float, top: float, w: float, max_h: float) -> float:
+    """Set for reading: a narrow measure, generous leading, and only as much
+    as the page can give it."""
+    if not body or max_h < 34:
+        return top
+    _eyebrow(c, x, top - 8, "Description", ORANGE, 7.0)
+    y = top - 26
+    lines = _wrap(body, "Helvetica", 9.0, w)
+    room = int(max(0, (max_h - 26) // 12.6))
+    if len(lines) > room and room > 0:
+        lines = lines[:room]
+        lines[-1] = lines[-1].rstrip(" ,;:")[:120] + " …"
+    c.setFont("Helvetica", 9.0)
+    c.setFillColorRGB(0.21, 0.23, 0.26)
+    for line in lines[:room]:
+        c.drawString(x, y - 9, line)
+        y -= 12.6
+    return y
+
+
+def _specs(c, rows: list[tuple[str, str]], x: float, top: float, w: float,
+           max_h: float) -> float:
+    """Label and value on an alternating rhythm — no borders, no rules between
+    every pair. A long value wraps to a second line rather than being cut."""
+    if not rows or max_h < 34:
+        return top
+    _eyebrow(c, x, top - 8, "Specifications", ORANGE, 7.0)
+    y = top - 24
+    label_w = max(78.0, min(118.0, w * 0.42))
+    value_w = w - label_w - 8
+    band = 0
+    for label, value in rows:
+        wrapped = _wrap(value, "Helvetica-Bold", 8.5, value_w)
+        vlines = wrapped[:2]
+        if len(wrapped) > 2:
+            # a list of six categories ends on an ellipsis, not a dangling comma
+            vlines[1] = vlines[1].rstrip(" ,;") + " …"
+        row_h = 13.0 if len(vlines) == 1 else 23.0
+        #: the half point is float slack, not spare room: the composer
+        #: reserves exactly this many points and a rounding error of 1e-13
+        #: would otherwise drop the last specification off the page
+        if (top - y) + row_h > max_h + 0.5:
+            break
+        if band % 2 == 0:
+            c.setFillColorRGB(*FAINT)
+            c.rect(x - 5, y - row_h + 3.5, w + 10, row_h, stroke=0, fill=1)
+        c.setFont("Helvetica", 8.3)
+        c.setFillColorRGB(*GREY)
+        c.drawString(x, y - 6, label[:28])
+        c.setFont("Helvetica-Bold", 8.5)
         c.setFillColorRGB(*INK)
-        c.drawString(M + 16, by + band_h - 38, headline)
-        if options.get("stockDate", True):
-            c.setFont("Helvetica", 7.8)
-            c.setFillColorRGB(*GREY)
-            stamp = when(stock_at)
-            c.drawRightString(PAGE_W - M - 16, by + band_h - 20, "Stock as of")
-            c.setFillColorRGB(*INK)
-            c.drawRightString(PAGE_W - M - 16, by + band_h - 33,
-                              stamp or "synchronisation date unavailable")
+        vy = y - 6
+        for vline in vlines:
+            c.drawString(x + label_w, vy, vline)
+            vy -= 10
+        y -= row_h
+        band += 1
+    return y
+
+
+def _availability(c, item: dict, *, stock_at, stock_is_known: bool,
+                  show_date: bool) -> None:
+    """Pinned above the footer so every page in the document agrees, and read
+    as part of the catalogue rather than stamped on it."""
+    band_h = 74.0
+    by = 64.0
+    _panel(c, M, by, PAGE_W - 2 * M, band_h, FAINT, 3.0)
+    c.setFillColorRGB(*ORANGE)
+    c.rect(M, by, 2.6, band_h, stroke=0, fill=1)
+    c.setFillColorRGB(*GREY)
+    _tracked(c, M + 18, by + band_h - 20, "AVAILABLE NOW", "Helvetica-Bold", 7.0, 1.6)
+    headline, _ = stock_sentence(item.get("available"), stock_is_known)
+    figure, _, unit = headline.partition(" ")
+    if unit:
+        c.setFont("Helvetica-Bold", 25)
+        c.setFillColorRGB(*INK)
+        c.drawString(M + 18, by + 18, figure)
+        c.setFont("Helvetica", 9.4)
+        c.setFillColorRGB(*GREY)
+        c.drawString(M + 24 + stringWidth(figure, "Helvetica-Bold", 25), by + 18, unit)
+    else:
+        c.setFont("Helvetica-Bold", 14)
+        c.setFillColorRGB(*INK)
+        c.drawString(M + 18, by + 20, headline)
+    if show_date:
+        c.setFillColorRGB(*GREY)
+        _tracked(c, PAGE_W - M - 18 - _tracked_width("STOCK UPDATED", "Helvetica",
+                                                     6.6, 1.4),
+                 by + band_h - 20, "STOCK UPDATED", "Helvetica", 6.6, 1.4)
+        c.setFont("Helvetica-Bold", 9.0)
+        c.setFillColorRGB(*INK)
+        c.drawRightString(PAGE_W - M - 18, by + 22,
+                          when(stock_at) or "synchronisation date unavailable")
+
+
+def _product_page(c, item: dict, photos: list[bytes], *, page_no: int, options: dict,
+                  stock_at, stock_is_known: bool) -> None:
+    """One A4 portrait page, composed as a whole.
+
+    Everything is still clipped to fit — a product never spills onto a second
+    page, because the catalogue's contract is one page each and a reader
+    counting pages must be able to trust it. What changed is how the room is
+    divided: the gallery grows when a product has little to say and gives way
+    when it has a lot, so a short record does not leave a hole and a long one
+    does not crowd the footer.
+    """
+    _page_ground(c)
+    top = _header(c, options.get("market", ""))
+    content_w = PAGE_W - 2 * M
+
+    readers = usable_photos(photos, 4)
+    body = clean_text(item.get("description"), 900) if options.get("description", True) else ""
+    rows = spec_rows(item) if options.get("specs", True) else []
+
+    # ---- compose the page before drawing any of it ----
+    gap = 22.0
+    two_up = bool(body and rows)
+    if two_up:
+        left_w = (content_w - gap) * 0.56
+        right_w = content_w - gap - left_w
+    elif body:
+        left_w = right_w = min(content_w, 430.0)
+    else:
+        left_w = right_w = min(content_w, 330.0)
+    plan = _identity_plan(item, content_w, options.get("code", True))
+    floor = (64.0 + 74.0 + 22.0) if options.get("stock", True) else 70.0
+    need = max(_description_height(body, left_w) if body else 0.0,
+               _specs_height(rows, right_w) if rows else 0.0)
+    #: the gallery is what is left over, inside its own bounds — so a sparse
+    #: product fills the page with its photographs instead of leaving a hole,
+    #: and a product with twelve specifications still prints all twelve
+    gallery_h = max(GALLERY_MIN, min(GALLERY_MAX,
+                                     top - (plan["height"] + 12 + need + floor) - 26))
+    if not readers:
+        #: with no photograph there is nothing to grow: a half-page of empty
+        #: grey is worse than a modest note and honest white space
+        gallery_h = min(gallery_h, 210.0)
+
+    _gallery(c, readers, M, top, content_w, gallery_h)
+    y = top - gallery_h - 26
+    y = _identity(c, plan, M, y)
+    y -= 12
+
+    band_h = max(0.0, y - floor)
+    if two_up:
+        _description(c, body, M, y, left_w, band_h)
+        _specs(c, rows, M + left_w + gap, y, right_w, band_h)
+    elif body:
+        _description(c, body, M, y, left_w, band_h)
+    elif rows:
+        _specs(c, rows, M, y, right_w, band_h)
+
+    if options.get("stock", True):
+        _availability(c, item, stock_at=stock_at, stock_is_known=stock_is_known,
+                      show_date=options.get("stockDate", True))
     _footer(c, page_no)
     c.showPage()
 
@@ -742,11 +1150,24 @@ class Document:
             self.contents_pages = max(1, (count + 45) // 46)
         self.first_product_page = 2 + self.contents_pages
         self.drawn = 0
-        _cover(self.c, title=self.title, market=market, count=count,
-               stock_at=stock_at, generated=time.time())
+        self._covered = False
+
+    def cover(self, photos: list[bytes] | None = None) -> None:
+        """Draw the opening page, with a **bounded** set of real products from
+        this catalogue as its hero. At most `COVER_IMAGES` pictures are ever
+        held for it — the cover is a composition, not a contact sheet, and
+        preloading the catalogue's imagery is exactly what the streaming
+        rewrite exists to prevent."""
+        if self._covered:
+            return
+        self._covered = True
+        _cover(self.c, title=self.title, market=self.market, count=self.count,
+               stock_at=self.stock_at, generated=time.time(),
+               photos=(photos or [])[:COVER_IMAGES])
 
     def contents(self, entries: list[tuple[str, str]]) -> None:
         """(code, name) in order; page numbers are worked out from position."""
+        self.cover()
         if not self.opts.get("contents"):
             return
         rows = [(code, name, self.first_product_page + n)
@@ -754,6 +1175,7 @@ class Document:
         _contents(self.c, rows, 2)
 
     def page(self, dto: dict, photos: list[bytes]) -> None:
+        self.cover()                          # a document always opens on one
         _product_page(self.c, dto, photos,
                       page_no=self.first_product_page + self.drawn,
                       options=self.opts, stock_at=self.stock_at,
@@ -781,6 +1203,15 @@ def build(items: list[dict], photos: dict[str, list[bytes]], *, market: str,
     doc = Document(market=market, title=title, count=len(items), stock_at=stock_at,
                    stock_is_known=stock_is_known, options=options)
     dtos = [to_dto(it) for it in items]
+    # the cover's hero is the first picture of each of the first few products
+    hero: list[bytes] = []
+    for dto in dtos:
+        got = photos.get(dto["id"]) or []
+        if got:
+            hero.append(got[0])
+        if len(hero) >= COVER_IMAGES:
+            break
+    doc.cover(hero)
     doc.contents([(d["code"] or "—", d["name"] or "Product") for d in dtos])
     for n, dto in enumerate(dtos):
         doc.page(dto, photos.get(dto["id"], []))
@@ -899,6 +1330,42 @@ async def _photos_for(market: str, dto: dict, cache: dict) -> list[bytes]:
     return out
 
 
+async def _cover_photos(market: str, rows: list[dict], cache: dict) -> list[bytes]:
+    """A handful of real products for the cover's hero composition.
+
+    Bounded twice over: one picture per product, and at most `COVER_IMAGES`
+    of them. They go through the same cache the pages use, so a hero picture
+    is not fetched again when its own page comes round, and the catalogue's
+    imagery is never preloaded to build a cover.
+    """
+    from . import jasani
+
+    out: list[bytes] = []
+    for row in rows[:COVER_IMAGES * 3]:
+        if len(out) >= COVER_IMAGES:
+            break
+        detail = jasani.item_detail(market, row["id"]) or dict(row)
+        urls = to_dto(detail).get("images") or []
+        if not urls:
+            continue
+        url = urls[0]
+        if url in cache:
+            if cache[url] is not None:
+                out.append(cache[url])
+            continue
+        try:
+            raw = await jasani._fetch_image_bytes(url)
+        except Exception:
+            raw = None
+        small = prepare_image(raw) if raw else None
+        del raw
+        if len(cache) < PHOTO_CACHE_MAX:
+            cache[url] = small
+        if small is not None:
+            out.append(small)
+    return out
+
+
 async def _render(token: str, rows: list[dict], *, market: str, title: str,
                   stock_at, stock_is_known: bool, options: dict) -> bytes:
     """Draw the catalogue, one product at a time.
@@ -914,6 +1381,9 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
     job = _jobs[token]
     doc = Document(market=market, title=title, count=len(rows), stock_at=stock_at,
                    stock_is_known=stock_is_known, options=options)
+    cache: dict[str, bytes | None] = {}
+    job["state"] = "images"
+    doc.cover(await _cover_photos(market, rows, cache))
     if options.get("contents"):
         # the index needs names before any page is drawn; those are text, not
         # pictures, so reading them ahead costs nothing worth bounding
@@ -927,7 +1397,6 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
                           sanitize_catalogue_text(
                               clean_text(detail.get("name"), 120), "name") or "Product"))
         doc.contents(heads)
-    cache: dict[str, bytes | None] = {}
     stats: dict[str, int] = {}
     job["state"] = "drawing"
     job["done"] = 0
