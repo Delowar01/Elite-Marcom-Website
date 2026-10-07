@@ -12,6 +12,7 @@ implementation details:
 """
 from __future__ import annotations
 
+import io
 import json
 import time
 
@@ -240,7 +241,7 @@ def start_catalogue(**body):
 
 
 def finish(token: str) -> dict:
-    for _ in range(400):
+    for _ in range(3000):            # a real 500-photograph catalogue takes a while
         job = client.get("/api/admin/jasani/catalogue/status",
                          params={"token": token}).json()["job"]
         if job["state"] in ("done", "failed"):
@@ -262,13 +263,74 @@ def pdf_for(ids, **body) -> bytes:
 
 
 @pytest.fixture(autouse=True)
-def no_image_downloads(monkeypatch):
-    """The catalogue never reaches the network in a test; a product with no
-    photograph is also the case the layout has to survive."""
+def offline(monkeypatch, request):
+    """No test touches the network. By default a fetch returns nothing, which
+    is also the no-photograph case the layout must survive; a test that wants
+    real pictures asks for the `photos` fixture, which serves bytes made here.
+    """
+    if "photos" in request.fixturenames:
+        return
+
     async def nothing(url):
         return None
 
     monkeypatch.setattr(jasani, "_fetch_image_bytes", nothing)
+
+
+_JPEG_POOL: dict[tuple, bytes] = {}
+
+
+def jpeg_bytes(w=2400, h=1800, seed=0) -> bytes:
+    """A representative supplier photograph: a real JPEG at product-photo
+    size. Drawing one is slow, so a small pool is reused — the renderer still
+    receives genuine image bytes, which is the point."""
+    key = (w, h, seed % 8)
+    if key in _JPEG_POOL:
+        return _JPEG_POOL[key]
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (w, h), (248, 246, 243))
+    d = ImageDraw.Draw(im)
+    for i in range(0, w, 160):                # some detail, so it has real size
+        d.line([(i, 0), (i + key[2] * 11, h)], fill=(200 - i % 55, 120, 60 + i % 90),
+               width=9)
+    d.ellipse([w * 0.2, h * 0.2, w * 0.8, h * 0.8], fill=(30 + key[2] * 25, 90, 160))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=88)
+    _JPEG_POOL[key] = buf.getvalue()
+    return _JPEG_POOL[key]
+
+
+@pytest.fixture
+def photos(monkeypatch):
+    """Every image URL answers with a real JPEG, and the fetches are counted
+    so a test can show what the renderer actually held."""
+    made: dict[str, bytes] = {}
+    stats = {"fetches": 0, "bytes": 0, "live": 0, "peak": 0}
+
+    async def serve(url):
+        stats["fetches"] += 1
+        if url not in made:
+            made[url] = jpeg_bytes(seed=len(made))
+            stats["sample"] = len(made[url])
+        stats["bytes"] += len(made[url])
+        return made[url]
+
+    monkeypatch.setattr(jasani, "_fetch_image_bytes", serve)
+
+    # watch how much prepared imagery exists at once
+    real_prepare = cat.prepare_image
+
+    def counted(raw):
+        out = real_prepare(raw)
+        if out is not None:
+            stats["live"] += len(out)
+            stats["peak"] = max(stats["peak"], stats["live"])
+        return out
+
+    monkeypatch.setattr(cat, "prepare_image", counted)
+    stats["sample"] = None
+    return stats
 
 
 def test_one_product_makes_a_cover_and_one_page(snapshot):
@@ -289,15 +351,88 @@ def test_every_product_gets_its_own_page(snapshot, n):
     assert f"Page {2 + n}" not in text
 
 
-def test_a_five_hundred_product_catalogue_builds(snapshot):
+def test_a_five_hundred_product_catalogue_builds_with_real_photographs(snapshot, photos):
+    """The load test that means something: every product carries actual JPEG
+    bytes, so this measures a catalogue rather than five hundred placeholder
+    pages."""
     ids = [str(1000 + i) for i in range(500)]
     started = time.time()
     blob = pdf_for(ids)
     took = time.time() - started
     text = cat.extract_text(blob)
-    assert "Product Number 499" in text
+    assert "Product Number 000" in text and "Product Number 499" in text
     assert "Page 501" in text and "Page 502" not in text
-    assert took < 180, f"took {took:.1f}s"
+    assert photos["fetches"] >= 500, "the photographs were really fetched"
+    assert text.count("Image unavailable") == 0, "no page fell back to a placeholder"
+    assert len(blob) > 500 * 1024, "a catalogue of photographs is not a few bytes"
+    assert took < 300, f"took {took:.1f}s"
+    print(f"\n  500 products · {photos['fetches']} fetches · "
+          f"source {photos['bytes'] / 1024 / 1024:.1f} MB · "
+          f"PDF {len(blob) / 1024 / 1024:.2f} MB · {took:.1f}s")
+
+
+def test_the_renderer_never_holds_every_products_photographs_at_once(snapshot, photos,
+                                                                     monkeypatch):
+    """The point of the streaming rewrite. Pictures for one product are drawn
+    and released before the next product is fetched, so the working set does
+    not grow with the catalogue."""
+    held: dict[str, int] = {"max": 0}
+    real_page = cat.Document.page
+
+    def watched(self, dto, blobs):
+        held["max"] = max(held["max"], sum(len(b) for b in blobs))
+        real_page(self, dto, blobs)
+
+    monkeypatch.setattr(cat.Document, "page", watched)
+    ids = [str(1000 + i) for i in range(60)]
+    blob = pdf_for(ids)
+    assert len(blob) > 50 * 1024
+    # whatever one page needs, it is a page's worth — not sixty products'
+    assert held["max"] < 2 * 1024 * 1024, held["max"]
+    # and the prepared bytes alive at any moment stay bounded by the cache
+    assert photos["peak"] < 12 * 1024 * 1024, photos["peak"]
+    print(f"\n  largest single page working set: {held['max'] / 1024:.0f} KB · "
+          f"peak prepared bytes: {photos['peak'] / 1024 / 1024:.1f} MB")
+
+
+def test_a_photograph_is_shrunk_before_it_is_drawn(photos):
+    """A 4 MB original is not what the page holds."""
+    raw = jpeg_bytes(3200, 2400)
+    small = cat.prepare_image(raw)
+    from PIL import Image
+
+    assert small is not None and len(small) < len(raw) / 2
+    assert max(Image.open(io.BytesIO(small)).size) <= cat.MAX_IMAGE_DIM
+
+
+def test_an_enormous_image_is_refused_before_its_pixels_are_decoded():
+    """A decompression bomb is judged on its header, not by decoding it."""
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(buf, "PNG")
+    header = buf.getvalue()
+    monster = io.BytesIO()
+    Image.new("L", (12000, 12000)).save(monster, "PNG")      # 144M pixels
+    assert cat.prepare_image(monster.getvalue()) is None
+    assert cat.prepare_image(header) is not None
+    assert cat.prepare_image(b"x" * (cat.MAX_IMAGE_BYTES + 1)) is None
+
+
+def test_one_unreachable_photograph_costs_that_product_only(snapshot, photos,
+                                                            monkeypatch):
+    real = jasani._fetch_image_bytes
+
+    async def flaky(url):
+        if url.endswith("/3.jpg"):
+            raise OSError("the host hung up")
+        return await real(url)
+
+    monkeypatch.setattr(jasani, "_fetch_image_bytes", flaky)
+    blob = pdf_for([str(1000 + i) for i in range(5)])
+    text = cat.extract_text(blob)
+    assert text.count("Image unavailable") == 1, "exactly the one that failed"
+    assert "Product Number 004" in text, "the rest of the catalogue is unharmed"
 
 
 def test_more_than_five_hundred_is_refused_rather_than_attempted(snapshot):
@@ -314,61 +449,119 @@ def test_an_empty_selection_asks_for_one(snapshot):
 
 # ---------------- no prices, ever ----------------
 
-def test_no_price_of_any_kind_reaches_the_catalogue(tmp_path, monkeypatch):
-    """The product carries every price field the supplier and our internal
-    store can hold. None of them, and no price wording, may appear."""
-    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
-    (tmp_path / "giveaways-ksa.json").write_text(json.dumps({
-        "fetchedAt": STOCK_AT, "stockAt": STOCK_AT,
-        "internal": {"7": {"price": 12.5, "currency": "SAR", "booked": 3}},
-        "products": [{
-            "id": "7", "code": "EM-MUG-7", "name": "Expensive Mug", "brand": "Jasani",
-            "color": "Black", "categories": ["Drinkware"],
-            "description": "A mug with a story.",
-            "image": "", "images": [], "stock": {"available": 42, "incoming": 0},
-            "list_price": 12.5, "retail_price": 19.99, "currency": "SAR",
-            "reseller_price": 15.0, "selling_price": 17.5, "vat": 1.875,
-            "discount": 10, "unit_price": 12.5,
-        }]}), encoding="utf-8")
-    blob = pdf_for(["7"])
-    text = cat.extract_text(blob).lower()
+def test_no_price_field_can_reach_the_renderer(tmp_path, monkeypatch):
+    """The guarantee is structural: the renderer is handed a record built key
+    by key from an allowlist, so a price has no route in — including a price
+    field a future supplier feed invents."""
+    loaded = {
+        "id": "7", "code": "EM-MUG-7", "name": "Expensive Mug", "brand": "Jasani",
+        "color": "Black", "categories": ["Drinkware"], "available": 42,
+        "availableKnown": True, "description": "A mug with a story.",
+        "images": [], "unitsPerCarton": 24,
+        "list_price": 12.5, "retail_price": 19.99, "listPrice": 12.5,
+        "retailPrice": 19.99, "price": 12.5, "wholesale": 11.0,
+        "reseller_price": 15.0, "selling_price": 17.5, "unit_price": 12.5,
+        "vat": 1.875, "discount": 10, "currency": "SAR", "booked": 3,
+        "blocked_qty": 3, "_int": {"price": 12.5},
+        "future_price_field_nobody_has_written_yet": 99.0,
+    }
+    dto = cat.to_dto(loaded)
+    assert set(dto) == set(cat.DTO_FIELDS), "the record is exactly the allowlist"
+    assert not (set(dto) & cat.FORBIDDEN_FIELDS)
+    for key in loaded:
+        if key in cat.DTO_FIELDS:
+            continue
+        assert key not in dto, key
+    # and nothing price-shaped survives into the drawn page
+    pdf = cat.build([loaded], {}, market="ksa", title="T",
+                    stock_at=STOCK_AT, stock_is_known=True)
+    text = cat.extract_text(pdf).lower()
     assert "expensive mug" in text, "the product really is in the document"
-    for value in ("12.5", "19.99", "15.0", "17.5", "1.875", "12,5", "19,99"):
-        assert value not in text, value
     for word in cat.PRICE_WORDS:
         assert word not in text, word
-    # and the guard, run against the figures this market really holds
-    cat.assert_price_free(blob, cat.price_values_of("ksa", ["7"]))
+    cat.assert_price_free(pdf)
 
 
-def test_the_price_guard_is_not_a_no_op():
-    """A check that reads an empty string passes on everything. This proves
-    the extractor really sees the page text."""
-    priced = cat.build(
-        [{"id": "1", "code": "A", "name": "Mug", "available": 5,
-          "description": "Costs 19.99 each."}], {},
-        market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
+@pytest.mark.parametrize("price,field,value,must_remain", [
+    (100, "available", 100, "100 units"),
+    (500, "capacity", "500 ml", "500 ml"),
+    (24, "unitsPerCarton", 24, "24"),
+    (9.5, "cartonWeight", 9.5, "9.5 kg"),
+    (1234, "barcode", "1234", "1234"),
+])
+def test_a_number_that_happens_to_equal_a_price_is_not_a_leak(price, field, value,
+                                                              must_remain):
+    """An item priced 100 with 100 units in stock prints "100 units". The old
+    guard matched price figures against the page text and would have refused
+    this honest catalogue, while still missing a leak at an unusual value."""
+    item = {"id": "1", "code": "A", "name": "Coincidence Mug", "available": 7,
+            "availableKnown": True, "price": price, "list_price": price,
+            field: value}
+    pdf = cat.build([item], {}, market="ksa", title="T",
+                    stock_at=STOCK_AT, stock_is_known=True)
+    cat.assert_price_free(pdf)                 # must not raise
+    assert must_remain in cat.extract_text(pdf)
+
+
+@pytest.mark.parametrize("injected", [
+    "Retail price: 100 SAR", "Unit price 12", "Billed in AED",
+    "List price on request", "RRP 40", "Selling price fixed", "Ex VAT",
+])
+def test_the_finished_document_guard_still_catches_a_real_indicator(injected):
+    """Second line of defence. A price label or a currency, however it got
+    onto the page, is refused — and refused at build time, so a document
+    carrying one is never handed to anybody."""
+    with pytest.raises(cat.CatalogueError) as exc:
+        cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 5,
+                    "availableKnown": True, "description": injected}], {},
+                  market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
+    assert "price indicator" in str(exc.value)
+
+
+def test_the_guard_is_not_a_no_op():
+    """A check that reads an empty string passes on everything, so prove the
+    extractor really sees the drawn page: the same sentence without the
+    currency comes back out of a document that was allowed through."""
+    clean = cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 5,
+                        "availableKnown": True, "description": "Priced fairly."}],
+                      {}, market="ksa", title="T", stock_at=STOCK_AT,
+                      stock_is_known=True)
+    assert "Priced fairly" in cat.extract_text(clean)
     with pytest.raises(cat.CatalogueError):
-        cat.assert_price_free(priced, values=["19.99"])
-    assert "19.99" in cat.extract_text(priced), "the extractor really reads the page"
-
-
-def test_a_currency_code_alone_is_enough_to_refuse_a_document():
-    doc = cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 5,
-                      "description": "Billed in SAR."}], {},
-                    market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
-    with pytest.raises(cat.CatalogueError):
-        cat.assert_price_free(doc)
+        cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 5,
+                    "availableKnown": True, "description": "Priced in SAR."}],
+                  {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
 
 
 def test_an_honest_description_is_not_mistaken_for_a_price():
-    """"Low cost" and "total weight" are things a supplier writes. Refusing a
-    whole catalogue over an ordinary English word would be the worse bug."""
+    """"Low cost" and "total weight" are things a supplier writes."""
     doc = cat.build([{"id": "1", "code": "A", "name": "Low Cost Tote",
-                      "available": 5,
-                      "description": "A total of 12 colours. Low cost, high quality."}],
+                      "available": 5, "availableKnown": True,
+                      "description": "A total of 12 colours. Low cost, high quality. "
+                                     "Amounts to good value."}],
                     {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
     cat.assert_price_free(doc)
+    assert "Low cost" in cat.extract_text(doc)
+
+
+def test_a_generated_catalogue_from_a_priced_snapshot_succeeds(tmp_path, monkeypatch):
+    """End to end: the snapshot holds prices in its internal store and the
+    item's stock equals one of them. The catalogue is produced, not refused."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps({
+        "fetchedAt": STOCK_AT, "stockAt": STOCK_AT,
+        "internal": {"7": {"price": 100.0, "currency": "SAR", "booked": 3}},
+        "products": [{
+            "id": "7", "code": "EM-7", "name": "Hundred Mug", "brand": "Jasani",
+            "color": "Black", "categories": ["Drinkware"], "description": "A mug.",
+            "image": "", "images": [], "unitsPerCarton": 24,
+            "stock": {"available": 100, "known": True, "incoming": 0},
+            "list_price": 100.0, "retail_price": 100.0, "currency": "SAR"}]}),
+        encoding="utf-8")
+    blob = pdf_for(["7"])
+    text = cat.extract_text(blob)
+    assert "100 units" in text, "stock of 100 survives a price of 100"
+    assert "SAR" not in text
 
 
 # ---------------- what a page says ----------------
@@ -402,6 +595,26 @@ def test_zero_stock_is_printed_as_zero_when_it_really_is_zero():
     pdf = cat.build([{"id": "1", "code": "A", "name": "Sold Out", "available": 0}],
                     {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
     assert "0 units" in cat.extract_text(pdf)
+
+
+def test_a_product_the_stock_sync_passed_over_prints_as_unavailable():
+    """Three states on one document: the market is synchronised, so a product
+    the supplier answered for prints its figure, one it did not answer for
+    prints as unavailable, and a record carrying no verdict at all — an older
+    snapshot — follows the market rather than being read as a denial."""
+    pdf = cat.build([
+        {"id": "1", "code": "A", "name": "Answered", "available": 7,
+         "availableKnown": True},
+        {"id": "2", "code": "B", "name": "Skipped", "available": 0,
+         "availableKnown": False},
+        {"id": "3", "code": "C", "name": "No verdict", "available": 4},
+    ], {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
+    text = cat.extract_text(pdf)
+    assert "7 units" in text
+    assert "4 units" in text
+    assert "Availability unavailable" in text
+    #: and only the one product, not all three
+    assert text.count("Availability unavailable") == 1
 
 
 def test_the_stock_date_is_the_sync_not_the_moment_of_generation():
@@ -612,10 +825,114 @@ def test_the_pdf_is_handed_over_once_and_not_kept(snapshot):
                       params={"token": token}).status_code == 404
 
 
-def test_generating_a_catalogue_is_audited(snapshot):
+def test_a_catalogue_is_recorded_as_requested_then_as_generated(snapshot):
+    """Two facts, two entries. "Generated" is written by the worker once the
+    document exists — claiming it when the job was merely asked for would be
+    an audit trail that records intentions rather than outcomes."""
     pdf_for(["1000", "1001"], minStock="")
-    entry = [a for a in aa.audit_list(30)
-             if a["action"] == "jasani.catalogue_generated"][0]
-    detail = json.loads(entry["detail"])
-    assert detail["market"] == "ksa" and detail["items"] == 2
-    assert entry["user_email"] == "owner@elitemarcom.com"
+    actions = [a["action"] for a in aa.audit_list(40)]
+    assert "jasani.catalogue_requested" in actions
+    assert "jasani.catalogue_generated" in actions
+    # requested first, generated after — ids ascend with time
+    entries = {a["action"]: a for a in aa.audit_list(40)
+               if a["action"].startswith("jasani.catalogue")}
+    assert entries["jasani.catalogue_requested"]["id"] < \
+        entries["jasani.catalogue_generated"]["id"]
+    for action in ("jasani.catalogue_requested", "jasani.catalogue_generated"):
+        detail = json.loads(entries[action]["detail"])
+        assert detail["market"] == "ksa" and detail["items"] == 2
+        assert detail["stockAt"] == STOCK_AT
+        assert entries[action]["user_email"] == "owner@elitemarcom.com"
+    assert json.loads(entries["jasani.catalogue_generated"]["detail"])["pages"] == 2
+
+
+def test_a_failed_catalogue_is_not_recorded_as_generated(snapshot, monkeypatch):
+    """A build that dies must not leave "generated" in the log."""
+    def boom(*a, **k):
+        raise cat.CatalogueError("a price indicator reached the catalogue: 'sar'")
+
+    monkeypatch.setattr(cat, "assert_price_free", boom)
+    before = aa.audit_list(1)[0]["id"] if aa.audit_list(1) else 0
+    res = start_catalogue(ids=["1000"])
+    assert res.status_code == 200
+    job = finish(res.json()["token"])
+    assert job["state"] == "failed"
+    # only what this build wrote, so an earlier test's success cannot mask it
+    mine = [a["action"] for a in aa.audit_list(40) if a["id"] > before]
+    assert "jasani.catalogue_requested" in mine
+    assert "jasani.catalogue_failed" in mine
+    assert "jasani.catalogue_generated" not in mine
+
+
+# ---------------- zero stock is not unknown stock ----------------
+
+def test_a_product_the_stock_sync_skipped_stays_unknown(tmp_path, monkeypatch):
+    """A successful market sync is not a promise that it covered every
+    product. One the supplier had no row for keeps an unknown quantity rather
+    than becoming a confident zero."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    products = [
+        {"id": "a", "code": "A", "name": "Counted Item", "brand": "", "color": "",
+         "categories": [], "image": "", "images": [],
+         "stock": {"available": 12, "known": True, "incoming": 0}},
+        {"id": "b", "code": "B", "name": "Skipped Item", "brand": "", "color": "",
+         "categories": [], "image": "", "images": [],
+         "stock": {"available": 0, "known": False, "incoming": 0}},
+        {"id": "c", "code": "C", "name": "Genuinely Empty", "brand": "", "color": "",
+         "categories": [], "image": "", "images": [],
+         "stock": {"available": 0, "known": True, "incoming": 0}},
+    ]
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": products}),
+        encoding="utf-8")
+    assert jasani.stock_known("ksa") is True, "the market did sync"
+    rows = {r["id"]: r for r in items(perPage=100)["items"]}
+    assert rows["a"]["availableKnown"] is True
+    assert rows["b"]["availableKnown"] is False, "skipped by the sync"
+    assert rows["c"]["availableKnown"] is True, "a real zero"
+    # a positive minimum keeps the counted one and drops both the unknown and
+    # the genuine zero, for different reasons
+    assert [r["id"] for r in items(minStock=1, perPage=100)["items"]] == ["a"]
+    # and the catalogue says which is which
+    text = cat.extract_text(pdf_for(["a", "b", "c"]))
+    assert "12 units" in text
+    assert "0 units" in text, "a real zero is printed as zero"
+    assert "Availability unavailable" in text, "an unknown one is not"
+
+
+def test_the_merge_marks_only_the_products_the_supplier_answered_for():
+    """The contract this rests on, asserted directly."""
+    products = [jasani.normalize_product({"id": "1", "code": "A", "name": "One"}, "ksa"),
+                jasani.normalize_product({"id": "2", "code": "B", "name": "Two"}, "ksa")]
+    assert [p["stock"]["known"] for p in products] == [False, False], (
+        "a products feed with no quantity field leaves both unknown")
+    matched = jasani._merge_stock(products, [{"id": "1", "net_available_qty": 9}])
+    assert matched == 1
+    assert products[0]["stock"] == {"available": 9, "known": True, "incoming": 0,
+                                    "incomingDate": None}
+    assert products[1]["stock"]["known"] is False
+    assert products[1]["stock"]["available"] == 0
+
+
+def test_a_products_feed_that_carries_quantities_is_known_without_a_stock_call():
+    p = jasani.normalize_product(
+        {"id": "1", "code": "A", "name": "One", "net_available_qty": 40}, "ksa")
+    assert p["stock"] == {"available": 40, "known": True, "incoming": 0,
+                          "incomingDate": None}
+
+
+def test_an_older_snapshot_without_the_flag_falls_back_to_the_market(tmp_path,
+                                                                    monkeypatch):
+    """A file written before per-item tracking carries no flag; reading it as
+    the market-level answer is the honest interpretation."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    old_shape = [{"id": "1", "code": "A", "name": "Legacy", "brand": "", "color": "",
+                  "categories": [], "image": "", "images": [],
+                  "stock": {"available": 5, "incoming": 0}}]
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": old_shape}),
+        encoding="utf-8")
+    assert items()["items"][0]["availableKnown"] is True
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "products": old_shape}), encoding="utf-8")
+    assert items()["items"][0]["availableKnown"] is False

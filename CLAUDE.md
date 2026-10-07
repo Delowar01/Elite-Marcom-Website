@@ -152,33 +152,60 @@ documentation). Non-negotiable rules from it:
   document.
   `min_stock` filters on the **viewed market's** available quantity with
   `>=`, so a minimum of 100 keeps an item sitting on exactly 100; a negative
-  minimum is refused rather than read as zero. `jasani.stock_known(market)`
-  is the honest answer to "is this figure real": the normalized product keeps
-  `stock.available` as a plain integer, so a never-synced market's zeroes are
-  *unknown*, not none-left — they cannot clear a positive minimum and the
-  catalogue prints "Availability unavailable" rather than inventing a zero.
-- **The product catalogue is price-free by construction and by assertion**
-  (`server/catalogue.py`, permission `jasani.view`). A cover, an optional
-  contents page, then exactly one A4 page per product — everything on a page
-  is clipped to fit, because the document's contract is one page each and a
-  reader counting pages has to be able to trust it. Nothing in the module
-  reads a price field, and `assert_price_free` then reads the text back out
-  of the finished PDF before it is handed over. That read matters: reportlab
-  writes ASCII85 over Flate, so a check that scanned raw bytes would pass on
-  every document ever made and prove nothing — `extract_text` decodes the
-  streams, and a test asserts the guard actually bites on a document that
-  does carry a price.
-  Quantities are captured when the rows are read, so page 1 and page 400
-  cannot disagree because the cache moved underneath, and the page prints the
-  **stock synchronisation** timestamp rather than the moment the PDF was
-  made; the cover labels the two dates separately. Photographs come from the
-  supplier's public image host, which is a file read rather than a primary
-  endpoint and is charged to nothing; one unreachable picture costs that
-  product its photograph and nothing else. The build runs on a worker thread
-  (`spawn`) and the panel polls for progress, so five hundred pages — about
-  15 seconds — never hold a request open. The PDF lives in memory under a
-  token that expires, is handed over once and then dropped; generation is
-  audited with the market, the count and the stock timestamp.
+  minimum is refused rather than read as zero.
+  **Known and zero are different answers, per product.** A stock
+  synchronisation that succeeds for a market is not a promise that it covered
+  every product: `_merge_stock` only writes to the products it found a row
+  for. So `stock.known` is tracked per item — set by the products feed when
+  it actually carried a quantity field (`_present`, never a zero default),
+  and by `_merge_stock` for each product the supplier answered for. `_row`
+  exposes it as `availableKnown`; a snapshot written before this carries no
+  flag and falls back to `jasani.stock_known(market)`, the honest reading of
+  an older file. An unknown quantity cannot clear a positive minimum, and the
+  catalogue prints "Availability unavailable" for it while a product the
+  supplier really reports as empty still prints "0 units".
+- **The product catalogue is price-free because the renderer never sees a
+  price** (`server/catalogue.py`, permission `jasani.view`). `to_dto` builds
+  the customer-facing record key by key from `DTO_FIELDS`; the supplier dict
+  is never passed through with price keys deleted, because that would carry
+  along whatever price field a future feed invents. `FORBIDDEN_FIELDS` is
+  asserted against the allowlist at import time. `assert_price_free` is the
+  second line and runs inside `Document.finish`, so a document carrying a
+  price indicator is refused rather than handed over. It decodes the page
+  text — reportlab writes ASCII85 over Flate, so a raw byte scan would pass
+  on every document ever made — and looks for **currencies and price labels
+  only**. It deliberately does *not* match price figures: an item priced 100
+  with 100 units in stock prints "100 units", a 500 ml capacity sits beside a
+  price of 500, a carton of 24 beside a price of 24. Rejecting those would
+  break honest catalogues while still missing a leak at an unusual value.
+  A cover, an optional contents page, then exactly one A4 page per product —
+  everything on a page is clipped to fit, because the contract is one page
+  each and a reader counting pages has to trust it. Quantities are captured
+  when the rows are read, so page 1 and page 400 cannot disagree, and the
+  page prints the **stock synchronisation** timestamp rather than the moment
+  the PDF was made; the cover labels the two dates separately.
+  **The document is streamed, not assembled.** `Document` draws a page at a
+  time and `_render` fetches one product's photographs, draws them and drops
+  them before looking at the next, so the working set is a page's worth
+  rather than five hundred products' worth — the first version held every
+  blob until the end, which at 500 x 3 x 4 MB was a multi-gigabyte ceiling on
+  a small VPS. `prepare_image` refuses an over-large picture on its header
+  before a pixel is decoded (`MAX_IMAGE_PIXELS`), downscales to
+  `MAX_IMAGE_DIM` and re-encodes, so a 4 MB original becomes tens of
+  kilobytes; `PHOTO_CACHE_MAX` bounds what is remembered between products. A
+  measured 500-product catalogue of real photographs: 89.6 MB of source
+  imagery in, 3.61 MB PDF out, about 114 seconds, with the largest single
+  page holding ~62 KB of prepared imagery.
+  Photographs come from the supplier's public image host, a file read rather
+  than a primary endpoint and charged to nothing; one unreachable picture
+  costs that product its photograph and nothing else. The build runs on a
+  worker thread (`spawn`) and the panel polls for progress, so a long
+  catalogue never holds a request open. The PDF lives in memory under a token
+  that expires, is handed over once and then dropped.
+  The audit records **two** facts: `jasani.catalogue_requested` when the job
+  is accepted, and `jasani.catalogue_generated` — or `catalogue_failed` —
+  written by the worker once the outcome is known. Writing "generated" at the
+  start would be a log of intentions rather than outcomes.
 - **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
   whenever a parser change means a stored answer could be improved on; an
   entry written under a lower number is treated as absent and rediscovered.

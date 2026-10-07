@@ -672,6 +672,15 @@ def _safe_image(url: str, host: str) -> str:
     return _safe_supplier_url(url)
 
 
+#: Where a quantity is read from, in order. net_available_qty is Jasani's
+#: guaranteed-sellable figure; the rest are fallbacks seen in other payload
+#: variants. One list, read by the products feed and the stock merge alike, so
+#: the two cannot disagree about what counts as a quantity being present.
+_STOCK_KEYS = ("net_available_qty", "net_stock", "available_stock", "stock",
+               "net_available", "qty_available", "free_qty", "available_qty",
+               "quantity_available")
+
+
 def normalize_product(rec: dict, market: str) -> dict | None:
     """Map one supplier record to the public catalog shape (no cost fields)."""
     try:
@@ -719,11 +728,11 @@ def normalize_product(rec: dict, market: str) -> dict | None:
                                   or rec.get("producttemplateattributevalueids")))
         seen_opts: set[str] = set()
         options = [o for o in options if not (o in seen_opts or seen_opts.add(o))][:20]
-        # net_available_qty is Jasani's guaranteed-sellable quantity; the rest
-        # are fallbacks seen in other payload variants
-        available = max(0, _i(rec, "net_available_qty", "net_stock", "available_stock", "stock",
-                              "net_available", "qty_available", "free_qty", "available_qty",
-                              "quantity_available"))
+        available = max(0, _i(rec, *_STOCK_KEYS))
+        # absent and zero are different answers: a record that carries no
+        # quantity at all leaves this product's availability *unknown* rather
+        # than making it a confident nought
+        available_known = _present(rec, *_STOCK_KEYS)
         incoming = max(0, _i(rec, "incoming_qty", "incoming_stock", "incoming", "expected_stock"))
         return {
             "id": pid or code,
@@ -765,6 +774,7 @@ def normalize_product(rec: dict, market: str) -> dict | None:
             # blocked_qty stays internal per supplier policy — never in this payload
             "stock": {
                 "available": available,
+                "known": available_known,
                 "incoming": incoming,
                 "incomingDate": _s(rec, "incoming_date", "expected_date")[:30] or None,
             },
@@ -791,9 +801,12 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> int:
         rec = by_key.get(p["id"]) or by_key.get(p["code"])
         if rec:
             matched += 1
-            p["stock"]["available"] = max(0, _i(rec, "net_available_qty", "net_stock", "available_stock",
-                                                "stock", "net_available", "qty_available", "free_qty",
-                                                "available_qty", "quantity_available"))
+            p["stock"]["available"] = max(0, _i(rec, *_STOCK_KEYS))
+            # the supplier answered for *this* product, so its figure is real.
+            # A stock sync that simply has no row for a product leaves that
+            # product unknown — a successful sync is not a promise that every
+            # product was covered by it.
+            p["stock"]["known"] = True
             if _present(rec, "incoming_qty", "incoming_stock", "incoming", "expected_stock"):
                 p["stock"]["incoming"] = max(0, _i(rec, "incoming_qty", "incoming_stock",
                                                    "incoming", "expected_stock"))
@@ -1444,6 +1457,10 @@ def _row(p: dict, internal: dict, hidden: set[str], drop_zero: bool,
     allowed to see them — the payload never carries what the role cannot."""
     stock = p.get("stock") or {}
     available = int(stock.get("available", 0) or 0)
+    # a snapshot written before per-item tracking has no "known" key; those
+    # fall back to the market-level answer, which is the honest reading of an
+    # older file rather than a guess per product
+    available_known = stock.get("known")
     pid = str(p.get("id"))
     is_hidden = pid in hidden
     by_rule = drop_zero and available <= 0 and not is_hidden
@@ -1457,6 +1474,7 @@ def _row(p: dict, internal: dict, hidden: set[str], drop_zero: bool,
         # dropped again before the row is serialized
         "_seq": int(p.get("sequence") or 0),
         "available": available,
+        "availableKnown": available_known,
         "incoming": int(stock.get("incoming", 0) or 0),
         "incomingDate": stock.get("incomingDate") or "",
         "hidden": is_hidden, "hiddenByRule": by_rule,
@@ -1515,6 +1533,8 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
     rows = [_row(p, internal, hidden, drop_zero, with_prices) for p in products]
     for row, p in zip(rows, products):
         row["_cats"] = [str(c).lower() for c in (p.get("categories") or [])]
+        if row["availableKnown"] is None:
+            row["availableKnown"] = known
 
     totals = {"all": len(rows),
               "in": sum(1 for r in rows if r["available"] > 0),
@@ -1540,7 +1560,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
             # With no stock sync behind the snapshot the figure is unknown, so
             # it cannot clear a positive minimum; a minimum of 0 asks for no
             # filtering at all and still lets everything through.
-            if min_stock > 0 and (not known or r["available"] < min_stock):
+            if min_stock > 0 and (not r["availableKnown"] or r["available"] < min_stock):
                 return False
         if needles:
             hay = " ".join(str(r.get(k, "")) for k in keys).lower()
@@ -1623,6 +1643,7 @@ def item_detail(market: str, product_id: str, with_prices: bool = False) -> dict
             row.pop("_cats", None)
             row.pop("_seq", None)
             row.update({
+                "availableKnown": (p.get("stock") or {}).get("known", stock_known(market)),
                 "description": p.get("description", ""),
                 "images": p.get("images") or ([p["image"]] if p.get("image") else []),
                 "videos": p.get("videos") or [],

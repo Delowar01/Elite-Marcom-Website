@@ -926,10 +926,23 @@ async def admin_jasani_catalogue(request: Request, body: CatalogueBody,
             f"{cat.MAX_ITEMS}; narrow the filters or select fewer."))
     status = jasani.cache_status(body.market)
     token = cat.start(session["email"], body.market, len(rows))
-    aa.audit(session, "jasani.catalogue_generated", "jasani",
-             {"market": body.market, "items": len(rows), "scope": body.scope,
+    detail = {"market": body.market, "items": len(rows), "scope": body.scope,
               "minStock": body.minStock or "none",
-              "stockAt": status.get("stockAt")}, _ip_hash(request))
+              "stockAt": status.get("stockAt")}
+    # asked for now; whether it was produced is a separate fact, recorded by
+    # the worker when it knows — "generated" must never be written before the
+    # document exists
+    aa.audit(session, "jasani.catalogue_requested", "jasani", detail, _ip_hash(request))
+    ip = _ip_hash(request)
+
+    def finished(ok: bool, job: dict) -> None:
+        aa.audit(session,
+                 "jasani.catalogue_generated" if ok else "jasani.catalogue_failed",
+                 "jasani",
+                 {**detail, "pages": job.get("done", 0),
+                  **({} if ok else {"error": job.get("error", "")[:160]})}, ip)
+
+    cat.set_on_finish(token, finished)
     cat.spawn(token, rows, market=body.market,
               title=body.title or cat.DEFAULT_TITLE,
               stock_at=status.get("stockAt"),

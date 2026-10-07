@@ -97,6 +97,68 @@ def when(ts) -> str:
     return time.strftime("%d %B %Y, %I:%M %p", time.localtime(float(ts)))
 
 
+# ---------------- the customer-facing record ----------------
+
+#: Every field the renderer may see. The list is the guarantee: the renderer
+#: is handed a dict built key by key from this, so a price field has no route
+#: in at all. Checking the finished PDF for numbers that happen to equal a
+#: price is not a guarantee — an item priced 100 with 100 in stock would trip
+#: it, and a leak with an unusual value would not.
+DTO_TEXT_FIELDS = ("id", "code", "name", "description", "brand", "color",
+                   "material", "size", "capacity", "cartonDimensions",
+                   "hsCode", "barcode")
+DTO_NUMBER_FIELDS = ("unitsPerCarton", "cartonWeight", "cartonVolume")
+DTO_LIST_FIELDS = ("categories", "options", "images")
+DTO_FIELDS = DTO_TEXT_FIELDS + DTO_NUMBER_FIELDS + DTO_LIST_FIELDS + (
+    "available", "availableKnown")
+
+#: and the names that must never be among them, asserted at import time
+FORBIDDEN_FIELDS = frozenset((
+    "price", "list_price", "retail_price", "listPrice", "retailPrice",
+    "wholesale", "reseller_price", "resellerPrice", "selling_price",
+    "sellingPrice", "unit_price", "unitPrice", "vat", "discount", "currency",
+    "booked", "blocked_qty", "blockedQty", "_int",
+))
+assert not (set(DTO_FIELDS) & FORBIDDEN_FIELDS), "a price field is in the DTO allowlist"
+
+
+def _item_known(dto: dict) -> bool:
+    """Whether this product's own quantity is real. ``None`` means the record
+    does not say, so the market-level answer stands."""
+    known = dto.get("availableKnown")
+    return True if known is None else bool(known)
+
+
+def to_dto(item: dict) -> dict:
+    """The record the renderer is given: only allowlisted fields, copied one
+    key at a time out of whatever the snapshot holds.
+
+    This is the whole price guarantee. Nothing is deleted from a supplier
+    dict and passed on — a new price field appearing in a future feed would
+    be carried along by that approach. Here it simply never arrives.
+    """
+    out: dict = {}
+    for key in DTO_TEXT_FIELDS:
+        out[key] = clean_text(item.get(key), 1200 if key == "description" else 240)
+    for key in DTO_NUMBER_FIELDS:
+        value = item.get(key)
+        out[key] = value if isinstance(value, (int, float)) and value > 0 else None
+    for key in DTO_LIST_FIELDS:
+        raw = item.get(key) or []
+        out[key] = [str(v) for v in raw if v][:20] if isinstance(raw, (list, tuple)) else []
+    available = item.get("available")
+    try:
+        out["available"] = int(available) if available is not None else None
+    except (TypeError, ValueError):
+        out["available"] = None
+    known = item.get("availableKnown")
+    #: absent is not "no": a record that carries no per-product verdict defers
+    #: to the market-level answer, which is how a snapshot written before the
+    #: per-product flag existed keeps printing its quantities.
+    out["availableKnown"] = None if known is None else bool(known)
+    return out
+
+
 # ---------------- the specification rows ----------------
 
 #: (source key, printed label) — the normalized product fields worth showing a
@@ -135,6 +197,49 @@ def spec_rows(item: dict) -> list[tuple[str, str]]:
     if options:
         rows.append(("Options", ", ".join(options)[:120]))
     return rows[:14]
+
+
+# ---------------- one picture, made small enough to hold ----------------
+
+MAX_IMAGE_DIM = 1400          # a catalogue page is 595pt wide; more is waste
+MAX_IMAGE_PIXELS = 50_000_000  # decompression-bomb ceiling, before decoding
+PREPARED_QUALITY = 82
+
+
+def prepare_image(raw: bytes):
+    """Decode a downloaded photograph once, bound it, and hand back a small
+    JPEG.
+
+    Two jobs. It caps what a malicious or merely enormous file can cost —
+    the dimensions are read from the header and refused before any pixels are
+    decoded — and it shrinks what the renderer holds: a 4 MB original becomes
+    tens of kilobytes at a size no A4 page can tell apart.
+    """
+    if not raw or len(raw) > MAX_IMAGE_BYTES:
+        return None
+    try:
+        from PIL import Image
+
+        probe = Image.open(io.BytesIO(raw))
+        if probe.width * probe.height > MAX_IMAGE_PIXELS:
+            return None                      # a bomb, or close enough to one
+        im = probe
+        im.load()
+        if max(im.width, im.height) > MAX_IMAGE_DIM:
+            im.thumbnail((MAX_IMAGE_DIM, MAX_IMAGE_DIM))
+        if im.mode in ("RGBA", "LA", "P"):
+            flat = Image.new("RGB", im.size, (255, 255, 255))
+            rgba = im.convert("RGBA")
+            flat.paste(rgba, mask=rgba.split()[-1])
+            im = flat
+        else:
+            im = im.convert("RGB")
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=PREPARED_QUALITY, optimize=True)
+        im.close()
+        return out.getvalue()
+    except Exception:
+        return None                          # one bad photo, not a failed run
 
 
 # ---------------- page furniture ----------------
@@ -397,53 +502,85 @@ def _product_page(c, item: dict, photos: list[bytes], *, page_no: int, options: 
 
 # ---------------- the whole document ----------------
 
+class Document:
+    """A catalogue being drawn, one page at a time.
+
+    The document is streamed rather than assembled: a product's photographs
+    are handed in, drawn, and dropped before the next product is fetched, so
+    the memory a catalogue needs does not grow with its length. Five hundred
+    products cost the same working set as five.
+    """
+
+    def __init__(self, *, market: str, title: str, count: int, stock_at,
+                 stock_is_known: bool, options: dict | None = None):
+        if count <= 0:
+            raise CatalogueError("Select at least one product for the catalogue.")
+        if count > MAX_ITEMS:
+            raise CatalogueError(f"A catalogue holds at most {MAX_ITEMS} products.")
+        self.opts = {"description": True, "specs": True, "stock": True,
+                     "stockDate": True, "code": True, "contents": False,
+                     "market": market}
+        self.opts.update(options or {})
+        self.market = market
+        self.title = clean_text(title, 120) or "Product Catalogue"
+        self.count = count
+        self.stock_at = stock_at
+        self.stock_is_known = stock_is_known
+        self.buf = io.BytesIO()
+        self.c = canvas.Canvas(self.buf, pagesize=A4)
+        self.c.setTitle(self.title)
+        self.c.setAuthor("Elite Marcom")
+        self.c.setSubject("Corporate gifts product catalogue")
+        self.contents_pages = 0
+        if self.opts.get("contents"):
+            self.contents_pages = max(1, (count + 45) // 46)
+        self.first_product_page = 2 + self.contents_pages
+        self.drawn = 0
+        _cover(self.c, title=self.title, market=market, count=count,
+               stock_at=stock_at, generated=time.time())
+
+    def contents(self, entries: list[tuple[str, str]]) -> None:
+        """(code, name) in order; page numbers are worked out from position."""
+        if not self.opts.get("contents"):
+            return
+        rows = [(code, name, self.first_product_page + n)
+                for n, (code, name) in enumerate(entries)]
+        _contents(self.c, rows, 2)
+
+    def page(self, dto: dict, photos: list[bytes]) -> None:
+        _product_page(self.c, dto, photos,
+                      page_no=self.first_product_page + self.drawn,
+                      options=self.opts, stock_at=self.stock_at,
+                      stock_is_known=self.stock_is_known and _item_known(dto))
+        self.drawn += 1
+
+    def finish(self) -> bytes:
+        self.c.save()
+        pdf = self.buf.getvalue()
+        assert_price_free(pdf)
+        return pdf
+
+
 def build(items: list[dict], photos: dict[str, list[bytes]], *, market: str,
           title: str, stock_at, stock_is_known: bool, options: dict | None = None,
           progress=None) -> bytes:
-    """`photos` is keyed by product id and already fetched, so this function
-    does no network work at all and the whole document is one consistent
-    snapshot: every page shows the figures captured before the first page was
-    drawn."""
-    opts = {"description": True, "specs": True, "stock": True, "stockDate": True,
-            "code": True, "contents": False, "market": market}
-    opts.update(options or {})
+    """Build a whole catalogue from records already in hand.
+
+    The streaming path (`Document`) is what the panel uses; this is the same
+    thing with every photograph supplied up front, which is how a test with
+    a handful of products says what it means.
+    """
     if not items:
         raise CatalogueError("Select at least one product for the catalogue.")
-    if len(items) > MAX_ITEMS:
-        raise CatalogueError(f"A catalogue holds at most {MAX_ITEMS} products.")
-
-    generated = time.time()
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    c.setTitle(clean_text(title, 120) or "Elite Marcom Product Catalogue")
-    c.setAuthor("Elite Marcom")
-    c.setSubject("Corporate gifts product catalogue")
-
-    _cover(c, title=clean_text(title, 120) or "Product Catalogue", market=market,
-           count=len(items), stock_at=stock_at, generated=generated)
-
-    # the cover is page 1 and is not a product page; the index, when asked
-    # for, sits between the two and is sized before anything is numbered
-    contents_pages = 0
-    if opts.get("contents"):
-        per_page = 46
-        contents_pages = max(1, (len(items) + per_page - 1) // per_page)
-    first_product_page = 2 + contents_pages
-    if opts.get("contents"):
-        entries = [(clean_text(it.get("code"), 40) or "—",
-                    clean_text(it.get("name"), 120) or "Product",
-                    first_product_page + n)
-                   for n, it in enumerate(items)]
-        _contents(c, entries, 2)
-
-    for n, item in enumerate(items):
-        _product_page(c, item, photos.get(str(item.get("id")), []),
-                      page_no=first_product_page + n, options=opts,
-                      stock_at=stock_at, stock_is_known=stock_is_known)
+    doc = Document(market=market, title=title, count=len(items), stock_at=stock_at,
+                   stock_is_known=stock_is_known, options=options)
+    dtos = [to_dto(it) for it in items]
+    doc.contents([(d["code"] or "—", d["name"] or "Product") for d in dtos])
+    for n, dto in enumerate(dtos):
+        doc.page(dto, photos.get(dto["id"], []))
         if progress is not None:
             progress(n + 1)
-    c.save()
-    return buf.getvalue()
+    return doc.finish()
 
 
 # ---------------- jobs: built in the background, never on disk ----------------
@@ -451,6 +588,10 @@ def build(items: list[dict], photos: dict[str, list[bytes]], *, market: str,
 DEFAULT_TITLE = "Elite Marcom\nProduct Catalogue"
 JOB_TTL_S = 20 * 60
 IMAGES_PER_ITEM = 3
+#: distinct prepared photographs remembered between products. Each is tens of
+#: kilobytes after `prepare_image`, so this is a few megabytes at worst —
+#: bounded on purpose, because an unbounded one grows with the catalogue.
+PHOTO_CACHE_MAX = 60
 
 _jobs: dict[str, dict] = {}
 _lock = __import__("threading").Lock()
@@ -472,10 +613,20 @@ def start(by: str, market: str, total: int) -> str:
         _jobs[token] = {
             "created": time.time(), "by": by, "market": market,
             "total": total, "done": 0, "state": "preparing", "pdf": None,
-            "error": "", "filename": f"Elite-Marcom-Jasani-Catalogue-"
-                                     f"{market.upper()}-{stamp}.pdf",
+            "error": "", "on_finish": None,
+            "filename": f"Elite-Marcom-Jasani-Catalogue-"
+                        f"{market.upper()}-{stamp}.pdf",
         }
     return token
+
+
+def set_on_finish(token: str, fn) -> None:
+    """Called once by the worker with (ok, job) when the build settles, so the
+    audit records what actually happened rather than what was asked for."""
+    with _lock:
+        job = _jobs.get(token)
+        if job is not None:
+            job["on_finish"] = fn
 
 
 def get(token: str, by: str) -> dict | None:
@@ -505,8 +656,8 @@ def public(job: dict) -> dict:
             "ready": job["state"] == "done" and bool(job["pdf"])}
 
 
-async def _collect_photos(market: str, rows: list[dict], job: dict) -> tuple[list, dict]:
-    """Resolve each row to its full record and fetch its photographs.
+async def _photos_for(market: str, dto: dict, cache: dict) -> list[bytes]:
+    """The pictures for one product, already shrunk.
 
     Pictures come from the supplier's public image host. That is a file read
     over HTTP, not one of the three primary endpoints, so it is charged to
@@ -515,33 +666,67 @@ async def _collect_photos(market: str, rows: list[dict], job: dict) -> tuple[lis
     """
     from . import jasani
 
-    items: list[dict] = []
-    photos: dict[str, list[bytes]] = {}
-    seen: dict[str, bytes] = {}            # one download per distinct address
+    out: list[bytes] = []
+    for url in (dto.get("images") or [])[:IMAGES_PER_ITEM]:
+        if url in cache:
+            if cache[url] is not None:
+                out.append(cache[url])
+            continue
+        try:
+            raw = await jasani._fetch_image_bytes(url)
+        except Exception:
+            raw = None
+        small = prepare_image(raw) if raw else None
+        del raw                               # the original goes immediately
+        # Only the main picture is worth remembering between products: a
+        # gallery shot is rarely shared, and an unbounded cache is the very
+        # thing this rewrite exists to avoid.
+        if len(cache) < PHOTO_CACHE_MAX:
+            cache[url] = small
+        if small is not None:
+            out.append(small)
+    return out
+
+
+async def _render(token: str, rows: list[dict], *, market: str, title: str,
+                  stock_at, stock_is_known: bool, options: dict) -> bytes:
+    """Draw the catalogue, one product at a time.
+
+    Each product's photographs are fetched, drawn and dropped before the next
+    product is looked at, so the working set is one page's worth of pictures
+    rather than five hundred products' worth. The quantities were captured
+    when the rows were read, so every page still shows one consistent
+    snapshot.
+    """
+    from . import jasani
+
+    job = _jobs[token]
+    doc = Document(market=market, title=title, count=len(rows), stock_at=stock_at,
+                   stock_is_known=stock_is_known, options=options)
+    if options.get("contents"):
+        # the index needs names before any page is drawn; those are text, not
+        # pictures, so reading them ahead costs nothing worth bounding
+        heads = []
+        for row in rows:
+            detail = jasani.item_detail(market, row["id"]) or dict(row)
+            heads.append((clean_text(detail.get("code"), 40) or "—",
+                          clean_text(detail.get("name"), 120) or "Product"))
+        doc.contents(heads)
+    cache: dict[str, bytes | None] = {}
+    job["state"] = "drawing"
+    job["done"] = 0
     for n, row in enumerate(rows):
         detail = jasani.item_detail(market, row["id"]) or dict(row)
-        # the quantity is the one the filter saw, so every page of the
-        # document agrees even if the cache moves while it is being drawn
+        # the filter's figures win, so the document is one snapshot
         detail["available"] = row.get("available")
-        items.append(detail)
-        urls = [u for u in (detail.get("images") or []) if u][:IMAGES_PER_ITEM]
-        if not urls and detail.get("image"):
-            urls = [detail["image"]]
-        blobs: list[bytes] = []
-        for url in urls:
-            if url in seen:
-                blobs.append(seen[url])
-                continue
-            try:
-                blob = await jasani._fetch_image_bytes(url)
-            except Exception:
-                blob = None
-            if blob and len(blob) <= MAX_IMAGE_BYTES:
-                seen[url] = blob
-                blobs.append(blob)
-        photos[str(detail.get("id"))] = blobs
+        detail["availableKnown"] = row.get("availableKnown")
+        dto = to_dto(detail)
+        del detail
+        photos = await _photos_for(market, dto, cache)
+        doc.page(dto, photos)
+        del photos, dto                       # released before the next product
         job["done"] = n + 1
-    return items, photos
+    return doc.finish()
 
 
 def run(token: str, rows: list[dict], *, market: str, title: str,
@@ -556,24 +741,26 @@ def run(token: str, rows: list[dict], *, market: str, title: str,
         return
     try:
         job["state"] = "images"
-        items, photos = asyncio.run(_collect_photos(market, rows, job))
-        job["state"] = "drawing"
-        job["done"] = 0
-        pdf = build(items, photos, market=market, title=title, stock_at=stock_at,
-                    stock_is_known=stock_is_known, options=options,
-                    progress=lambda n: job.__setitem__("done", n))
-        # checked against the figures this market actually holds for these
-        # products, not against a guess at what a price looks like
-        assert_price_free(pdf, price_values_of(market, [str(i.get("id")) for i in items]))
+        pdf = asyncio.run(_render(token, rows, market=market, title=title,
+                                  stock_at=stock_at, stock_is_known=stock_is_known,
+                                  options=options))
         job["pdf"] = pdf
         job["state"] = "done"
-        job["done"] = len(items)
+        job["done"] = len(rows)
+        job["finished"] = True
     except CatalogueError as exc:
         job["state"] = "failed"
         job["error"] = str(exc)[:200]
     except Exception as exc:                  # pragma: no cover - defensive
         job["state"] = "failed"
         job["error"] = f"The catalogue could not be built ({exc.__class__.__name__})."
+    finally:
+        done = job["state"] == "done"
+        if job.get("on_finish"):
+            try:
+                job["on_finish"](done, job)
+            except Exception:
+                pass
 
 
 def spawn(token: str, rows: list[dict], **kw) -> None:
@@ -588,57 +775,41 @@ def spawn(token: str, rows: list[dict], **kw) -> None:
 PRICE_KEYS = ("list_price", "retail_price", "listPrice", "retailPrice", "price",
               "wholesale", "reseller_price", "selling_price", "unit_price",
               "vat", "discount", "currency")
-#: Tokens only a price could put on the page. Deliberately NOT a list of
-#: ordinary English words: a supplier description may honestly say "low cost"
-#: or "total weight", and refusing a whole catalogue over that would be a
-#: worse failure than the one being guarded against. The real guarantee is
-#: the value check below — the record's own figures, which must never appear.
+#: Tokens only a price could put on the page — a currency, or a price label.
+#: Deliberately NOT ordinary English words: a supplier description may
+#: honestly say "low cost" or "total weight", and refusing a catalogue over
+#: that would be a worse failure than the one being guarded against.
+#:
+#: Note what is *not* here: the price figures themselves. A number equal to a
+#: price proves nothing — an item priced 100 with 100 units in stock prints
+#: "100 units", a 500 ml capacity beside a price of 500, a carton of 24
+#: beside a price of 24. Matching on those would reject honest catalogues
+#: while still missing a leak at an unusual value. The guarantee lives in
+#: `to_dto`, which never lets a price into the renderer; this is the second
+#: line, catching a label or a currency however it got there.
 PRICE_WORDS = ("sar", "aed", "usd", "list price", "retail price", "unit price",
-               "selling price", "reseller price", "ex vat", "incl vat", "rrp")
+               "selling price", "reseller price", "ex vat", "incl vat", "rrp",
+               "price:", "price :")
 
 
-def assert_price_free(pdf: bytes, values: list[str] | None = None) -> None:
-    """Raise if anything price-shaped reached the finished document.
+def assert_price_free(pdf: bytes) -> None:
+    """Second line of defence: raise if a currency or a price label reached
+    the finished document.
 
-    reportlab writes page text into compressed streams, so the check reads the
-    drawn strings back out of the PDF rather than scanning the raw bytes —
-    scanning raw bytes would pass happily on a compressed stream and prove
-    nothing at all.
+    reportlab writes page text as ASCII85 over Flate, so this reads the drawn
+    strings back out rather than scanning raw bytes — a raw scan would pass
+    happily on a compressed stream and prove nothing at all.
+
+    It deliberately does not look for price *values*. `to_dto` is what makes
+    the document price-free; a numeric coincidence is not evidence of a leak
+    and rejecting one would only break honest catalogues.
     """
     text = extract_text(pdf).lower()
     for word in PRICE_WORDS:
-        if re.search(rf"\b{re.escape(word)}\b", text):
-            raise CatalogueError(f"a price field reached the catalogue: {word!r}")
-    for value in values or []:
-        v = str(value).strip().lower()
-        if not v or v in ("0", "0.0", "none"):
-            continue
-        # a figure is only damning as a whole token: "12.5" must not match
-        # inside a carton volume of "112.55"
-        if re.search(rf"(?<![\d.]){re.escape(v)}(?![\d])", text):
-            raise CatalogueError(f"a price value reached the catalogue: {value!r}")
-
-
-def price_values_of(market: str, ids: list[str]) -> list[str]:
-    """Every price figure the internal store holds for these products, so the
-    guarantee can be checked against the real numbers rather than a word list."""
-    from . import jasani
-
-    out: list[str] = []
-    try:
-        internal = jasani.internal_map(market)
-    except Exception:
-        return out
-    for pid in ids:
-        rec = internal.get(str(pid)) or {}
-        for key in ("price", "wholesale", "list_price", "retail_price"):
-            value = rec.get(key)
-            if value in (None, "", 0):
-                continue
-            out.append(str(value))
-            if isinstance(value, float) and value.is_integer():
-                out.append(str(int(value)))
-    return out
+        pattern = rf"\b{re.escape(word)}" if word.endswith((":", " :")) else \
+            rf"\b{re.escape(word)}\b"
+        if re.search(pattern, text):
+            raise CatalogueError(f"a price indicator reached the catalogue: {word!r}")
 
 
 def _decode_stream(chunk: bytes) -> bytes:
