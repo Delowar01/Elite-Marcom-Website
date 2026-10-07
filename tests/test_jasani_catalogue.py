@@ -12,6 +12,7 @@ implementation details:
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import time
@@ -936,3 +937,273 @@ def test_an_older_snapshot_without_the_flag_falls_back_to_the_market(tmp_path,
     (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
         {"fetchedAt": STOCK_AT, "products": old_shape}), encoding="utf-8")
     assert items()["items"][0]["availableKnown"] is False
+
+
+# ---------------- normalized measures reach the page ----------------
+
+def _normalized(**extra) -> dict:
+    """A product as `normalize_product` really produces it, so a test cannot
+    pass by hand-building the shape the renderer happens to want."""
+    rec = {"id": "1", "code": "ITGL 1", "name": "Carton Item",
+           "description": "A boxed item.", "units_per_carton": 24}
+    rec.update(extra)
+    return jasani.normalize_product(rec, "ksa")
+
+
+def test_the_normalizer_really_produces_measure_strings():
+    """The premise of the fix: these fields are strings, not numbers. A test
+    that asserted on numeric dicts would have passed throughout the bug."""
+    p = _normalized(carton_weight="9.500000000000001", carton_volume="0.240")
+    assert p["cartonWeight"] == "9.5" and isinstance(p["cartonWeight"], str)
+    assert p["cartonVolume"] == "0.24" and isinstance(p["cartonVolume"], str)
+
+
+def test_a_normalized_carton_weight_and_volume_reach_the_catalogue(snapshot):
+    """What the review found: read as numbers, every normalized measure was
+    dropped and the carton rows vanished from the document."""
+    p = _normalized(carton_weight="9.5", carton_volume="0.24")
+    dto = cat.to_dto(p)
+    assert dto["cartonWeight"] == "9.5" and dto["cartonVolume"] == "0.24"
+    pdf = cat.build([dto], {}, market="ksa", title="T", stock_at=STOCK_AT,
+                    stock_is_known=True)
+    text = cat.extract_text(pdf)
+    assert "9.5 kg" in text
+    assert "0.24 m" in text                   # m³ may decode as m³ or m3
+    assert "Carton weight" in text and "Carton volume" in text
+
+
+def test_a_unit_the_supplier_already_wrote_is_not_doubled(snapshot):
+    """The supplier sends "9.5" on one product and "9.5 kg" on the next, and
+    `_weight` keeps whatever suffix came with the figure."""
+    p = _normalized(carton_weight="9.5 kg", carton_volume="0.24 m³")
+    assert p["cartonWeight"] == "9.5 kg"      # the normalizer kept the unit
+    text = cat.extract_text(cat.build([cat.to_dto(p)], {}, market="ksa", title="T",
+                                      stock_at=STOCK_AT, stock_is_known=True))
+    assert "9.5 kg" in text
+    assert "kg kg" not in text
+    assert "m³ m³" not in text and "m3 m3" not in text
+
+
+@pytest.mark.parametrize("key,value,printed", [
+    ("cartonWeight", "9.5", "9.5 kg"),
+    ("cartonWeight", "9.5 kg", "9.5 kg"),
+    ("cartonWeight", "9.5kg", "9.5kg"),
+    ("cartonWeight", "9.5 KGS", "9.5 KGS"),
+    ("cartonVolume", "0.24", "0.24 m³"),
+    ("cartonVolume", "0.24 m³", "0.24 m³"),
+    ("cartonVolume", "0.24 m3", "0.24 m3"),
+    ("cartonVolume", "0.24 CBM", "0.24 CBM"),
+])
+def test_a_measure_is_printed_with_exactly_one_unit(key, value, printed):
+    assert cat.with_unit(key, value) == printed
+
+
+@pytest.mark.parametrize("value", ["0", "0.0", "-2", "n/a", "", "   ", None])
+def test_a_measure_that_is_not_a_positive_figure_is_left_out(value):
+    """Printing "Carton weight 0 kg" would be inventing a fact; the row is
+    simply absent instead."""
+    assert cat._measure(value) is None
+    rows = dict(cat.spec_rows({"cartonWeight": value, "cartonVolume": value}))
+    assert "Carton weight" not in rows and "Carton volume" not in rows
+
+
+def test_a_numeric_measure_from_a_future_feed_still_prints():
+    """Strings are what we get today; a number must not break tomorrow."""
+    assert cat._measure(9.5) == "9.5" and cat._measure(24) == "24"
+    assert dict(cat.spec_rows({"cartonWeight": 9.5}))["Carton weight"] == "9.5 kg"
+
+
+# ---------------- a matched stock row is not a quantity ----------------
+
+def _two_products() -> list[dict]:
+    return [jasani.normalize_product({"id": "1", "code": "A", "name": "One",
+                                      "net_available_qty": 50}, "ksa"),
+            jasani.normalize_product({"id": "2", "code": "B", "name": "Two",
+                                      "net_available_qty": 50}, "ksa")]
+
+
+def test_a_stock_row_that_really_says_zero_is_a_known_zero():
+    products = _two_products()
+    assert jasani._merge_stock(products, [{"id": "1", "net_available_qty": 0}]) == 1
+    assert products[0]["stock"]["available"] == 0
+    assert products[0]["stock"]["known"] is True
+
+
+def test_a_stock_row_with_a_quantity_replaces_the_figure():
+    products = _two_products()
+    assert jasani._merge_stock(products, [{"id": "1", "net_available_qty": 25}]) == 1
+    assert products[0]["stock"]["available"] == 25
+    assert products[0]["stock"]["known"] is True
+
+
+def test_a_matched_stock_row_carrying_no_quantity_is_not_a_known_zero():
+    """A row that matches on id but holds no recognized quantity key tells us
+    nothing about this product. `_i` returning its default is not the supplier
+    saying nought, and treating it as one wiped a real fifty."""
+    products = _two_products()
+    row = {"id": "1", "incoming_qty": 4, "incoming_date": "2026-11-01"}
+    assert jasani._merge_stock(products, [row]) == 1
+    assert products[0]["stock"]["available"] == 50, "the known figure survived"
+    assert products[0]["stock"]["known"] is True, "and is still the products feed's"
+    assert products[0]["stock"]["incoming"] == 4, "what the row did carry applied"
+
+
+def test_a_matched_row_without_a_quantity_leaves_an_unknown_product_unknown():
+    products = [jasani.normalize_product({"id": "1", "code": "A", "name": "One"}, "ksa")]
+    assert products[0]["stock"]["known"] is False
+    jasani._merge_stock(products, [{"id": "1", "blocked_qty": 3}])
+    assert products[0]["stock"]["known"] is False, "no quantity, no verdict"
+    assert products[0]["stock"]["available"] == 0
+
+
+# ---------------- carry-forward is about known, not about zero ----------------
+
+def test_an_explicit_zero_from_the_products_feed_survives_carry_forward():
+    """A genuine sold-out must not be overwritten by yesterday's fifty. The
+    old test was `available == 0`, which could not tell the two apart."""
+    cached = {"products": [{"id": "1", "stock": {"available": 50, "known": True}}]}
+    fresh = [jasani.normalize_product({"id": "1", "code": "A", "name": "One",
+                                       "net_available_qty": 0}, "ksa")]
+    assert jasani._carry_stock(fresh, cached) == 0
+    assert fresh[0]["stock"]["available"] == 0
+    assert fresh[0]["stock"]["known"] is True
+
+
+def test_a_products_feed_with_no_quantity_takes_yesterdays_stock():
+    cached = {"products": [{"id": "1", "stock": {"available": 50, "known": True,
+                                                 "incoming": 0, "incomingDate": None}}]}
+    fresh = [jasani.normalize_product({"id": "1", "code": "A", "name": "One"}, "ksa")]
+    assert fresh[0]["stock"]["known"] is False
+    assert jasani._carry_stock(fresh, cached) == 1
+    assert fresh[0]["stock"]["available"] == 50
+    assert fresh[0]["stock"]["known"] is True, "yesterday's figure was a real one"
+
+
+def test_a_products_feed_with_a_real_quantity_keeps_its_own():
+    cached = {"products": [{"id": "1", "stock": {"available": 50, "known": True}}]}
+    fresh = [jasani.normalize_product({"id": "1", "code": "A", "name": "One",
+                                       "net_available_qty": 12}, "ksa")]
+    assert jasani._carry_stock(fresh, cached) == 0
+    assert fresh[0]["stock"]["available"] == 12
+
+
+def test_an_older_cached_snapshot_is_still_carried_forward():
+    """A file written before the flag existed: read its figure, which is the
+    only reading that file supports."""
+    cached = {"products": [{"id": "1", "stock": {"available": 50, "incoming": 0}}]}
+    fresh = [jasani.normalize_product({"id": "1", "code": "A", "name": "One"}, "ksa")]
+    assert jasani._carry_stock(fresh, cached) == 1
+    assert fresh[0]["stock"]["available"] == 50
+
+
+def test_the_scheduled_products_sync_carries_stock_the_same_way(tmp_path, monkeypatch):
+    """The whole path, not just the helper: the midnight products call."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps({
+        "fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": [
+            {"id": "1", "code": "A", "name": "Kept", "stock": {"available": 50,
+                                                               "known": True}},
+            {"id": "2", "code": "B", "name": "Emptied", "stock": {"available": 50,
+                                                                  "known": True}},
+        ]}), encoding="utf-8")
+
+    async def feed(market, manual=False):
+        return [jasani.normalize_product({"id": "1", "code": "A", "name": "Kept"}, "ksa"),
+                jasani.normalize_product({"id": "2", "code": "B", "name": "Emptied",
+                                          "net_available_qty": 0}, "ksa")]
+
+    monkeypatch.setattr(jasani, "_fetch_products", feed)
+    asyncio.run(jasani._refresh_products_only("ksa"))
+    by_id = {p["id"]: p for p in jasani._read_cache("ksa")["products"]}
+    assert by_id["1"]["stock"]["available"] == 50, "no quantity in the feed"
+    assert by_id["2"]["stock"]["available"] == 0, "the feed really said nought"
+    assert by_id["2"]["stock"]["known"] is True
+
+
+# ---------------- three pictures on one page, still bounded ----------------
+
+def test_a_product_with_three_photographs_draws_and_releases_all_three(photos,
+                                                                      monkeypatch,
+                                                                      tmp_path):
+    """The 500-product load test is one picture per product, because that is
+    what the fixture snapshot carries. This is the three-picture path: the
+    main image and the secondary strip, measured on a small number of
+    products so a full test run does not pay for 1,500 transformations."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    products = [{
+        "id": str(n), "code": f"ITGL {n}", "name": f"Three Shot {n}",
+        "brand": "Elite", "color": "Blue", "categories": ["Drinkware"],
+        "description": "Photographed from three angles.",
+        "image": f"https://www.giftsksa.com/img/{n}-a.jpg",
+        "images": [f"https://www.giftsksa.com/img/{n}-a.jpg",
+                   f"https://www.giftsksa.com/img/{n}-b.jpg",
+                   f"https://www.giftsksa.com/img/{n}-c.jpg"],
+        "unitsPerCarton": 24,
+        "stock": {"available": 10, "known": True, "incoming": 0},
+    } for n in range(8)]
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": products}),
+        encoding="utf-8")
+
+    held = {"max": 0, "pages": 0, "three": 0}
+    real_page = cat.Document.page
+
+    def watched(self, dto, blobs):
+        held["max"] = max(held["max"], sum(len(b) for b in blobs))
+        held["pages"] += 1
+        if len(blobs) == 3:
+            held["three"] += 1
+        real_page(self, dto, blobs)
+
+    monkeypatch.setattr(cat.Document, "page", watched)
+    blob = pdf_for([str(n) for n in range(8)])
+    text = cat.extract_text(blob)
+
+    assert held["pages"] == 8
+    assert held["three"] == 8, "every page received all three photographs"
+    assert photos["fetches"] == 24, "three per product, fetched once each"
+    assert text.count("Image unavailable") == 0
+    assert "Three Shot 0" in text and "Three Shot 7" in text
+    # three prepared pictures, not three originals, and released afterwards
+    assert held["max"] < 1024 * 1024, held["max"]
+    assert photos["peak"] < 4 * 1024 * 1024, photos["peak"]
+    print(f"\n  8 products x 3 photographs · {photos['fetches']} fetches · "
+          f"source {photos['bytes'] / 1024 / 1024:.1f} MB · "
+          f"largest page working set {held['max'] / 1024:.0f} KB · "
+          f"peak prepared {photos['peak'] / 1024 / 1024:.1f} MB")
+
+
+def test_the_photograph_cache_stays_bounded_across_many_products(snapshot, photos,
+                                                                 monkeypatch):
+    """`PHOTO_CACHE_MAX` is the ceiling on what is remembered between
+    products, so a long catalogue cannot grow one."""
+    seen = {"max": 0}
+    real = cat._photos_for
+
+    async def watched(market, dto, cache):
+        out = await real(market, dto, cache)
+        seen["max"] = max(seen["max"], len(cache))
+        return out
+
+    monkeypatch.setattr(cat, "_photos_for", watched)
+    pdf_for([str(1000 + i) for i in range(80)])
+    assert seen["max"] <= cat.PHOTO_CACHE_MAX, seen["max"]
+
+
+def test_the_dto_reads_a_quantity_in_either_shape():
+    """The admin row carries it flat, a normalized product under `stock`. A
+    DTO that understood only one shape is how the carton measures were lost,
+    so it understands both."""
+    p = jasani.normalize_product({"id": "1", "code": "A", "name": "One",
+                                  "net_available_qty": 10}, "ksa")
+    nested = cat.to_dto(p)
+    assert nested["available"] == 10 and nested["availableKnown"] is True
+    flat = cat.to_dto({"id": "1", "code": "A", "name": "One",
+                       "available": 10, "availableKnown": True})
+    assert flat["available"] == 10 and flat["availableKnown"] is True
+    # and a row that says "not known" still wins over a nested figure
+    mixed = cat.to_dto({**p, "available": 0, "availableKnown": False})
+    assert mixed["available"] == 0 and mixed["availableKnown"] is False
+    assert "10 units" in cat.extract_text(
+        cat.build([nested], {}, market="ksa", title="T", stock_at=STOCK_AT,
+                  stock_is_known=True))

@@ -801,12 +801,14 @@ def _merge_stock(products: list[dict], stock_records: list[dict]) -> int:
         rec = by_key.get(p["id"]) or by_key.get(p["code"])
         if rec:
             matched += 1
-            p["stock"]["available"] = max(0, _i(rec, *_STOCK_KEYS))
-            # the supplier answered for *this* product, so its figure is real.
-            # A stock sync that simply has no row for a product leaves that
-            # product unknown — a successful sync is not a promise that every
-            # product was covered by it.
-            p["stock"]["known"] = True
+            # A matching row is not the same as a quantity. One that carries
+            # no recognized quantity key at all tells us nothing about this
+            # product, so it must not become a confident nought: _i returning
+            # its default is not the supplier saying zero. Only an explicit
+            # figure — zero included — makes the quantity real.
+            if _present(rec, *_STOCK_KEYS):
+                p["stock"]["available"] = max(0, _i(rec, *_STOCK_KEYS))
+                p["stock"]["known"] = True
             if _present(rec, "incoming_qty", "incoming_stock", "incoming", "expected_stock"):
                 p["stock"]["incoming"] = max(0, _i(rec, "incoming_qty", "incoming_stock",
                                                    "incoming", "expected_stock"))
@@ -1142,6 +1144,39 @@ async def get_catalog(market: str) -> tuple[list[dict], str]:
         return visible_products(market, products), "live"
 
 
+def _carry_stock(products: list[dict], cached: dict | None) -> int:
+    """Carry the cached quantities onto a freshly fetched product list.
+
+    A products call replaces the catalogue, not the figures joined onto it,
+    so without this every product would read as out of stock between the
+    midnight products sync and the morning stock one.
+
+    The test is whether the new record's quantity is **known**, not whether
+    it is zero. A products feed that really reports nought is the supplier
+    speaking and must stand; one that carries no quantity field at all says
+    nothing, and that is the only case yesterday's figure fills. Judging it
+    on ``available == 0`` replaced a genuine sold-out with yesterday's fifty.
+    Returns how many products took a carried figure.
+    """
+    previous = {p["id"]: p.get("stock") for p in (cached or {}).get("products", [])
+                if p.get("id")}
+    carried_n = 0
+    for product in products:
+        carried = previous.get(product["id"])
+        if not carried:
+            continue
+        stock = product.get("stock") or {}
+        # an older snapshot has no flag; fall back to the figure it holds,
+        # which is the reading that file supports
+        known = stock.get("known")
+        if known is None:
+            known = bool(stock.get("available"))
+        if not known:
+            product["stock"] = carried
+            carried_n += 1
+    return carried_n
+
+
 async def _refresh_products_only(market: str) -> None:
     """One products call, keeping the stock figures already cached.
 
@@ -1149,12 +1184,8 @@ async def _refresh_products_only(market: str) -> None:
     so the midnight products sync spends exactly one and carries yesterday's
     stock forward until the morning stock call replaces it."""
     cached = _read_cache(market) or {}
-    previous = {p["id"]: p.get("stock") for p in cached.get("products", []) if p.get("id")}
     products = await _fetch_products(market)
-    for product in products:
-        carried = previous.get(product["id"])
-        if carried and not (product.get("stock") or {}).get("available"):
-            product["stock"] = carried
+    _carry_stock(products, cached)
     _write_cache(market, products,
                  fetched_at=time.time(),
                  stock_at=cached.get("stockAt", 0) or 0)
@@ -1394,15 +1425,7 @@ async def force_refresh(market: str, what: str, manual: bool = True) -> dict:
             except SupplierUnavailable as exc:
                 record_attempt(market, "products", False, str(exc))
                 raise
-            # a products refresh replaces the catalogue, not the figures joined
-            # onto it: carry yesterday's stock so nothing reads as out of stock
-            # between this call and the next stock one
-            previous = {p["id"]: p.get("stock") for p in (cached or {}).get("products", [])
-                        if p.get("id")}
-            for product in products:
-                carried = previous.get(product["id"])
-                if carried and not (product.get("stock") or {}).get("available"):
-                    product["stock"] = carried
+            _carry_stock(products, cached)
             stock_at = (cached or {}).get("stockAt", 0) or 0
             price_at = None                       # None → keep the stored stamp
             priced = 0

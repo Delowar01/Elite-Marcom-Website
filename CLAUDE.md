@@ -156,19 +156,38 @@ documentation). Non-negotiable rules from it:
   **Known and zero are different answers, per product.** A stock
   synchronisation that succeeds for a market is not a promise that it covered
   every product: `_merge_stock` only writes to the products it found a row
-  for. So `stock.known` is tracked per item — set by the products feed when
-  it actually carried a quantity field (`_present`, never a zero default),
-  and by `_merge_stock` for each product the supplier answered for. `_row`
-  exposes it as `availableKnown`; a snapshot written before this carries no
-  flag and falls back to `jasani.stock_known(market)`, the honest reading of
-  an older file. An unknown quantity cannot clear a positive minimum, and the
-  catalogue prints "Availability unavailable" for it while a product the
-  supplier really reports as empty still prints "0 units".
+  for. So `stock.known` is tracked per item, and the test is always
+  `_present`, never `_i` returning its default — the products feed sets it
+  when it really carried a quantity field, and the stock merge sets it only
+  for a row that really carries one. **A matched row is not a quantity**: a
+  stock row that finds a product by id but holds no recognised quantity key
+  says nothing about it, so it leaves the figure and the verdict alone rather
+  than becoming a confident nought. `_row` exposes the flag as
+  `availableKnown`; a snapshot written before this carries none and falls
+  back to `jasani.stock_known(market)`, the honest reading of an older file.
+  An unknown quantity cannot clear a positive minimum, and the catalogue
+  prints "Availability unavailable" for it while a product the supplier
+  really reports as empty still prints "0 units".
+  **Carry-forward asks "known", not "zero"** (`_carry_stock`, used by the
+  scheduled products sync and by a manual `products` or `full` refresh). A
+  products call replaces the catalogue, not the figures joined onto it, so
+  yesterday's quantities are carried onto the new list — but only for a
+  product whose new record has no quantity at all. A feed that really reports
+  nought is the supplier speaking and stands; judging it on `available == 0`
+  replaced a genuine sold-out with yesterday's fifty.
 - **The product catalogue is price-free because the renderer never sees a
   price** (`server/catalogue.py`, permission `jasani.view`). `to_dto` builds
   the customer-facing record key by key from `DTO_FIELDS`; the supplier dict
   is never passed through with price keys deleted, because that would carry
-  along whatever price field a future feed invents. `FORBIDDEN_FIELDS` is
+  along whatever price field a future feed invents. An allowlist has to know
+  each field's **real shape**: `cartonWeight` and `cartonVolume` are
+  normalized *strings* from `jasani._weight` ("9.5", or "9.5 kg" when the
+  supplier sent the unit with the figure), so reading them as numbers
+  silently dropped every carton row — they live in `DTO_MEASURE_FIELDS` and
+  go through `_measure`, which keeps a string as it stands, accepts a number,
+  and drops anything that is not a positive figure rather than printing
+  "0 kg". `with_unit` appends the label's unit only when the value did not
+  bring one, because "9.5 kg kg" is what doing it unconditionally produces. `FORBIDDEN_FIELDS` is
   asserted against the allowlist at import time. `assert_price_free` is the
   second line and runs inside `Document.finish`, so a document carrying a
   price indicator is refused rather than handed over. It decodes the page
@@ -192,10 +211,16 @@ documentation). Non-negotiable rules from it:
   a small VPS. `prepare_image` refuses an over-large picture on its header
   before a pixel is decoded (`MAX_IMAGE_PIXELS`), downscales to
   `MAX_IMAGE_DIM` and re-encodes, so a 4 MB original becomes tens of
-  kilobytes; `PHOTO_CACHE_MAX` bounds what is remembered between products. A
-  measured 500-product catalogue of real photographs: 89.6 MB of source
-  imagery in, 3.61 MB PDF out, about 114 seconds, with the largest single
-  page holding ~62 KB of prepared imagery.
+  kilobytes; `PHOTO_CACHE_MAX` bounds what is remembered between products. Two
+  measured runs, and they measure different things: 500 products with **one**
+  photograph each (which is what the 640-product fixture carries) is 500
+  fetches, 89.6 MB of source imagery in, 3.61 MB PDF out, about 114 seconds,
+  largest single page ~62 KB; and 8 products with **three** each — the main
+  image plus the secondary strip, `IMAGES_PER_ITEM` — is 24 fetches, 4.3 MB
+  in, largest page 181 KB, peak prepared 1.3 MB. The three-picture path is
+  deliberately measured small: 1,500 image transformations would add minutes
+  to every full test run and prove nothing the eight do not. Do not quote a
+  500 x 3 figure; it has never been run.
   Photographs come from the supplier's public image host, a file read rather
   than a primary endpoint and charged to nothing; one unreachable picture
   costs that product its photograph and nothing else. The build runs on a
@@ -205,7 +230,10 @@ documentation). Non-negotiable rules from it:
   The audit records **two** facts: `jasani.catalogue_requested` when the job
   is accepted, and `jasani.catalogue_generated` — or `catalogue_failed` —
   written by the worker once the outcome is known. Writing "generated" at the
-  start would be a log of intentions rather than outcomes.
+  start would be a log of intentions rather than outcomes. The worker writes
+  that entry *before* it publishes the terminal state, because the panel
+  polls the job from another thread: the other order left a window in which
+  the build was over and the log did not yet say so.
 - **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
   whenever a parser change means a stored answer could be improved on; an
   entry written under a lower number is treated as absent and rediscovered.

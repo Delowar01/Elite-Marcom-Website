@@ -107,10 +107,15 @@ def when(ts) -> str:
 DTO_TEXT_FIELDS = ("id", "code", "name", "description", "brand", "color",
                    "material", "size", "capacity", "cartonDimensions",
                    "hsCode", "barcode")
-DTO_NUMBER_FIELDS = ("unitsPerCarton", "cartonWeight", "cartonVolume")
+DTO_NUMBER_FIELDS = ("unitsPerCarton",)
+#: Measures are *normalized strings*, not numbers. `jasani._weight` trims the
+#: float artifacts and hands back "9.5" — or "9.5 kg" when the supplier sent
+#: the unit with the figure. Reading them as numbers dropped every one of
+#: them, which is why a carton weight stopped printing.
+DTO_MEASURE_FIELDS = ("cartonWeight", "cartonVolume")
 DTO_LIST_FIELDS = ("categories", "options", "images")
-DTO_FIELDS = DTO_TEXT_FIELDS + DTO_NUMBER_FIELDS + DTO_LIST_FIELDS + (
-    "available", "availableKnown")
+DTO_FIELDS = DTO_TEXT_FIELDS + DTO_NUMBER_FIELDS + DTO_MEASURE_FIELDS + \
+    DTO_LIST_FIELDS + ("available", "availableKnown")
 
 #: and the names that must never be among them, asserted at import time
 FORBIDDEN_FIELDS = frozenset((
@@ -120,6 +125,29 @@ FORBIDDEN_FIELDS = frozenset((
     "booked", "blocked_qty", "blockedQty", "_int",
 ))
 assert not (set(DTO_FIELDS) & FORBIDDEN_FIELDS), "a price field is in the DTO allowlist"
+
+
+def _measure(value) -> str | None:
+    """A normalized measure, kept as the string the snapshot holds.
+
+    A number is accepted too and printed without float artifacts, because a
+    hand-built record or a future feed may send one; a string is kept as it
+    stands, so a legitimate unit the supplier wrote survives. Anything that
+    is not a positive figure is dropped rather than printed as "0".
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if value <= 0:
+            return None
+        return f"{float(value):.3f}".rstrip("0").rstrip(".")
+    text = clean_text(value, 40)
+    if not text:
+        return None
+    lead = re.match(r"^-?\d+(?:\.\d+)?", text)
+    if not lead or float(lead.group(0)) <= 0:
+        return None                          # "0", "-1", "n/a" are not measures
+    return text
 
 
 def _item_known(dto: dict) -> bool:
@@ -143,15 +171,27 @@ def to_dto(item: dict) -> dict:
     for key in DTO_NUMBER_FIELDS:
         value = item.get(key)
         out[key] = value if isinstance(value, (int, float)) and value > 0 else None
+    for key in DTO_MEASURE_FIELDS:
+        out[key] = _measure(item.get(key))
     for key in DTO_LIST_FIELDS:
         raw = item.get(key) or []
         out[key] = [str(v) for v in raw if v][:20] if isinstance(raw, (list, tuple)) else []
+    #: The admin rows carry the quantity flat (`_row` lifts it off the
+    #: nested stock dict); a normalized product carries it under `stock`.
+    #: Read whichever shape arrived, because a DTO that silently dropped the
+    #: quantity of one of them is exactly the mismatch that lost the carton
+    #: measures.
+    stock = item.get("stock") if isinstance(item.get("stock"), dict) else {}
     available = item.get("available")
+    if available is None:
+        available = stock.get("available")
     try:
         out["available"] = int(available) if available is not None else None
     except (TypeError, ValueError):
         out["available"] = None
     known = item.get("availableKnown")
+    if known is None:
+        known = stock.get("known")
     #: absent is not "no": a record that carries no per-product verdict defers
     #: to the market-level answer, which is how a snapshot written before the
     #: per-product flag existed keeps printing its quantities.
@@ -179,15 +219,42 @@ SPEC_FIELDS: tuple[tuple[str, str], ...] = (
 
 _SUFFIX = {"cartonWeight": " kg", "cartonVolume": " m³"}
 
+#: A normalized measure may already carry its own unit — the supplier sends
+#: "9.5" on one product and "9.5 kg" on the next, and both reach us intact.
+#: Appending the label's unit regardless printed "9.5 kg kg".
+_HAS_UNIT = {
+    "cartonWeight": re.compile(r"(?:kgs?|kilo(?:gram)?s?|g|gms?|grams?|lbs?|pounds?)"
+                               r"\.?$", re.I),
+    "cartonVolume": re.compile(r"(?:m³|m3|cbm|cu\.?\s?m|cubic\s*m(?:et(?:re|er)s?)?)"
+                               r"\.?$", re.I),
+}
+
+
+def with_unit(key: str, value: str) -> str:
+    """The printed measure: the label's unit appended unless the value brought
+    one of its own."""
+    suffix = _SUFFIX.get(key)
+    if not suffix:
+        return value
+    pattern = _HAS_UNIT.get(key)
+    if pattern and pattern.search(value.strip()):
+        return value.strip()
+    return value + suffix
+
 
 def spec_rows(item: dict) -> list[tuple[str, str]]:
     """Label/value pairs, with anything empty or meaningless left out."""
     rows: list[tuple[str, str]] = []
     for key, label in SPEC_FIELDS:
-        value = clean_text(item.get(key), 120)
+        if key in DTO_MEASURE_FIELDS:
+            # the same reading the DTO applies, so a bare "0" is a missing
+            # measure here too rather than a printed "0 kg"
+            value = _measure(item.get(key))
+        else:
+            value = clean_text(item.get(key), 120)
         if not value:
             continue
-        rows.append((label, value + _SUFFIX.get(key, "")))
+        rows.append((label, with_unit(key, value)))
     cats = [clean_text(c, 60) for c in (item.get("categories") or [])]
     cats = [c for c in cats if c]
     if cats:
@@ -739,28 +806,37 @@ def run(token: str, rows: list[dict], *, market: str, title: str,
     job = _jobs.get(token)
     if job is None:
         return
+    pdf: bytes | None = None
+    error = ""
     try:
         job["state"] = "images"
         pdf = asyncio.run(_render(token, rows, market=market, title=title,
                                   stock_at=stock_at, stock_is_known=stock_is_known,
                                   options=options))
-        job["pdf"] = pdf
-        job["state"] = "done"
-        job["done"] = len(rows)
-        job["finished"] = True
     except CatalogueError as exc:
-        job["state"] = "failed"
-        job["error"] = str(exc)[:200]
+        error = str(exc)[:200]
     except Exception as exc:                  # pragma: no cover - defensive
+        error = f"The catalogue could not be built ({exc.__class__.__name__})."
+    # The outcome is recorded *before* the terminal state is published. The
+    # panel polls this job from another thread, so a caller that sees "done"
+    # or "failed" can rely on the audit entry already existing — the other
+    # order left a window in which the build was over and the log did not
+    # say so yet.
+    if pdf is None:
+        job["error"] = error
+    else:
+        job["done"] = len(rows)
+    if job.get("on_finish"):
+        try:
+            job["on_finish"](pdf is not None, job)
+        except Exception:
+            pass
+    if pdf is None:
         job["state"] = "failed"
-        job["error"] = f"The catalogue could not be built ({exc.__class__.__name__})."
-    finally:
-        done = job["state"] == "done"
-        if job.get("on_finish"):
-            try:
-                job["on_finish"](done, job)
-            except Exception:
-                pass
+    else:
+        job["pdf"] = pdf
+        job["finished"] = True
+        job["state"] = "done"
 
 
 def spawn(token: str, rows: list[dict], **kw) -> None:
