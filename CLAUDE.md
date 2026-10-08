@@ -193,7 +193,19 @@ documentation). Non-negotiable rules from it:
   price indicator is refused rather than handed over. It decodes the page
   text — reportlab writes ASCII85 over Flate, so a raw byte scan would pass
   on every document ever made — and looks for **currencies and price labels
-  only**. It deliberately does *not* match price figures: an item priced 100
+  only**. **What counts as "text" is the whole of
+  that guarantee.** `extract_text` used to walk every `stream ... endstream`
+  in the file and treat any parenthesised run of bytes as a drawn string. A
+  photograph is an image XObject: 1200 x 1200 RGB decompresses to 4.3 MB of
+  pixels, and in that much photographic noise the three letters of `rrp`,
+  `sar`, `aed` or `usd` turn up by chance, between brackets, sooner or
+  later. That is how production refused a catalogue whose every
+  customer-facing field was clean — the bytes were never text, and no amount
+  of sanitizing text could have fixed it. It now skips a stream whose object
+  dictionary says image or font, and reads only strings inside a `BT`/`ET`
+  block. If you ever widen what the extractor reads, widen it towards
+  *drawn* text only.
+  It deliberately does *not* match price figures: an item priced 100
   with 100 units in stock prints "100 units", a 500 ml capacity sits beside a
   price of 500, a carton of 24 beside a price of 24. Rejecting those would
   break honest catalogues while still missing a leak at an unusual value.
@@ -274,12 +286,34 @@ documentation). Non-negotiable rules from it:
   cleanup. Counts only: a figure that is not ours to show is not ours to log.
   `scripts/audit_catalogue_text.py` answers "which product caused it" from
   the cached snapshot alone — read-only, no supplier call, naming the product
-  code, the field and which indicator matched, never the price.
+  code, the field and which indicator matched, never the price. It runs
+  `to_dto` itself and diffs raw against sanitized rather than keeping its own
+  list of fields, so it cannot drift from the renderer.
+  **One boundary, and only one.** Every customer-facing string the document
+  draws comes out of `to_dto` — the product page, the cover, the contents
+  list and the PDF's own title. The contents page used to clean its own two
+  strings, which was a second implementation of the boundary and therefore
+  one that could drift; it now reads the DTO like everything else. A
+  parametrized test asserts the contract in the other direction too: for
+  every entry in `PRICE_WORDS`, text the finished-document guard would
+  refuse is text the sanitizer removes first — otherwise a product would
+  exist that could never be put in a catalogue. `SRP` and `MSRP` are in
+  neither list, deliberately: no supplier record audited carries them, and
+  "SRP" has honest meanings. Adding one means adding it to **both**.
 - **The catalogue is designed, not generated.** The first version was
   functional and looked it: a cover whose lower half was empty, a product
   page that read as a specification sheet, one large photograph and a strip
   of 52pt thumbnails. The layout is now a composition, and these are the
   rules it keeps.
+  - **A description is never cut mid-sentence.** `trim_to_sentence` falls
+    back to the last complete sentence that fits, because "…compatibility
+    with …" reads as a fault in the document while a shorter whole sentence
+    reads as an edit. An ellipsis appears only when not even one sentence
+    fits. Before truncating at all the composer lets the gallery yield a
+    further 44pt (`GALLERY_FLOOR` below `GALLERY_MIN`) on a text-heavy
+    product: the order of preference is the whole description, then all the
+    specifications, then readable type, then a moderately smaller gallery,
+    and only then the knife.
   - **The page is composed before anything is drawn.** `_identity_plan`,
     `_description_height` and `_specs_height` measure first, and the gallery
     takes what is left between `GALLERY_MIN` and `GALLERY_MAX`. That is why

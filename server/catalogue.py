@@ -292,7 +292,17 @@ def to_dto(item: dict, stats: dict | None = None) -> dict:
     out: dict = {}
     touched = 0
     for key in DTO_TEXT_FIELDS:
-        value = clean_text(item.get(key), 1200 if key == "description" else 240)
+        if key == "description":
+            #: clipped at a full stop rather than at the 1200th character —
+            #: a hard cut lands mid-word, and the renderer downstream can
+            #: only choose between the sentences it was given
+            value = clean_text(item.get(key), 100_000)
+            if len(value) > DESC_LIMIT:
+                cut = value.rfind(". ", 0, DESC_LIMIT + 1)
+                value = (value[:cut + 1] if cut > DESC_LIMIT * 0.4
+                         else value[:DESC_LIMIT].rstrip() + " …")
+        else:
+            value = clean_text(item.get(key), 240)
         kept = sanitize_catalogue_text(value, key)
         if kept != value:
             touched += 1
@@ -467,6 +477,11 @@ TINT = (0.980, 0.906, 0.851)      # orange, very dilute
 #: these two. A fixed height is what leaves a hole under a sparse product and
 #: squeezes the specifications off a rich one.
 GALLERY_MIN = 232.0
+#: A long description may push the gallery a further 44pt down — enough to
+#: hold three or four more lines, which is usually the difference between a
+#: complete description and a truncated one. The pictures stay large; this
+#: is a moderate yield, not a retreat to thumbnails.
+GALLERY_FLOOR = 188.0
 GALLERY_MAX = 366.0
 COVER_IMAGES = 4                  # a bounded hero set, never the catalogue
 
@@ -750,22 +765,24 @@ def _cover_meta(c, *, market: str, count: int, stock_at, generated: float) -> No
     for i, (label, value) in enumerate(cols):
         x = M + i * w
         c.setFillColorRGB(*GREY)
-        _tracked(c, x, y, label, "Helvetica", 6.6, 1.4)
-        c.setFont("Helvetica-Bold", 10.5)
+        #: a point and a half on each of these: the band stays the same size,
+        #: but it is read on a phone as often as on a desk
+        _tracked(c, x, y, label, "Helvetica-Bold", 7.2, 1.4)
+        c.setFont("Helvetica-Bold", 11.5)
         c.setFillColorRGB(*INK)
-        c.drawString(x, y - 17, value[:38])
+        c.drawString(x, y - 18, value[:38])
     c.setFillColorRGB(*LINE)
     c.rect(M, 108, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
-    c.setFont("Helvetica", 7.4)
-    c.setFillColorRGB(*GREY)
+    c.setFont("Helvetica", 8.2)
+    c.setFillColorRGB(0.44, 0.46, 0.50)
     ty = 92.0
     for line in _wrap("Quantities are those recorded at the last stock synchronisation "
                       "shown above and are not a reservation. Please confirm "
                       "availability before committing to a quantity.",
-                      "Helvetica", 7.4, PAGE_W - 2 * M - 150)[:3]:
+                      "Helvetica", 8.2, PAGE_W - 2 * M - 160)[:3]:
         c.drawString(M, ty, line)
-        ty -= 10.5
-    c.setFont("Helvetica-Bold", 8.2)
+        ty -= 11.0
+    c.setFont("Helvetica-Bold", 9.0)
     c.setFillColorRGB(*INK)
     c.drawRightString(PAGE_W - M, 92, SITE)
 
@@ -815,7 +832,7 @@ def _cover(c, *, title: str, market: str, count: int, stock_at, generated: float
     #: the market line lands here, a measured distance above the facts band at
     #: 196, and the block is laid out upwards from it — so the cover ends on a
     #: deliberate interval rather than on whatever was left over
-    y = 240.0 + head_size * 0.95 * len(lines) + 24
+    y = 240.0 + head_size * 0.95 * len(lines) + 24 + 18
     hero_top = PAGE_H - 112
     hero_h = max(214.0, min(352.0, hero_top - (y + 34) - 44))
     if readers:
@@ -824,8 +841,13 @@ def _cover(c, *, title: str, market: str, count: int, stock_at, generated: float
         #: no pictures: the type is the page, set low with an open field above
         y = 262.0 + head_size * 0.95 * len(lines) + 24
     c.setFillColorRGB(*ORANGE)
-    c.rect(M, y + 32, 38, 2.2, stroke=0, fill=1)
-    _eyebrow(c, M, y + 14, eyebrow, ORANGE, 8.0)
+    c.rect(M, y + 50, 38, 2.2, stroke=0, fill=1)
+    _eyebrow(c, M, y + 32, eyebrow, ORANGE, 8.0)
+    #: the range the document belongs to, between the house name and the
+    #: headline, so the hierarchy reads top to bottom without competing
+    if eyebrow.strip().lower() != "corporate gifts":
+        c.setFillColorRGB(*GREY)
+        _tracked(c, M, y + 15, "CORPORATE GIFTS", "Helvetica-Bold", 8.0, 2.0)
     c.setFont("Helvetica-Bold", head_size)
     c.setFillColorRGB(*INK)
     for line in lines:
@@ -933,11 +955,21 @@ def _identity(c, plan: dict, x: float, top: float) -> float:
     return y
 
 
+#: Enough for a long supplier description; past this a page would be a wall
+#: of text whatever the gallery gave up.
+DESC_MAX_LINES = 22
+#: How much description the DTO carries. Clipped at a sentence, not a
+#: character count.
+DESC_LIMIT = 1200
+
+
 def _description_height(body: str, w: float) -> float:
-    """What the description wants, capped: no single field may own the page."""
+    """What the description wants. It asks for all of itself, so the composer
+    can decide whether the gallery can afford it — a fixed line cap here
+    discarded text while vertical space was still recoverable."""
     if not body:
         return 0.0
-    lines = min(len(_wrap(body, "Helvetica", 9.0, w)), 14)
+    lines = min(len(_wrap(body, "Helvetica", 9.0, w)), DESC_MAX_LINES)
     return 26 + lines * 12.6
 
 
@@ -955,6 +987,31 @@ def _specs_height(rows: list[tuple[str, str]], w: float) -> float:
     return total
 
 
+def trim_to_sentence(body: str, w: float, room: int) -> str:
+    """As much of the description as `room` lines hold, ending on a full stop.
+
+    "Includes extra magnetic ring for compatibility with …" is a supplier
+    sentence cut in half, and it reads as a fault in the document rather than
+    as an edit. Falling back to the last **complete** sentence that fits
+    costs a line or two and reads as if it were written that way. Only when
+    not even one sentence fits does an ellipsis appear, because something has
+    to give.
+    """
+    if room <= 0:
+        return ""
+    lines = _wrap(body, "Helvetica", 9.0, w)
+    if len(lines) <= room:
+        return body
+    kept = " ".join(lines[:room])
+    cut = max(kept.rfind(". "), kept.rfind("! "), kept.rfind("? "),
+              kept.rfind(".\n"))
+    if kept.endswith("."):
+        cut = max(cut, len(kept) - 1)
+    if cut > len(kept) * 0.35:                # a sentence worth keeping
+        return body[:cut + 1].rstrip()
+    return kept.rstrip(" ,;:")[:max(0, len(kept) - 2)].rstrip() + " …"
+
+
 def _description(c, body: str, x: float, top: float, w: float, max_h: float) -> float:
     """Set for reading: a narrow measure, generous leading, and only as much
     as the page can give it."""
@@ -962,11 +1019,8 @@ def _description(c, body: str, x: float, top: float, w: float, max_h: float) -> 
         return top
     _eyebrow(c, x, top - 8, "Description", ORANGE, 7.0)
     y = top - 26
-    lines = _wrap(body, "Helvetica", 9.0, w)
     room = int(max(0, (max_h - 26) // 12.6))
-    if len(lines) > room and room > 0:
-        lines = lines[:room]
-        lines[-1] = lines[-1].rstrip(" ,;:")[:120] + " …"
+    lines = _wrap(trim_to_sentence(body, w, room), "Helvetica", 9.0, w)[:room]
     c.setFont("Helvetica", 9.0)
     c.setFillColorRGB(0.21, 0.23, 0.26)
     for line in lines[:room]:
@@ -1066,7 +1120,8 @@ def _product_page(c, item: dict, photos: list[bytes], *, page_no: int, options: 
     content_w = PAGE_W - 2 * M
 
     readers = usable_photos(photos, 4)
-    body = clean_text(item.get("description"), 900) if options.get("description", True) else ""
+    #: already clean, already sanitized, already clipped at a sentence
+    body = item.get("description") or "" if options.get("description", True) else ""
     rows = spec_rows(item) if options.get("specs", True) else []
 
     # ---- compose the page before drawing any of it ----
@@ -1086,8 +1141,11 @@ def _product_page(c, item: dict, photos: list[bytes], *, page_no: int, options: 
     #: the gallery is what is left over, inside its own bounds — so a sparse
     #: product fills the page with its photographs instead of leaving a hole,
     #: and a product with twelve specifications still prints all twelve
-    gallery_h = max(GALLERY_MIN, min(GALLERY_MAX,
-                                     top - (plan["height"] + 12 + need + floor) - 26))
+    spare = top - (plan["height"] + 12 + need + floor) - 26
+    #: a short record keeps the gallery generous; a long one is allowed to
+    #: take a further 44pt from it rather than lose its last sentences
+    lowest = GALLERY_FLOOR if need > 210 else GALLERY_MIN
+    gallery_h = max(lowest, min(GALLERY_MAX, spare))
     if not readers:
         #: with no photograph there is nothing to grow: a half-page of empty
         #: grey is worse than a modest note and honest white space
@@ -1136,7 +1194,11 @@ class Document:
                      "market": market}
         self.opts.update(options or {})
         self.market = market
-        self.title = clean_text(title, 120) or "Product Catalogue"
+        # the title is the admin's, not the supplier's, but it is customer
+        # text on a customer document and reaches the PDF's own metadata, so
+        # it goes through the same boundary as everything else
+        self.title = sanitize_catalogue_text(
+            clean_text(title, 120), "name") or "Product Catalogue"
         self.count = count
         self.stock_at = stock_at
         self.stock_is_known = stock_is_known
@@ -1390,12 +1452,11 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
         heads = []
         for row in rows:
             detail = jasani.item_detail(market, row["id"]) or dict(row)
-            # the same sanitization the page gets: a name carrying a price
-            # statement must not slip into the contents list instead
-            heads.append((sanitize_catalogue_text(
-                              clean_text(detail.get("code"), 40), "code") or "—",
-                          sanitize_catalogue_text(
-                              clean_text(detail.get("name"), 120), "name") or "Product"))
+            # through the DTO, like every other customer-facing string. Doing
+            # the cleaning again here would be a second implementation of the
+            # boundary, and a second implementation is one that can drift.
+            head = to_dto(detail)
+            heads.append((head["code"] or "—", head["name"] or "Product"))
         doc.contents(heads)
     stats: dict[str, int] = {}
     job["state"] = "drawing"
@@ -1530,13 +1591,47 @@ def _decode_stream(chunk: bytes) -> bytes:
     return body
 
 
+#: A stream that is not page text. An image XObject decompresses to millions
+#: of bytes of pixels and a font to a binary program; neither is anything a
+#: customer reads.
+_NOT_TEXT = re.compile(rb"/Subtype\s*/Image|/DCTDecode|/JPXDecode|/CCITTFax"
+                       rb"|/FontFile|/Type\s*/(?:Font|Metadata|XRef)", re.S)
+#: Drawn text lives between BT and ET. Nothing else in a content stream is a
+#: string a reader sees.
+_TEXT_BLOCK = re.compile(rb"\bBT\b(.*?)\bET\b", re.S)
+_PDF_STRING = re.compile(rb"\((?:\\.|[^\\()])*\)", re.S)
+
+
 def extract_text(pdf: bytes) -> str:
-    """The text actually drawn on the pages."""
+    """The text actually drawn on the pages — and **only** that.
+
+    This is what `assert_price_free` reads, so what it counts as text decides
+    what the guard can refuse a document over. It used to walk every
+    `stream ... endstream` in the file and treat any parenthesised run of
+    bytes inside as a drawn string. A photograph is an image XObject: 1200 x
+    1200 RGB decompresses to 4.3 MB of pixels, and in that much photographic
+    noise the three letters of a currency or a label turn up by chance,
+    inside brackets, sooner or later. That is how a catalogue whose every
+    customer-facing field was clean was refused for carrying 'rrp' — the
+    bytes were never text, and no amount of sanitizing the text could have
+    fixed it.
+
+    Two filters, and the document's real text passes both: the stream's own
+    object dictionary must not say image or font, and a string must sit
+    inside a BT/ET text block.
+    """
     out: list[str] = []
     for match in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        head = pdf[max(0, match.start() - 2500):match.start()]
+        cut = head.rfind(b" obj")
+        if cut >= 0:
+            head = head[cut:]
+        if _NOT_TEXT.search(head):
+            continue
         chunk = _decode_stream(match.group(1))
-        for piece in re.findall(rb"\((?:\\.|[^\\()])*\)", chunk):
-            body = piece[1:-1]
-            body = re.sub(rb"\\([()\\])", rb"\1", body)
-            out.append(body.decode("latin-1", errors="replace"))
+        for block in _TEXT_BLOCK.findall(chunk):
+            for piece in _PDF_STRING.findall(block):
+                body = piece[1:-1]
+                body = re.sub(rb"\\([()\\])", rb"\1", body)
+                out.append(body.decode("latin-1", errors="replace"))
     return " ".join(out)

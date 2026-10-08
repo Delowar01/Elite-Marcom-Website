@@ -1716,3 +1716,295 @@ def test_the_redesign_keeps_every_guarantee():
     assert "Page 2" in text and "Page 3" not in text, "one product, one page"
     assert "rrp" not in text.lower() and "SAR" not in text, "no price"
     assert "Holds 500 ml" in text, "and the honest part of the sentence stayed"
+
+
+# ---------------- the production 'rrp' that was never text ----------------
+#
+# A catalogue of real photographs was refused for carrying 'rrp' while every
+# customer-facing field was clean. The indicator was not in the document's
+# text at all: `extract_text` walked every stream in the file, and a 1200 x
+# 1200 photograph decompresses to 4.3 MB of pixels in which three letters
+# turn up by chance, inside brackets. The guard was reading pixels.
+
+MAGLITE = {
+    "id": "24310", "code": "ITGL 1455",
+    "name": "Maglite 5K - 5000 mAh Magnetic Wireless Power Bank - Black",
+    "brand": "Giftology", "color": "Black", "material": "ABS + silicone",
+    "size": "104 x 66 x 15 mm", "capacity": "5000 mAh", "unitsPerCarton": 100,
+    "cartonWeight": "14.2", "cartonVolume": "0.08",
+    "cartonDimensions": "44 x 32 x 26 cm", "hsCode": "8507.60",
+    "barcode": "6291108214558",
+    "categories": ["Power Banks", "Technology & Gadgets"],
+    "options": ["Black", "White", "RRP 120 SAR"],
+    "description": (
+        "A 5000 mAh magnetic wireless power bank that snaps onto the back of a "
+        "MagSafe-compatible phone and charges it without a cable. RRP: SAR 120. "
+        "USB-C in and out, an LED charge indicator and a soft-touch finish."),
+    "available": 42, "availableKnown": True,
+}
+
+
+def noisy_photo(seed: int = 0, w: int = 900, h: int = 900) -> bytes:
+    """A photograph with real grain. Flat colour compresses to almost
+    nothing; a catalogue's problem is megabytes of noise."""
+    import random
+
+    from PIL import Image
+
+    rnd = random.Random(seed * 7919 + 13)
+    im = Image.new("RGB", (w, h))
+    px = im.load()
+    for y in range(0, h, 3):
+        for x in range(0, w, 3):
+            v = (rnd.randrange(256), rnd.randrange(256), rnd.randrange(256))
+            for dy in range(3):
+                for dx in range(3):
+                    px[x + dx, y + dy] = v
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=90)
+    return cat.prepare_image(buf.getvalue())
+
+
+def test_a_photograph_is_not_text():
+    """The exact production failure. Pixels are not strings, and a guard that
+    reads them refuses honest documents at random."""
+    blobs = [noisy_photo(i) for i in range(3)]
+    dto = cat.to_dto(dict(MAGLITE))
+    assert not any(cat.has_price_text(str(v)) for v in dto.values()
+                   if isinstance(v, str)), "the record itself is clean"
+    pdf = cat.build([dto], {dto["id"]: blobs}, market="ksa", title="T",
+                    stock_at=STOCK_AT, stock_is_known=True)   # must not raise
+    text = cat.extract_text(pdf)
+    assert "MAGLITE 5K" in text and "42 units" in text
+    # the bytes really are in the file; they are simply not read as text
+    raw = b"".join(cat._decode_stream(m.group(1)) for m in
+                   re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S))
+    assert len(raw) > 1_000_000, "a real photograph is embedded"
+    assert len(text) < 4000, "and the extracted text is a page of words"
+
+
+def test_extract_text_reads_pages_not_pictures():
+    """Belt and braces on the same point, with a token planted in an image."""
+    pdf = cat.build([{"id": "1", "code": "A", "name": "Plain", "available": 4,
+                      "availableKnown": True}],
+                    {"1": [noisy_photo(99)]}, market="ksa", title="T",
+                    stock_at=STOCK_AT, stock_is_known=True)
+    text = cat.extract_text(pdf)
+    for word in cat.PRICE_WORDS:
+        assert word not in text.lower(), word
+    assert "Plain" in text, "the drawn text is still read"
+
+
+# ---------------- the sanitizer and the guard cannot drift ----------------
+
+@pytest.mark.parametrize("word", cat.PRICE_WORDS)
+def test_whatever_the_guard_rejects_the_sanitizer_removes(word):
+    """The contract. If the finished-document guard would refuse a string,
+    the sanitizer must have taken it out first — otherwise a product exists
+    that can never be put in a catalogue."""
+    body = f"A useful opening sentence. {word.upper()} 99. A closing sentence."
+    assert cat.has_price_text(body), word
+    kept = cat.sanitize_catalogue_text(body, "description")
+    assert word not in kept.lower(), (word, kept)
+    cat.assert_price_free(cat.build(
+        [{"id": "1", "code": "A", "name": "One", "description": kept,
+          "available": 5, "availableKnown": True}], {}, market="ksa",
+        title="T", stock_at=STOCK_AT, stock_is_known=True))
+
+
+@pytest.mark.parametrize("variant", [
+    "RRP 99", "RRP: 99", "RRP - 99", "RRP–99", "RRP—99",
+    "RRP SAR 99", "RRP: SAR 99", "SAR 99 RRP", "99 SAR RRP",
+    "R.R.P 99", "R.R.P. 99", "R R P 99",
+    "Recommended Retail Price 99", "Recommended Retail Price: SAR 99",
+    "Recommended Retail Price (RRP): SAR 99",
+    "Retail Selling Price on request", "Suggested Retail Price 40",
+])
+def test_every_rrp_variant_is_removed(variant):
+    body = f"A magnetic power bank. {variant}. USB-C in and out."
+    kept = cat.sanitize_catalogue_text(body, "description")
+    assert "rrp" not in kept.lower() and "retail price" not in kept.lower()
+    assert not re.search(r"\b(?:sar|aed|usd)\b", kept, re.I)
+    assert not re.search(r"\b99\b", kept), "no orphaned amount"
+    assert "A magnetic power bank." in kept, "the useful text stayed"
+
+
+# ---------------- nothing reaches a renderer except the DTO ----------------
+
+def _dirty(**kw) -> dict:
+    """Every customer-facing field carrying a price statement."""
+    item = {"id": "9", "code": "ITGL 9", "name": "Grubby - RRP SAR 10 - Black",
+            "brand": "Retail Price Co", "color": "Black", "material": "RRP 5 SAR",
+            "size": "10 cm", "capacity": "1 L", "cartonDimensions": "RRP: 9",
+            "hsCode": "1234", "barcode": "999",
+            "categories": ["Drinkware", "RRP 20 SAR"],
+            "options": ["Black", "RRP 20 SAR"],
+            "description": "A useful bottle. RRP: SAR 45. Holds 500 ml.",
+            "available": 7, "availableKnown": True}
+    item.update(kw)
+    return item
+
+
+def test_no_renderer_sees_unsanitized_text(snapshot, tmp_path, monkeypatch):
+    """Cover, contents, identity, specifications — through the admin path, on
+    a record whose every field is dirty."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    rows = [dict(_dirty(), image="", images=[],
+                 stock={"available": 7, "known": True, "incoming": 0}),
+            dict(_dirty(), id="10", code="ITGL 10", name="Clean Item",
+                 description="An honest description.", image="", images=[],
+                 categories=["Drinkware"], options=["Blue"],
+                 brand="Jasani", material="Steel", cartonDimensions="40x30x20",
+                 stock={"available": 9, "known": True, "incoming": 0})]
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": rows}),
+        encoding="utf-8")
+    text = cat.extract_text(pdf_for(["9", "10"], contents=True))
+    assert "rrp" not in text.lower()
+    assert not re.search(r"\b(?:sar|aed|usd)\b", text, re.I)
+    assert "retail price" not in text.lower()
+    assert "Clean Item" in text and "An honest description." in text
+    assert "Holds 500 ml" in text, "the honest half of the dirty one survived"
+
+
+def test_the_contents_page_is_built_from_the_dto(snapshot, tmp_path, monkeypatch):
+    """It used to clean its own strings, which is a second implementation of
+    the boundary and therefore one that can drift."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": [
+            {"id": "1", "code": "ITGL 1", "name": "Bottle - RRP SAR 45 - Blue",
+             "brand": "", "color": "", "categories": [], "image": "", "images": [],
+             "description": "A bottle.",
+             "stock": {"available": 3, "known": True, "incoming": 0}}]}),
+        encoding="utf-8")
+    text = cat.extract_text(pdf_for(["1"], contents=True))
+    assert "Contents" in text and "ITGL 1" in text
+    assert "rrp" not in text.lower() and "SAR" not in text
+
+
+def test_the_document_title_goes_through_the_boundary_too():
+    pdf = cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 2,
+                      "availableKnown": True}], {}, market="ksa",
+                    title="Ramadan RRP SAR 99 Selection", stock_at=STOCK_AT,
+                    stock_is_known=True)
+    text = cat.extract_text(pdf)
+    assert "rrp" not in text.lower() and "SAR" not in text
+
+
+def test_one_dirty_record_does_not_cost_the_catalogue(snapshot, tmp_path,
+                                                      monkeypatch):
+    """Five selected, one carrying RRP: five pages, and the dirty one keeps
+    everything about it that was not a price."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    rows = []
+    for n in range(4):
+        rows.append({"id": f"c{n}", "code": f"ITGL {200 + n}",
+                     "name": f"Clean Item {n}", "brand": "Jasani", "color": "Blue",
+                     "categories": ["Drinkware"], "image": "", "images": [],
+                     "description": "An ordinary corporate gift.",
+                     "stock": {"available": 20 + n, "known": True, "incoming": 0}})
+    rows.append(dict(_dirty(), id="dirty", code="ITGL 1455",
+                     name="Maglite 5K - 5000 mAh Power Bank - Black",
+                     image="", images=[],
+                     stock={"available": 42, "known": True, "incoming": 0}))
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": rows}),
+        encoding="utf-8")
+    text = cat.extract_text(pdf_for([r["id"] for r in rows]))
+    for n in range(4):
+        assert f"Clean Item {n}" in text, n
+    assert "MAGLITE 5K" in text, "the dirty record is still in the catalogue"
+    assert "42 units" in text, "with its quantity"
+    assert "Holds 500 ml" in text, "and the useful half of its description"
+    assert "Page 6" in text and "Page 7" not in text, "cover plus five pages"
+    assert "rrp" not in text.lower()
+
+
+# ---------------- the description is not silently cut ----------------
+
+NAPIER_BODY = (
+    "A slim magnetic cardholder that attaches to the back of any "
+    "MagSafe-compatible phone, holding up to three cards securely while "
+    "staying thin enough for a pocket. The outer shell is recycled PU leather "
+    "with a soft-touch finish, and the magnet array is strong enough to hold "
+    "through a protective case. Branding is applied by debossing or screen "
+    "print on the rear panel. Includes extra magnetic ring for compatibility "
+    "with non-MagSafe smartphones.")
+
+
+def test_the_whole_napier_description_fits():
+    """The production complaint: the last sentence was being cut mid-clause
+    even though the gallery could still have yielded the room."""
+    text = cat.extract_text(cat.build([{
+        "id": "1", "code": "ITGL 1290",
+        "name": "NAPIER - MagCase Phone Cardholder - Navy Blue",
+        "brand": "Giftology", "color": "Navy Blue",
+        "material": "Recycled PU leather", "size": "95 x 62 x 6 mm",
+        "capacity": "3 cards", "unitsPerCarton": 300, "cartonWeight": "17.5",
+        "cartonVolume": "0.24", "cartonDimensions": "48 x 36 x 30 cm",
+        "hsCode": "4202.31", "barcode": "6291108201299",
+        "categories": ["Mobile Accessories"], "options": ["Navy Blue", "Black"],
+        "description": NAPIER_BODY, "available": 13, "availableKnown": True}],
+        {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True))
+    assert "non-MagSafe smartphones." in text, "the last sentence is whole"
+    assert "…" not in text, "and nothing was cut mid-sentence"
+    assert "Barcode" in text and "6291108201299" in text, "specs survived too"
+    assert "Page 2" in text and "Page 3" not in text
+
+
+@pytest.mark.parametrize("room,ends", [
+    (3, "thin enough for a pocket."), (5, "through a protective case."),
+    (6, "on the rear panel."), (7, "with non-MagSafe smartphones."),
+    (40, "with non-MagSafe smartphones."),
+])
+def test_a_description_is_trimmed_at_a_sentence(room, ends):
+    out = cat.trim_to_sentence(NAPIER_BODY, 270.0, room)
+    assert out.endswith(ends), out[-60:]
+    assert "…" not in out
+
+
+def test_an_unbroken_wall_of_text_still_gets_an_ellipsis():
+    """One sentence longer than the page has no boundary to fall back to."""
+    out = cat.trim_to_sentence("word " * 400, 270.0, 5)
+    assert out.endswith("…") and len(out) < 400
+
+
+def test_a_long_description_takes_room_from_the_gallery(monkeypatch):
+    """Moderate yield, not a retreat to thumbnails."""
+    rec = _Tiles()
+    real = cat._photo_tile
+
+    def watched(c, reader, x, y, w, h, pad=0.0, shadow=False):
+        rec.all.append((round(x, 1), round(y, 1), round(w, 1), round(h, 1)))
+        real(c, reader, x, y, w, h, pad, shadow)
+
+    monkeypatch.setattr(cat, "_photo_tile", watched)
+    item = {"id": "1", "code": "A", "name": "Wordy", "available": 5,
+            "availableKnown": True, "brand": "B", "color": "C",
+            "material": "M", "size": "S", "capacity": "500 ml",
+            "unitsPerCarton": 24, "cartonDimensions": "40x30x20",
+            "cartonWeight": "9.5", "cartonVolume": "0.24", "hsCode": "1",
+            "barcode": "2", "description": NAPIER_BODY * 2}
+    cat.build([item], {"1": [jpeg_bytes(w=600, h=600)]}, market="ksa", title="T",
+              stock_at=STOCK_AT, stock_is_known=True)
+    wordy = rec.all[1][3]                      # [0] is the cover hero
+    rec.all.clear()
+    cat.build([dict(item, description="Short.")],
+              {"1": [jpeg_bytes(w=600, h=600)]}, market="ksa", title="T",
+              stock_at=STOCK_AT, stock_is_known=True)
+    sparse = rec.all[1][3]
+    assert wordy < sparse, "a wordy product takes room from the gallery"
+    assert wordy >= cat.GALLERY_FLOOR, "but the pictures stay large"
+    assert sparse <= cat.GALLERY_MAX
+
+
+def test_the_cover_sets_the_full_hierarchy():
+    text = cat.extract_text(cat.build(
+        [{"id": "1", "code": "A", "name": "Mug", "available": 2,
+          "availableKnown": True}], {}, market="ksa",
+        title="Elite Marcom\nProduct Catalogue", stock_at=STOCK_AT,
+        stock_is_known=True))
+    for line in ("ELITE MARCOM", "CORPORATE GIFTS", "PRODUCT CATALOGUE",
+                 "Saudi Arabia", "KSA CATALOGUE", "PREPARED", "STOCK UPDATED"):
+        assert line in text, line
