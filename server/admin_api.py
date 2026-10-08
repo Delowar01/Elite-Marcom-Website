@@ -882,6 +882,11 @@ class CatalogueBody(BaseModel):
     stockDate: bool = True
     code: bool = True
     contents: bool = False
+    #: "standard" (the default) or "high" — how large and how finely the
+    #: photographs are encoded. Anything else is read as standard rather
+    #: than refused, because an unreadable option must not produce the
+    #: heavier document.
+    quality: str = Field(default="standard", max_length=12)
 
 
 def _catalogue_items(body: CatalogueBody) -> list[dict]:
@@ -928,6 +933,7 @@ async def admin_jasani_catalogue(request: Request, body: CatalogueBody,
     token = cat.start(session["email"], body.market, len(rows))
     detail = {"market": body.market, "items": len(rows), "scope": body.scope,
               "minStock": body.minStock or "none",
+              "quality": cat.quality_mode(body.quality),
               "stockAt": status.get("stockAt")}
     # asked for now; whether it was produced is a separate fact, recorded by
     # the worker when it knows — "generated" must never be written before the
@@ -951,9 +957,11 @@ async def admin_jasani_catalogue(request: Request, body: CatalogueBody,
               stock_is_known=jasani.stock_known(body.market),
               options={"description": body.description, "specs": body.specs,
                        "stock": body.stockQty, "stockDate": body.stockDate,
-                       "code": body.code, "contents": body.contents})
+                       "code": body.code, "contents": body.contents,
+                       "quality": cat.quality_mode(body.quality)})
     return {"token": token, "items": len(rows),
             "stockAt": status.get("stockAt"),
+            "quality": cat.quality_mode(body.quality),
             "stockKnown": jasani.stock_known(body.market)}
 
 
@@ -981,6 +989,110 @@ async def admin_jasani_catalogue_download(request: Request, token: str):
     return Response(content=blob, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{job["filename"]}"',
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+# ---------------- shareable web catalogues ----------------
+
+class CatalogueShareBody(CatalogueBody):
+    #: 7, 30, 90 or 0 for no expiry. 30 is the default because a link that
+    #: outlives the stock figures printed on it quietly becomes wrong.
+    expiryDays: int = 30
+    #: off by default: a link that a client can turn into a file they keep is
+    #: a separate decision from a link they can look at
+    allowPdf: bool = False
+
+
+@router.post("/api/admin/jasani/catalogue/share")
+async def admin_jasani_catalogue_share(request: Request, body: CatalogueShareBody,
+                                       x_csrf: str | None = Header(default=None)):
+    """Freeze a catalogue and return a link to it.
+
+    The same products, filters and page options as the PDF — a share is that
+    document in a browser — and the same background job mechanism, so the
+    panel polls one endpoint whichever it asked for.
+    """
+    session = require_perm(request, "jasani.view")
+    require_csrf(request, session, x_csrf)
+    from . import catalogue as cat
+    from . import catalogue_share as cs
+    from . import jasani
+
+    rows = _catalogue_items(body)
+    if not rows:
+        raise HTTPException(status_code=400, detail=(
+            "No products match. Select some items, or widen the filters."))
+    if len(rows) > cat.MAX_ITEMS:
+        raise HTTPException(status_code=400, detail=(
+            f"That is {len(rows):,} products. A shared catalogue holds at most "
+            f"{cat.MAX_ITEMS}; narrow the filters or select fewer."))
+    status = jasani.cache_status(body.market)
+    token = cat.start(session["email"], body.market, len(rows))
+    detail = {"market": body.market, "items": len(rows), "scope": body.scope,
+              "minStock": body.minStock or "none",
+              "expiryDays": body.expiryDays, "allowPdf": bool(body.allowPdf),
+              "stockAt": status.get("stockAt")}
+    aa.audit(session, "jasani.share_requested", "jasani", detail, _ip_hash(request))
+    ip = _ip_hash(request)
+
+    def finished(ok: bool, job: dict) -> None:
+        share = job.get("share") or {}
+        # the share's id, never its token: the audit has to say which link to
+        # revoke, and must not be a place a working link can be read from
+        aa.audit(session,
+                 "jasani.share_created" if ok else "jasani.share_failed",
+                 "jasani",
+                 {**detail, "share": share.get("id"),
+                  "pdfBytes": share.get("pdfBytes", 0),
+                  "sanitizedProducts": job.get("sanitizedProducts", 0),
+                  "sanitizedFields": job.get("sanitizedFields", 0),
+                  **({} if ok else {"error": job.get("error", "")[:160]})}, ip)
+
+    cat.set_on_finish(token, finished)
+    cs.spawn(token, rows, market=body.market,
+             title=body.title or cat.DEFAULT_TITLE,
+             stock_at=status.get("stockAt"),
+             stock_is_known=jasani.stock_known(body.market),
+             expiry_days=body.expiryDays, allow_pdf=bool(body.allowPdf),
+             by=session["email"],
+             options={"description": body.description, "specs": body.specs,
+                      "stock": body.stockQty, "stockDate": body.stockDate,
+                      "code": body.code, "contents": body.contents,
+                      "quality": cat.quality_mode(body.quality)})
+    return {"token": token, "items": len(rows)}
+
+
+@router.get("/api/admin/jasani/catalogue/shares")
+async def admin_jasani_catalogue_shares(request: Request):
+    require_perm(request, "jasani.view")
+    from . import catalogue_share as cs
+
+    cs.cleanup_due()                  # at most hourly, and never fails the page
+    return {"shares": cs.listing(), "store": cs.store_status(),
+            "expiryChoices": list(cs.EXPIRY_CHOICES)}
+
+
+class ShareRevokeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+
+
+@router.post("/api/admin/jasani/catalogue/shares/revoke")
+async def admin_jasani_catalogue_share_revoke(request: Request, body: ShareRevokeBody,
+                                              x_csrf: str | None = Header(default=None)):
+    """Take a link down. The row stays so the history reads straight; the
+    snapshot and the PDF behind it go."""
+    session = require_perm(request, "jasani.view")
+    require_csrf(request, session, x_csrf)
+    from . import catalogue_share as cs
+
+    gone = cs.revoke(int(body.id), session["email"])
+    if gone is None:
+        raise HTTPException(status_code=404, detail="That share no longer exists.")
+    swept = cs.cleanup_due(force=True) or {}
+    aa.audit(session, "jasani.share_revoked", "jasani",
+             {"share": gone["id"], "products": gone["products"], **swept},
+             _ip_hash(request))
+    return {"ok": True, "share": gone["id"], "swept": swept}
 
 
 @router.get("/api/admin/jasani/items/{market}/{product_id}/sheet")

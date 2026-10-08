@@ -1972,6 +1972,23 @@ th.jz-pick, td.jz-pick { width: 30px; padding-right: 0 !important; text-align: c
 .cat-scope { display: flex; flex-direction: column; gap: 6px; }
 .cat-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 6px 14px; }
 .cat-progress p { margin: 0 0 6px; font-size: 0.82rem; }
+/* The share link is shown exactly once, so it is given room: a read-only
+   field that selects itself, a copy button, and the link's own terms under
+   it. Nothing here can look the link up again. */
+.cat-link {
+  border: 1px solid var(--adm-ok, #1f8a4c); border-radius: 10px;
+  background: var(--adm-ok-bg, rgba(31,138,76,0.08)); padding: 12px 14px;
+}
+.cat-link__head { margin: 0 0 8px; font-size: 0.84rem; font-weight: 600; }
+.cat-link__row { display: flex; gap: 8px; align-items: center; }
+.cat-link__row input {
+  flex: 1 1 auto; min-width: 0; font-family: ui-monospace, SFMono-Regular,
+  Menlo, monospace; font-size: 0.8rem;
+}
+.cat-link .admin-inline-note { margin: 8px 0 0; }
+.cat-shares__head { margin: 18px 0 8px; font-size: 0.9rem; }
+.cat-shares td { vertical-align: top; }
+.cat-shares .muted { font-size: 0.74rem; }
 @media (max-width: 720px) {
   .jz-select-bar b { margin-left: 0; width: 100%; }
   .jz-minstock { width: 100%; }

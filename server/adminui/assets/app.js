@@ -6244,6 +6244,7 @@
               esc(jzState.minStock) + '">' +
             "<em>" + esc(jzState.market.toUpperCase()) + " available</em></span>" +
             '<button class="btn btn--ghost btn--small jz-export" id="jz-export">Export ▾</button>' +
+            '<button class="btn btn--ghost btn--small" id="jz-share">Share web link</button>' +
             '<button class="btn btn--primary btn--small" id="jz-catalogue">Generate PDF Catalogue</button>' +
           "</div>" +
           /* how old the quantities are, next to the control that filters on
@@ -6398,20 +6399,11 @@
      Everything here reads the snapshot the scheduled sync already wrote. No
      control on this screen can reach the supplier, so a catalogue never
      spends one of the market's five daily calls. */
-  function jzCatalogue() {
-    var d = jzState.data || {};
-    var picked = Object.keys(jzState.picked);
-    var filtered = (d.ids || []).length;
-    var scope = picked.length ? "selected" : "filtered";
-    var count = picked.length || filtered;
-    if (!count) {
-      toast("Nothing to put in a catalogue — select some items first.", true);
-      return;
-    }
-    var stamp = (d.snapshot && d.snapshot.stockAt) ? when(d.snapshot.stockAt) : "";
-    var body =
-      '<div class="admin-form cat-form">' +
-      '<div class="full"><label for="cat-title">Catalogue title</label>' +
+  /* The fields a PDF catalogue and a shared web catalogue have in common —
+     one implementation, because the two must not drift into offering
+     different products or different page options for the same selection. */
+  function catCommonFields(picked, filtered) {
+    return '<div class="full"><label for="cat-title">Catalogue title</label>' +
       '<textarea id="cat-title" rows="2" maxlength="120">Elite Marcom\nProduct Catalogue</textarea></div>' +
       '<div><label for="cat-market">Market</label><select id="cat-market">' +
         ["ksa", "uae"].map(function (m) {
@@ -6421,6 +6413,14 @@
       '<div><label for="cat-min">Minimum stock</label>' +
       '<input id="cat-min" type="number" min="0" step="1" placeholder="any" value="' +
         esc(jzState.minStock) + '"></div>' +
+      /* Standard is the default because it is the right answer for a
+         document that will be emailed or read on a screen: the photographs
+         are prepared at the size a page draws them. High keeps more detail
+         for a catalogue somebody will actually print, and says so. */
+      '<div><label for="cat-quality">Image quality</label><select id="cat-quality">' +
+        '<option value="standard" selected>Standard — smaller file</option>' +
+        '<option value="high">High — larger file, for printing</option>' +
+      "</select></div>" +
       '<div class="full"><label>Products</label>' +
       '<div class="cat-scope">' +
         '<label class="ed-check"><input type="radio" name="cat-scope" value="selected"' +
@@ -6429,20 +6429,69 @@
         '<label class="ed-check"><input type="radio" name="cat-scope" value="filtered"' +
           (picked.length ? "" : " checked") + "> All filtered items: <b>" +
           jzNum(filtered) + "</b></label></div></div>" +
-      '<div class="full"><label>Include on each page</label><div class="cat-opts">' +
+      '<div class="full"><label>Include for each product</label><div class="cat-opts">' +
         [["desc", "Item description", true], ["specs", "Specifications", true],
          ["qty", "Available quantity", true], ["date", "Stock date", true],
          ["code", "Item code", true], ["toc", "Contents page", false]].map(function (o) {
           return '<label class="ed-check"><input type="checkbox" data-cat="' + o[0] + '"' +
             (o[2] ? " checked" : "") + "> " + o[1] + "</label>";
-        }).join("") + "</div></div>" +
+        }).join("") + "</div></div>";
+  }
+
+  function catProgressBlock() {
+    return '<div class="full cat-progress" id="cat-progress" hidden>' +
+      '<p id="cat-progress-text">Preparing catalogue…</p>' +
+      '<div class="up-bar"><span id="cat-bar" style="width:0%"></span></div></div>';
+  }
+
+  /* The request body both dialogs send: the same filters the screen is
+     showing, so what is generated is what the admin can see. */
+  function catPayload(dlg, picked) {
+    var opt = function (k) {
+      var el = dlg.querySelector('[data-cat="' + k + '"]');
+      return !!(el && el.checked);
+    };
+    var chosen = dlg.querySelector('input[name="cat-scope"]:checked');
+    var useScope = chosen ? chosen.value : (picked.length ? "selected" : "filtered");
+    return {
+      market: dlg.querySelector("#cat-market").value,
+      title: dlg.querySelector("#cat-title").value,
+      ids: useScope === "selected" ? picked : [],
+      scope: useScope,
+      minStock: dlg.querySelector("#cat-min").value.trim(),
+      q: jzState.terms.join(","), field: jzState.field, stock: jzState.stock,
+      brand: jzState.brand, colour: jzState.colour, category: jzState.category,
+      visibility: jzState.visibility, hideZero: !!jzState.hideZero, sort: jzState.sort,
+      description: opt("desc"), specs: opt("specs"), stockQty: opt("qty"),
+      stockDate: opt("date"), code: opt("code"), contents: opt("toc"),
+      quality: dlg.querySelector("#cat-quality").value
+    };
+  }
+
+  function catScope() {
+    var d = jzState.data || {};
+    var picked = Object.keys(jzState.picked);
+    var filtered = (d.ids || []).length;
+    var count = picked.length || filtered;
+    if (!count) {
+      toast("Nothing to put in a catalogue — select some items first.", true);
+      return null;
+    }
+    return { d: d, picked: picked, filtered: filtered,
+             stamp: (d.snapshot && d.snapshot.stockAt) ? when(d.snapshot.stockAt) : "" };
+  }
+
+  function jzCatalogue() {
+    var sc = catScope();
+    if (!sc) return;
+    var body =
+      '<div class="admin-form cat-form">' +
+      catCommonFields(sc.picked, sc.filtered) +
       '<p class="full admin-inline-note">Quantities come from the stored snapshot' +
-        (stamp ? " — stock as of <b>" + esc(stamp) + "</b>" : "") +
+        (sc.stamp ? " — stock as of <b>" + esc(sc.stamp) + "</b>" : "") +
         ". Generating a catalogue never contacts the supplier. " +
         "<b>No prices appear in this document.</b></p>" +
-      '<div class="full cat-progress" id="cat-progress" hidden>' +
-        '<p id="cat-progress-text">Preparing catalogue…</p>' +
-        '<div class="up-bar"><span id="cat-bar" style="width:0%"></span></div></div>' +
+      catProgressBlock() +
       "</div>";
     var dlg = openDialog("Generate PDF catalogue", body, [
       { label: "Generate", primary: true, id: "cat-go" },
@@ -6452,33 +6501,180 @@
     go.addEventListener("click", function () {
       if (go.disabled) return;
       go.disabled = true;                       // one click, one catalogue
-      var opt = function (k) {
-        var el = dlg.querySelector('[data-cat="' + k + '"]');
-        return !!(el && el.checked);
-      };
-      var chosen = dlg.querySelector('input[name="cat-scope"]:checked');
-      var useScope = chosen ? chosen.value : scope;
       document.getElementById("cat-progress").hidden = false;
       document.getElementById("cat-progress-text").textContent = "Preparing catalogue…";
-      api("/api/admin/jasani/catalogue", {
-        market: document.getElementById("cat-market").value,
-        title: document.getElementById("cat-title").value,
-        ids: useScope === "selected" ? picked : [],
-        scope: useScope,
-        minStock: document.getElementById("cat-min").value.trim(),
-        q: jzState.terms.join(","), field: jzState.field, stock: jzState.stock,
-        brand: jzState.brand, colour: jzState.colour, category: jzState.category,
-        visibility: jzState.visibility, hideZero: !!jzState.hideZero, sort: jzState.sort,
-        description: opt("desc"), specs: opt("specs"), stockQty: opt("qty"),
-        stockDate: opt("date"), code: opt("code"), contents: opt("toc")
-      }).then(function (r) {
+      api("/api/admin/jasani/catalogue", catPayload(dlg, sc.picked)).then(function (r) {
         if (!r.ok) { go.disabled = false; document.getElementById("cat-progress").hidden = true; return apiErr(r); }
         jzCatalogueWatch(r.data.token, r.data.items, dlg, go);
       });
     });
   }
 
-  function jzCatalogueWatch(token, total, dlg, go) {
+  /* ---------------- shared web catalogues ----------------
+     A link a client opens in a browser. The same products and the same page
+     options as the PDF — it is that document as a page — plus the two
+     decisions a link needs: how long it lives, and whether whoever opens it
+     may keep a copy. */
+  function jzShare() {
+    var sc = catScope();
+    if (!sc) return;
+    var body =
+      '<div class="admin-form cat-form">' +
+      catCommonFields(sc.picked, sc.filtered) +
+      '<div><label for="cat-expiry">Link expires</label><select id="cat-expiry">' +
+        [[7, "In 7 days"], [30, "In 30 days"], [90, "In 90 days"],
+         [0, "Never"]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (o[0] === 30 ? " selected" : "") +
+            ">" + o[1] + "</option>";
+        }).join("") + "</select></div>" +
+      '<div class="full"><label>Downloads</label><div class="cat-opts">' +
+        '<label class="ed-check"><input type="checkbox" id="cat-pdf"> ' +
+        "Allow PDF download from the link</label></div>" +
+        /* the quality control above is about the document, not the page:
+           the web view always uses web-sized pictures, and saying so here
+           is cheaper than an admin wondering why High looked the same */
+        '<p class="admin-inline-note">Image quality applies to that PDF. The ' +
+        "page itself always uses web-sized photographs.</p></div>" +
+      '<p class="full admin-inline-note">The link carries a frozen copy of this ' +
+        "catalogue" + (sc.stamp ? " — stock as of <b>" + esc(sc.stamp) + "</b>" : "") +
+        ". Opening it never contacts the supplier, it is never indexed by search " +
+        "engines, and <b>no prices appear in it</b>. Anyone with the link can " +
+        "open it, so treat it as you would an attachment.</p>" +
+      catProgressBlock() +
+      '<div class="full cat-link" id="cat-link" hidden></div>' +
+      '<div class="full" id="cat-shares"><p class="muted">Loading shared links…</p></div>' +
+      "</div>";
+    var dlg = openDialog("Share catalogue as a web link", body, [
+      { label: "Create link", primary: true, id: "cat-go" },
+      { label: "Close", close: true }
+    ]);
+    jzShareList();
+    var go = document.getElementById("cat-go");
+    go.addEventListener("click", function () {
+      if (go.disabled) return;
+      go.disabled = true;
+      document.getElementById("cat-progress").hidden = false;
+      document.getElementById("cat-progress-text").textContent = "Preparing catalogue…";
+      var payload = catPayload(dlg, sc.picked);
+      payload.expiryDays = parseInt(dlg.querySelector("#cat-expiry").value, 10) || 0;
+      payload.allowPdf = !!dlg.querySelector("#cat-pdf").checked;
+      api("/api/admin/jasani/catalogue/share", payload).then(function (r) {
+        if (!r.ok) { go.disabled = false; document.getElementById("cat-progress").hidden = true; return apiErr(r); }
+        jzCatalogueWatch(r.data.token, r.data.items, dlg, go, true);
+      });
+    });
+  }
+
+  /* The link is shown exactly once, because only its SHA-256 is stored: the
+     panel cannot look it up again later and neither can anybody else. */
+  function jzShareLink(share) {
+    var box = document.getElementById("cat-link");
+    if (!box || !share || !share.url) return;
+    box.hidden = false;
+    box.textContent = "";
+    var head = document.createElement("p");
+    head.className = "cat-link__head";
+    head.textContent = "Link ready — copy it now. It is shown only once.";
+    box.appendChild(head);
+    var row = document.createElement("div");
+    row.className = "cat-link__row";
+    var input = document.createElement("input");
+    input.type = "text";
+    input.readOnly = true;
+    input.value = location.origin + share.url;
+    input.addEventListener("focus", function () { input.select(); });
+    var copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "btn btn--ghost btn--small";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", function () {
+      input.select();
+      var done = function () { copy.textContent = "Copied"; };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(input.value).then(done, function () {
+          try { document.execCommand("copy"); done(); } catch (e) { /* manual */ }
+        });
+      } else {
+        try { document.execCommand("copy"); done(); } catch (e) { /* manual */ }
+      }
+    });
+    var open = document.createElement("a");
+    open.className = "btn btn--ghost btn--small";
+    open.href = share.url;
+    open.target = "_blank";
+    open.rel = "noopener";
+    open.textContent = "Open";
+    row.appendChild(input);
+    row.appendChild(copy);
+    row.appendChild(open);
+    box.appendChild(row);
+    var note = document.createElement("p");
+    note.className = "admin-inline-note";
+    note.textContent = jzNum(share.products || 0) + " products" +
+      (share.expiresAt ? " · expires " + when(share.expiresAt) : " · no expiry") +
+      (share.allowPdf ? " · PDF download allowed" : " · view only");
+    box.appendChild(note);
+    jzShareList();
+  }
+
+  function jzShareList() {
+    var box = document.getElementById("cat-shares");
+    if (!box) return;
+    api("/api/admin/jasani/catalogue/shares").then(function (r) {
+      if (!box.isConnected) return;
+      if (!r.ok) { box.innerHTML = '<p class="muted">Shared links could not be listed.</p>'; return; }
+      var rows = r.data.shares || [];
+      var store = r.data.store || {};
+      if (!rows.length) {
+        box.innerHTML = '<p class="muted">No catalogue has been shared yet.</p>';
+        return;
+      }
+      box.innerHTML = "<h3 class=\"cat-shares__head\">Shared catalogues</h3>" +
+        '<table class="admin-table cat-shares"><thead><tr>' +
+        "<th>Title</th><th>Market</th><th>Products</th><th>Views</th>" +
+        "<th>Status</th><th></th></tr></thead><tbody>" +
+        rows.map(function (sh) {
+          var state = sh.state === "live"
+            ? '<span class="status-pill status-pill--published">Live</span>'
+            : sh.state === "expired" ? '<span class="status-pill status-pill--expired">Expired</span>'
+            : '<span class="status-pill status-pill--closed">Revoked</span>';
+          var life = sh.state !== "live" ? ""
+            : (sh.expiresAt ? "until " + esc(when(sh.expiresAt)) : "no expiry");
+          return "<tr><td><b>" + esc((sh.title || "").replace(/\n/g, " — ")) + "</b>" +
+            '<br><span class="muted">shared ' + esc(when(sh.createdAt)) +
+            " by " + esc(sh.createdBy || "") + "</span></td>" +
+            "<td>" + esc((sh.market || "").toUpperCase()) + "</td>" +
+            "<td>" + jzNum(sh.products || 0) + (sh.allowPdf ? " · PDF" : "") + "</td>" +
+            "<td>" + jzNum(sh.views || 0) +
+              (sh.lastViewedAt ? '<br><span class="muted">' + esc(when(sh.lastViewedAt)) +
+                "</span>" : "") + "</td>" +
+            "<td>" + state + (life ? '<br><span class="muted">' + life + "</span>" : "") + "</td>" +
+            "<td>" + (sh.state === "revoked" ? "" :
+              '<button class="btn btn--ghost btn--small" data-revoke="' + sh.id +
+              '">Revoke</button>') + "</td></tr>";
+        }).join("") + "</tbody></table>" +
+        '<p class="admin-inline-note">Holding ' + jzNum(store.assets || 0) +
+        " product photographs (" + fmtBytes(store.assetBytes || 0) + ")" +
+        (store.pdfs ? " and " + jzNum(store.pdfs) + " document" +
+          (store.pdfs === 1 ? "" : "s") + " (" + fmtBytes(store.pdfBytes || 0) + ")" : "") +
+        ". Revoking a link deletes its copy of the catalogue.</p>";
+      box.querySelectorAll("[data-revoke]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          if (!confirm("Revoke this link? Anyone holding it will no longer be able " +
+                       "to open the catalogue.")) return;
+          b.disabled = true;
+          api("/api/admin/jasani/catalogue/shares/revoke",
+              { id: parseInt(b.getAttribute("data-revoke"), 10) }).then(function (res) {
+            if (!res.ok) { b.disabled = false; return apiErr(res); }
+            toast("Link revoked.");
+            jzShareList();
+          });
+        });
+      });
+    });
+  }
+
+  function jzCatalogueWatch(token, total, dlg, go, isShare) {
     var text = document.getElementById("cat-progress-text");
     var bar = document.getElementById("cat-bar");
     var timer = setInterval(function () {
@@ -6507,6 +6703,13 @@
           if (j.state === "done" && j.ready) {
             clearInterval(timer);
             if (bar) bar.style.width = "100%";
+            if (isShare) {
+              jzShareLink(j.share);
+              go.disabled = true;
+              go.textContent = "Link created";
+              toast("Catalogue shared — " + jzNum(total) + " products.");
+              return;
+            }
             var link = document.getElementById("cat-download");
             if (!link) {
               link = document.createElement("a");
@@ -6702,6 +6905,8 @@
     jzPickCount();
 
     /* ---------------- the catalogue ---------------- */
+    var shareBtn = document.getElementById("jz-share");
+    if (shareBtn) shareBtn.addEventListener("click", jzShare);
     var catBtn = document.getElementById("jz-catalogue");
     if (catBtn) catBtn.addEventListener("click", function () { jzCatalogue(); });
     main.querySelectorAll("[data-jzpage]").forEach(function (b) {

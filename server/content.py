@@ -620,7 +620,7 @@ def _inject_social(raw: str) -> str:
 # into. On their own — which is the only form an address without an id takes —
 # they are empty shells, so they are pages the site serves but not pages worth
 # offering a search engine.
-SITEMAP_SKIP = {"product", "rental-item", "job"}
+SITEMAP_SKIP = {"product", "rental-item", "job", "catalogue-view"}
 
 
 def _sitemap_english_only(page: str) -> bool:

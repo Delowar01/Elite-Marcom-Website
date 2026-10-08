@@ -1,0 +1,300 @@
+/* Shared web catalogue — a standalone, self-contained client-facing page.
+
+   Deliberately not built on styles.css: a client opening this on a phone in
+   a hotel lobby should download one small stylesheet, and the page has no
+   site navigation, no hero and no theme toggle to inherit. Light first,
+   because a product photograph is shot on white; a device asking for dark
+   gets a dark surface rather than a glare. */
+
+:root {
+  --cv-paper: #fdfcfa;
+  --cv-card: #ffffff;
+  --cv-soft: #f5f2ee;
+  --cv-line: #e8e4de;
+  --cv-ink: #14181f;
+  --cv-grey: #6d727c;
+  --cv-faint: #9aa0aa;
+  --cv-orange: #f06f22;
+  --cv-shadow: 0 1px 2px rgba(20, 24, 31, .05), 0 8px 24px rgba(20, 24, 31, .06);
+  --cv-radius: 10px;
+  --cv-max: 1240px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cv-paper: #101318;
+    --cv-card: #171b21;
+    --cv-soft: #1d222a;
+    --cv-line: #2a3039;
+    --cv-ink: #eef0f3;
+    --cv-grey: #a2a8b2;
+    --cv-faint: #767d88;
+    --cv-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px rgba(0, 0, 0, .35);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body.cv {
+  margin: 0;
+  background: var(--cv-paper);
+  color: var(--cv-ink);
+  font: 400 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; }
+
+.cv-sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+/* Out of the way until a keyboard needs it, which is the only time a skip
+   link has ever been of use to anybody. */
+.cv-skip {
+  position: absolute; left: -9999px; top: 0; z-index: 20;
+  padding: 10px 16px; background: var(--cv-ink); color: var(--cv-paper);
+  border-radius: 0 0 8px 0; font: 600 .85rem/1.2 inherit; text-decoration: none;
+}
+.cv-skip:focus { left: 0; }
+
+/* ---- the four states: one is shown, the rest are not in the page ---- */
+
+.cv-gate, .cv-live { display: none; }
+body.cv[data-state="ok"] .cv-live[data-for="ok"] { display: block; }
+body.cv[data-state="unknown"] .cv-gate[data-for="unknown"],
+body.cv[data-state="revoked"] .cv-gate[data-for="revoked"],
+body.cv[data-state="expired"] .cv-gate[data-for="expired"] { display: grid; }
+
+.cv-gate { min-height: 100vh; place-items: center; padding: 32px 16px; }
+.cv-gate__box {
+  max-width: 460px; text-align: center; background: var(--cv-card);
+  border: 1px solid var(--cv-line); border-radius: 14px;
+  padding: 40px 28px; box-shadow: var(--cv-shadow);
+}
+.cv-gate__logo { height: 38px; width: auto; margin-bottom: 22px; }
+.cv-gate h1 { margin: 0 0 10px; font-size: 1.22rem; line-height: 1.3; letter-spacing: -.01em; }
+.cv-gate p { margin: 0 0 22px; color: var(--cv-grey); font-size: .94rem; }
+
+/* ---- buttons ---- */
+
+.cv-btn {
+  display: inline-block; padding: 10px 18px; border-radius: 8px;
+  background: var(--cv-orange); color: #fff; border: 1px solid transparent;
+  font: 600 .88rem/1.2 inherit; text-decoration: none; cursor: pointer;
+}
+.cv-btn:hover { filter: brightness(1.06); }
+.cv-btn:focus-visible { outline: 2px solid var(--cv-orange); outline-offset: 3px; }
+.cv-btn--ghost {
+  background: transparent; color: var(--cv-ink); border-color: var(--cv-line);
+}
+.cv-btn--ghost:hover { background: var(--cv-soft); filter: none; }
+.cv-btn--pdf { padding: 9px 15px; font-size: .82rem; }
+
+/* ---- header ---- */
+
+.cv-head {
+  position: sticky; top: 0; z-index: 5;
+  /* the opaque colour first, so a browser without color-mix still gets a
+     readable bar rather than a transparent one over moving cards */
+  background: var(--cv-paper);
+  background: color-mix(in srgb, var(--cv-paper) 92%, transparent);
+  backdrop-filter: saturate(1.4) blur(8px);
+  border-bottom: 1px solid var(--cv-line);
+}
+.cv-head__bar {
+  max-width: var(--cv-max); margin: 0 auto;
+  display: flex; align-items: center; gap: 18px;
+  padding: 14px 16px 10px;
+}
+.cv-head__logo { flex: 0 0 auto; line-height: 0; }
+.cv-head__logo img { height: 30px; width: auto; }
+.cv-head__id { flex: 1 1 auto; min-width: 0; }
+.cv-head__side { flex: 0 0 auto; }
+.cv-eyebrow {
+  margin: 0; font-size: .64rem; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--cv-faint); font-weight: 600;
+}
+.cv-head__id h1 {
+  margin: 1px 0 0; font-size: 1.04rem; font-weight: 700; line-height: 1.25;
+  letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cv-tools {
+  max-width: var(--cv-max); margin: 0 auto;
+  display: flex; align-items: center; gap: 14px; padding: 0 16px 12px;
+}
+.cv-search { flex: 1 1 auto; display: block; }
+.cv-search input {
+  width: 100%; padding: 9px 13px; border-radius: 8px; color: inherit;
+  border: 1px solid var(--cv-line); background: var(--cv-card);
+  font: 400 .92rem/1.3 inherit;
+}
+.cv-search input:focus-visible { outline: 2px solid var(--cv-orange); outline-offset: 1px; }
+.cv-count { margin: 0; flex: 0 0 auto; color: var(--cv-grey); font-size: .8rem; }
+
+/* On a phone the title is the thing worth reading, so it takes a line of its
+   own under the logo and wraps to two rather than being cut off. */
+@media (max-width: 560px) {
+  .cv-head__bar { flex-wrap: wrap; gap: 10px; padding: 11px 14px 8px; }
+  .cv-head__logo img { height: 25px; }
+  .cv-head__id { order: 3; flex: 1 0 100%; }
+  .cv-head__id h1 {
+    white-space: normal; font-size: 1rem;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .cv-head__side { margin-left: auto; }
+  .cv-btn--pdf { padding: 7px 13px; font-size: .78rem; }
+  .cv-tools { padding: 0 14px 10px; gap: 10px; }
+  .cv-count { font-size: .74rem; }
+  .cv-chips { padding: 0 14px 10px; }
+  .cv-main { padding: 14px 14px 8px; }
+  .cv-foot { padding: 20px 14px 40px; }
+}
+
+.cv-chips {
+  max-width: var(--cv-max); margin: 0 auto; padding: 0 16px 12px;
+  display: flex; gap: 7px; overflow-x: auto; scrollbar-width: thin;
+}
+.cv-chip {
+  flex: 0 0 auto; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--cv-line); background: var(--cv-card);
+  color: var(--cv-grey); font: 500 .78rem/1.3 inherit; white-space: nowrap;
+}
+.cv-chip[aria-pressed="true"] {
+  background: var(--cv-ink); border-color: var(--cv-ink); color: var(--cv-paper);
+}
+
+/* ---- the grid ---- */
+
+.cv-main { max-width: var(--cv-max); margin: 0 auto; padding: 18px 16px 8px; }
+.cv-note, .cv-empty, .cv-fail {
+  margin: 0 0 16px; color: var(--cv-grey); font-size: .82rem;
+}
+.cv-empty, .cv-fail { text-align: center; padding: 28px 0; }
+
+.cv-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+@media (max-width: 430px) {
+  .cv-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+}
+
+.cv-card {
+  display: flex; flex-direction: column; text-align: left; cursor: pointer;
+  background: var(--cv-card); border: 1px solid var(--cv-line);
+  border-radius: var(--cv-radius); overflow: hidden; padding: 0;
+  color: inherit; font: inherit; transition: box-shadow .18s, transform .18s;
+}
+.cv-card:hover { box-shadow: var(--cv-shadow); transform: translateY(-2px); }
+.cv-card:focus-visible { outline: 2px solid var(--cv-orange); outline-offset: 2px; }
+/* the photograph keeps its own shape inside a fixed box: a product shot is
+   never cropped, because a crop is how a bottle loses its lid */
+.cv-card__shot {
+  display: grid; place-items: center; background: #fff;
+  aspect-ratio: 1 / 1; padding: 10px; border-bottom: 1px solid var(--cv-line);
+}
+.cv-card__shot img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.cv-card__none {
+  color: var(--cv-faint); font-size: .72rem; text-align: center;
+}
+.cv-card__text { padding: 10px 12px 12px; display: grid; gap: 4px; }
+.cv-card__code {
+  font-size: .64rem; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--cv-faint); font-weight: 600;
+}
+.cv-card__name {
+  font-size: .86rem; font-weight: 600; line-height: 1.32;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cv-card__stock { font-size: .74rem; color: var(--cv-grey); }
+.cv-card__stock b { color: var(--cv-ink); font-weight: 600; }
+.cv-card__stock.is-low b { color: var(--cv-orange); }
+
+.cv-more { padding: 22px 0 30px; text-align: center; }
+.cv-sentinel { height: 1px; }
+
+/* ---- detail ---- */
+
+.cv-detail {
+  width: min(960px, calc(100vw - 24px)); max-height: calc(100vh - 48px);
+  padding: 0; border: 1px solid var(--cv-line); border-radius: 14px;
+  background: var(--cv-card); color: var(--cv-ink); overflow: auto;
+}
+.cv-detail::backdrop { background: rgba(10, 12, 16, .55); }
+.cv-detail__close {
+  position: sticky; float: right; top: 8px; right: 8px; z-index: 2;
+  width: 34px; height: 34px; margin: 8px 8px 0 0; cursor: pointer;
+  border-radius: 50%; border: 1px solid var(--cv-line);
+  background: var(--cv-card); color: var(--cv-ink); font-size: 1.1rem; line-height: 1;
+}
+.cv-detail__body { padding: 20px 22px 26px; }
+.cv-d-grid { display: grid; gap: 22px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 720px) {
+  .cv-d-grid { grid-template-columns: minmax(0, 44%) minmax(0, 1fr); }
+}
+.cv-d-main {
+  display: grid; place-items: center; background: #fff; padding: 12px;
+  border: 1px solid var(--cv-line); border-radius: var(--cv-radius);
+  aspect-ratio: 1 / 1;
+}
+.cv-d-main img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.cv-d-thumbs { display: flex; gap: 8px; margin-top: 8px; }
+.cv-d-thumb {
+  width: 58px; height: 58px; padding: 4px; cursor: pointer; background: #fff;
+  border: 1px solid var(--cv-line); border-radius: 8px; display: grid;
+  place-items: center;
+}
+.cv-d-thumb[aria-pressed="true"] { border-color: var(--cv-orange); }
+.cv-d-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.cv-d-eyebrow {
+  margin: 0; font-size: .64rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--cv-faint); font-weight: 600;
+}
+.cv-d-name { margin: 4px 0 10px; font-size: 1.22rem; line-height: 1.26; letter-spacing: -.01em; }
+.cv-d-desc { margin: 0 0 16px; color: var(--cv-grey); font-size: .9rem; }
+.cv-d-stock {
+  display: flex; align-items: baseline; gap: 8px; margin: 0 0 16px;
+  padding: 10px 14px; border-radius: 8px; background: var(--cv-soft);
+}
+.cv-d-stock strong { font-size: 1.1rem; }
+.cv-d-stock span { font-size: .76rem; color: var(--cv-grey); }
+.cv-d-specs { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.cv-d-specs th, .cv-d-specs td { text-align: left; padding: 7px 2px; vertical-align: top; }
+.cv-d-specs th { color: var(--cv-grey); font-weight: 500; width: 42%; }
+.cv-d-specs td { font-weight: 600; }
+.cv-d-specs tr:nth-child(odd) { background: var(--cv-soft); }
+.cv-d-specs caption {
+  text-align: left; font-size: .64rem; letter-spacing: .12em; font-weight: 600;
+  text-transform: uppercase; color: var(--cv-faint); padding-bottom: 6px;
+}
+.cv-d-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; padding: 0; list-style: none; }
+.cv-d-cats li {
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--cv-line);
+  font-size: .74rem; color: var(--cv-grey);
+}
+.cv-d-price {
+  margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--cv-line);
+  font-size: .82rem; color: var(--cv-grey);
+}
+
+/* ---- footer ---- */
+
+.cv-foot {
+  max-width: var(--cv-max); margin: 0 auto; padding: 24px 16px 44px;
+  border-top: 1px solid var(--cv-line); font-size: .8rem; color: var(--cv-grey);
+}
+.cv-foot p { margin: 0 0 8px; }
+.cv-foot__price b { color: var(--cv-ink); }
+.cv-foot a { color: var(--cv-orange); }
+
+@media (prefers-reduced-motion: reduce) {
+  .cv-card { transition: none; }
+  .cv-card:hover { transform: none; }
+}

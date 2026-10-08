@@ -263,6 +263,138 @@ async def careers_job_page_ar(slug: str):
     return await _job_page(slug, "ar")
 
 
+# ---------------- shared web catalogues ----------------
+#
+# A share is opened by a client, so these are the only public routes in the
+# application that serve supplier product data. Four properties hold on every
+# one of them: the link is the whole credential and is read from the path and
+# nowhere else; nothing reaches the supplier, because the share is a frozen
+# copy on our own disk; the records were built through `catalogue.to_dto`, so
+# no price can be in them; and none of it is indexable.
+
+_SHARE_ROBOTS = "noindex, nofollow, noarchive"
+#: an unknown link and a withdrawn one read the same to a visitor; one that
+#: ran out of time says so, because that is a thing a client can ask about
+_SHARE_STATUS = {"unknown": 404, "revoked": 404, "expired": 410}
+
+
+def _share_shell(state: str) -> Response:
+    """The viewer, or one of its three closed states.
+
+    `data-state` is the only thing written into the page and it is one of four
+    fixed words — the shell is otherwise served exactly as it is shipped, so
+    there is no template substitution a token or a title could travel through.
+    """
+    path = config.PUBLIC_DIR / "catalogue-view.html"
+    try:
+        html = path.read_text(encoding="utf-8")
+    except OSError:                           # pragma: no cover - deploy fault
+        raise HTTPException(status_code=404, detail="Not found")
+    if state != "ok":
+        html = html.replace('data-state="ok"', f'data-state="{state}"', 1)
+    return Response(html, status_code=_SHARE_STATUS.get(state, 200),
+                    media_type="text/html; charset=utf-8",
+                    headers={"Cache-Control": "no-store",
+                             "X-Robots-Tag": _SHARE_ROBOTS})
+
+
+def _share_json(payload: dict) -> JSONResponse:
+    return JSONResponse(payload, headers={"Cache-Control": "no-store",
+                                          "X-Robots-Tag": _SHARE_ROBOTS})
+
+
+def _share_or_404(token: str) -> dict:
+    """The live share a token names, for the routes that have nothing polite
+    to show when there is not one."""
+    from . import catalogue_share as cs
+
+    row, reason = cs.resolve(token)
+    if row is None:
+        raise HTTPException(status_code=_SHARE_STATUS.get(reason, 404),
+                            detail="Not found")
+    return row
+
+
+@app.get("/catalogue/{token}", include_in_schema=False)
+async def catalogue_share_page(token: str):
+    from . import catalogue_share as cs
+
+    row, reason = cs.resolve(token)
+    if row is not None:
+        # the one thing recorded about a visit: a counter and a timestamp.
+        # No address, no user agent, no identifier — there is nothing here
+        # that could quietly become tracking later.
+        cs.count_view(int(row["id"]))
+    return _share_shell(reason if row is None else "ok")
+
+
+@app.get("/catalogue/{token}/index.json", include_in_schema=False)
+async def catalogue_share_index(token: str):
+    from . import catalogue_share as cs
+
+    return _share_json(cs.index_payload(_share_or_404(token)))
+
+
+@app.get("/catalogue/{token}/p/{index}.json", include_in_schema=False)
+async def catalogue_share_product(token: str, index: int):
+    from . import catalogue_share as cs
+
+    product = cs.product_payload(_share_or_404(token), index)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _share_json({"product": product})
+
+
+@app.get("/catalogue/{token}/i/{name}", include_in_schema=False)
+async def catalogue_share_image(token: str, name: str):
+    """One photograph from this share.
+
+    The name is the SHA-256 of the file's own bytes, so it carries no
+    separator a traversal could use, and it has to be one of the pictures
+    *this* share names — a live link hands out the catalogue it was made for
+    and nothing else in the store.
+    """
+    from . import catalogue_share as cs
+
+    row = _share_or_404(token)
+    stem = name[:-5] if name.endswith(".webp") else name
+    if stem not in cs.hashes_for(row):
+        raise HTTPException(status_code=404, detail="Not found")
+    path = cs.asset_path(name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path, media_type="image/webp", headers={
+        # content-addressed, so the bytes behind this name can never change;
+        # a day is long enough to make the grid quick and short enough that a
+        # withdrawn link stops showing pictures too
+        "Cache-Control": "private, max-age=86400",
+        "X-Robots-Tag": _SHARE_ROBOTS})
+
+
+@app.get("/catalogue/{token}/pdf", include_in_schema=False)
+async def catalogue_share_pdf(token: str):
+    """The same catalogue as a document, when the share allows one.
+
+    It was drawn when the share was made, from the same photographs the page
+    shows, so this is a file read — downloading it reaches neither the
+    supplier nor the renderer.
+    """
+    from . import catalogue_share as cs
+
+    row = _share_or_404(token)
+    if not row.get("allow_pdf") or not row.get("pdf_file"):
+        raise HTTPException(status_code=404, detail="Not found")
+    path = cs.pdf_dir() / str(row["pdf_file"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    stamp = time.strftime("%Y-%m-%d", time.localtime(row.get("created_at") or time.time()))
+    name = f"Elite-Marcom-Catalogue-{str(row.get('market') or '').upper()}-{stamp}.pdf"
+    return FileResponse(path, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": _SHARE_ROBOTS})
+
+
 @app.get("/sitemap.xml", include_in_schema=False)
 async def sitemap_xml():
     """Built live rather than served from the publish-time file, because a

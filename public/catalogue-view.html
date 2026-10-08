@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product Catalogue — Elite Marcom</title>
+<!-- A shared catalogue is a private link, not a page of the website: it is
+     never indexed, never archived and carries no outbound crawl. The tag is
+     in the shipped file so the empty shell and a real link say the same
+     thing, and the route sends X-Robots-Tag with the same three words. -->
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<link rel="icon" href="/assets/favicon.png" type="image/png">
+<link rel="icon" href="/assets/favicon-64.png" sizes="64x64" type="image/png">
+<link rel="apple-touch-icon" href="/assets/favicon-180.png">
+<link rel="stylesheet" href="/catalogue-view.css?v=1">
+</head>
+<!-- `data-state` is the one thing the server writes into this file, and only
+     ever one of four fixed words. An unknown or withdrawn link and one that
+     simply ran out of time are different answers, so they read differently
+     and the route's status code differs too. -->
+<body class="cv" data-state="ok">
+
+<div class="cv-gate" data-for="unknown">
+  <div class="cv-gate__box">
+    <img class="cv-gate__logo" src="/assets/logo.svg" alt="Elite Marcom" width="150" height="50">
+    <h1>This catalogue link is not available</h1>
+    <p>The link may have been mistyped, or it may have been withdrawn. Ask
+       whoever shared it with you for a new one.</p>
+    <a class="cv-btn" href="https://www.elitemarcom.com/contact">Contact Elite Marcom</a>
+  </div>
+</div>
+
+<div class="cv-gate" data-for="revoked">
+  <div class="cv-gate__box">
+    <img class="cv-gate__logo" src="/assets/logo.svg" alt="Elite Marcom" width="150" height="50">
+    <h1>This catalogue link has been withdrawn</h1>
+    <p>The catalogue that was shared here is no longer available. We can send
+       you a current one.</p>
+    <a class="cv-btn" href="https://www.elitemarcom.com/contact">Request a new catalogue</a>
+  </div>
+</div>
+
+<div class="cv-gate" data-for="expired">
+  <div class="cv-gate__box">
+    <img class="cv-gate__logo" src="/assets/logo.svg" alt="Elite Marcom" width="150" height="50">
+    <h1>This catalogue link has expired</h1>
+    <p>Shared catalogues are given a limited life, because the stock figures
+       on them would otherwise quietly go out of date. Ask for a fresh link
+       and we will send one.</p>
+    <a class="cv-btn" href="https://www.elitemarcom.com/contact">Request a new catalogue</a>
+  </div>
+</div>
+
+<div class="cv-live" data-for="ok">
+  <a class="cv-skip" href="#main">Skip to the catalogue</a>
+  <header class="cv-head">
+    <div class="cv-head__bar">
+      <a class="cv-head__logo" href="https://www.elitemarcom.com/" aria-label="Elite Marcom">
+        <img src="/assets/logo.svg" alt="Elite Marcom" width="140" height="47">
+      </a>
+      <div class="cv-head__id">
+        <p class="cv-eyebrow" id="cv-market">Corporate gifts</p>
+        <h1 id="cv-title">Product Catalogue</h1>
+      </div>
+      <div class="cv-head__side">
+        <a class="cv-btn cv-btn--pdf" id="cv-pdf" href="#" hidden>Download PDF</a>
+      </div>
+    </div>
+    <div class="cv-tools">
+      <label class="cv-search">
+        <span class="cv-sr">Search this catalogue</span>
+        <input id="cv-q" type="search" autocomplete="off" spellcheck="false"
+               placeholder="Search by name, code or category" enterkeyhint="search">
+      </label>
+      <p class="cv-count" id="cv-count" aria-live="polite"></p>
+    </div>
+    <div class="cv-chips" id="cv-chips" hidden></div>
+  </header>
+
+  <main class="cv-main" id="main">
+    <p class="cv-note" id="cv-stock"></p>
+    <div class="cv-grid" id="cv-grid"></div>
+    <p class="cv-empty" id="cv-empty" hidden>Nothing in this catalogue matches that search.</p>
+    <div class="cv-more">
+      <button class="cv-btn cv-btn--ghost" type="button" id="cv-more" hidden>Show more products</button>
+      <div class="cv-sentinel" id="cv-sentinel" aria-hidden="true"></div>
+    </div>
+    <p class="cv-fail" id="cv-fail" hidden>This catalogue could not be loaded.
+      Please refresh the page, or ask us for a new link.</p>
+  </main>
+
+  <footer class="cv-foot">
+    <p class="cv-foot__price"><b>Prices are available on request.</b> This
+      catalogue carries products, specifications and availability only.</p>
+    <p class="cv-foot__meta" id="cv-meta"></p>
+    <p class="cv-foot__legal">Elite Marcom · Riyadh · Dubai ·
+      <a href="https://www.elitemarcom.com/contact">elitemarcom.com</a><br>
+      Availability is as of the date shown and is not a reservation.</p>
+  </footer>
+
+  <dialog class="cv-detail" id="cv-detail" aria-label="Product detail">
+    <button class="cv-detail__close" type="button" id="cv-close" aria-label="Close">×</button>
+    <div class="cv-detail__body" id="cv-detail-body"></div>
+  </dialog>
+</div>
+
+<script src="/js/catalogue-view.js?v=1" defer></script>
+</body>
+</html>

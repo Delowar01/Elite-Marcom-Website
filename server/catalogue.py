@@ -25,8 +25,8 @@ from reportlab.pdfgen import canvas
 
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
-from .exports import (GREY, INK, LINE, ORANGE, PAGE_H, PAGE_W, _LOGO_PATH, _draw_contained,
-                      _image_box, _wrap)
+from .exports import (GREY, INK, LINE, ORANGE, PAGE_H, PAGE_W, _draw_contained,
+                      _image_box, _wrap, logo_reader)
 
 M = 46.0
 SITE = "www.elitemarcom.com"
@@ -421,20 +421,61 @@ def spec_rows(item: dict) -> list[tuple[str, str]]:
 
 MAX_IMAGE_DIM = 1400          # a catalogue page is 595pt wide; more is waste
 MAX_IMAGE_PIXELS = 50_000_000  # decompression-bomb ceiling, before decoding
-PREPARED_QUALITY = 82
+PREPARED_QUALITY = 82         # the figure before quality modes; kept as the
+                              # default for callers that name no mode
+
+#: Two sizes, because a photograph is drawn in one of two sizes and no other.
+#: The page is 503pt wide inside its margins and the gallery at most 366pt
+#: tall, so a leading picture is never drawn larger than that; a supporting
+#: one is never wider than 207pt. Past roughly three pixels to the point
+#: nothing more is resolved on paper or on a screen, and the rest is weight.
+#:
+#:   standard  main 1000px -> 2.0 px/pt across a full-width tile, 2.7 down a
+#:             square one; side 620px -> 3.0 px/pt
+#:   high      main 1400px -> 2.8 / 3.8 px/pt; side 920px -> 4.4 px/pt
+PHOTO_DIMS = {"standard": {"main": 1000, "side": 620},
+              "high": {"main": MAX_IMAGE_DIM, "side": 920}}
+#: JPEG quality and chroma subsampling per mode. 4:2:0 halves the colour
+#: planes, which on a photograph is invisible and on the file is a third of
+#: it; High keeps 4:2:2 for a document somebody may print.
+PHOTO_QUALITY = {"standard": 72, "high": 86}
+PHOTO_SUBSAMPLING = {"standard": 2, "high": 1}
+QUALITY_MODES = ("standard", "high")
+DEFAULT_QUALITY = "standard"
+PHOTO_SLOTS = ("main", "side")
 
 
-def prepare_image(raw: bytes):
+def quality_mode(value) -> str:
+    """The mode to build in. Anything unrecognised is Standard, because an
+    unreadable option must not quietly produce the heavier document."""
+    text = str(value or "").strip().lower()
+    return text if text in QUALITY_MODES else DEFAULT_QUALITY
+
+
+def prepare_image(raw: bytes, *, slot: str = "main", quality: str | None = None):
     """Decode a downloaded photograph once, bound it, and hand back a small
-    JPEG.
+    baseline JPEG.
 
-    Two jobs. It caps what a malicious or merely enormous file can cost —
-    the dimensions are read from the header and refused before any pixels are
-    decoded — and it shrinks what the renderer holds: a 4 MB original becomes
-    tens of kilobytes at a size no A4 page can tell apart.
+    Three jobs now. It caps what a malicious or merely enormous file can cost
+    — the dimensions are read from the header and refused before any pixels
+    are decoded. It shrinks the picture to the size the page will actually
+    draw it: `slot` says which of the two sizes a page has, a leading picture
+    or a supporting one, and `quality` which of the two modes the admin asked
+    for. And the JPEG it writes is the JPEG that goes into the document —
+    `exports._image_box` hands it to reportlab untouched — so the encoder
+    settings here are the file size there.
+
+    Nothing of the original is carried over: no EXIF, no colour profile, no
+    thumbnail. A supplier's camera metadata is not ours to put in a customer
+    document, and a profile we are not reading is bytes on every page.
     """
     if not raw or len(raw) > MAX_IMAGE_BYTES:
         return None
+    mode = quality_mode(quality) if quality is not None else None
+    dim = (PHOTO_DIMS[mode][slot if slot in PHOTO_SLOTS else "main"]
+           if mode else MAX_IMAGE_DIM)
+    jpeg_q = PHOTO_QUALITY[mode] if mode else PREPARED_QUALITY
+    sub = PHOTO_SUBSAMPLING[mode] if mode else 0
     try:
         from PIL import Image
 
@@ -443,8 +484,8 @@ def prepare_image(raw: bytes):
             return None                      # a bomb, or close enough to one
         im = probe
         im.load()
-        if max(im.width, im.height) > MAX_IMAGE_DIM:
-            im.thumbnail((MAX_IMAGE_DIM, MAX_IMAGE_DIM))
+        if max(im.width, im.height) > dim:
+            im.thumbnail((dim, dim))
         if im.mode in ("RGBA", "LA", "P"):
             flat = Image.new("RGB", im.size, (255, 255, 255))
             rgba = im.convert("RGBA")
@@ -453,7 +494,11 @@ def prepare_image(raw: bytes):
         else:
             im = im.convert("RGB")
         out = io.BytesIO()
-        im.save(out, "JPEG", quality=PREPARED_QUALITY, optimize=True)
+        #: `progressive` is off deliberately: a progressive JPEG is a coding
+        #: `/DCTDecode` does not promise to read, so it would be the one
+        #: picture that had to be re-encoded on its way into the document.
+        im.save(out, "JPEG", quality=jpeg_q, optimize=True, progressive=False,
+                subsampling=sub)
         im.close()
         return out.getvalue()
     except Exception:
@@ -888,17 +933,17 @@ def _feature_row(c, features: list[tuple[str, str]], x: float, top: float,
 # ---------------- page furniture ----------------
 
 def _logo(c, x: float, y: float, height: float = 26.0) -> float:
-    try:
-        if _LOGO_PATH.exists():
-            from reportlab.lib.utils import ImageReader
-
-            logo = ImageReader(str(_LOGO_PATH))
-            lw, lh = logo.getSize()
+    #: `logo_reader` hands back the wordmark already resized to the size a
+    #: page draws it and cached, so a five-hundred page catalogue carries one
+    #: small object rather than 1,660 pixels of artwork per document.
+    logo, lw, lh = logo_reader(height)
+    if logo is not None and lh:
+        try:
             c.drawImage(logo, x, y - height, width=lw * (height / lh), height=height,
                         mask="auto")
             return height
-    except Exception:
-        pass
+        except Exception:
+            pass
     c.setFont("Helvetica-Bold", 15)
     c.setFillColorRGB(*ORANGE)
     c.drawString(x, y - 16, "ELITE MARCOM")
@@ -1589,6 +1634,9 @@ def start(by: str, market: str, total: int) -> str:
             "created": time.time(), "by": by, "market": market,
             "total": total, "done": 0, "state": "preparing", "pdf": None,
             "error": "", "on_finish": None,
+            #: a share build runs through this same registry, and puts the
+            #: link it made here — the panel polls one endpoint either way
+            "share": None,
             # how much supplier price text had to be removed — counts only
             "sanitizedProducts": 0, "sanitizedFields": 0,
             "filename": f"Elite-Marcom-Jasani-Catalogue-"
@@ -1628,15 +1676,26 @@ def collect(token: str) -> None:
 
 
 def public(job: dict) -> dict:
-    return {"state": job["state"], "done": job["done"], "total": job["total"],
-            "error": job["error"], "filename": job["filename"],
-            # ordinary supplier-data cleanup, reported rather than hidden
-            "sanitizedProducts": job.get("sanitizedProducts", 0),
-            "sanitizedFields": job.get("sanitizedFields", 0),
-            "ready": job["state"] == "done" and bool(job["pdf"])}
+    out = {"state": job["state"], "done": job["done"], "total": job["total"],
+           "error": job["error"], "filename": job["filename"],
+           # ordinary supplier-data cleanup, reported rather than hidden
+           "sanitizedProducts": job.get("sanitizedProducts", 0),
+           "sanitizedFields": job.get("sanitizedFields", 0),
+           "ready": job["state"] == "done" and bool(job["pdf"])}
+    share = job.get("share")
+    if share:
+        #: the one time the token is ever handed over. It is not stored
+        #: anywhere in a readable form and is not in the audit entry, so an
+        #: admin who closes this dialog without copying the link has to make
+        #: another share — which is the right trade for a link that is itself
+        #: the credential.
+        out["share"] = share
+        out["ready"] = job["state"] == "done"
+    return out
 
 
-async def _photos_for(market: str, dto: dict, cache: dict) -> list[bytes]:
+async def _photos_for(market: str, dto: dict, cache: dict,
+                      quality: str = DEFAULT_QUALITY) -> list[bytes]:
     """The pictures for one product, already shrunk.
 
     Pictures come from the supplier's public image host. That is a file read
@@ -1647,28 +1706,37 @@ async def _photos_for(market: str, dto: dict, cache: dict) -> list[bytes]:
     from . import jasani
 
     out: list[bytes] = []
-    for url in (dto.get("images") or [])[:IMAGES_PER_ITEM]:
-        if url in cache:
-            if cache[url] is not None:
-                out.append(cache[url])
+    for n, url in enumerate((dto.get("images") or [])[:IMAGES_PER_ITEM]):
+        #: The slot is part of the key, not just of the encoding. The first
+        #: picture leads the gallery and is drawn up to the full width of the
+        #: page; the others are never wider than 207pt and are prepared
+        #: smaller. One URL in both slots is prepared twice and embedded
+        #: twice, which is honest — the alternative is a leading photograph
+        #: that is soft because some other product used it as a side view.
+        slot = "main" if n == 0 else "side"
+        key = (url, slot)
+        if key in cache:
+            if cache[key] is not None:
+                out.append(cache[key])
             continue
         try:
             raw = await jasani._fetch_image_bytes(url)
         except Exception:
             raw = None
-        small = prepare_image(raw) if raw else None
+        small = prepare_image(raw, slot=slot, quality=quality) if raw else None
         del raw                               # the original goes immediately
         # Only the main picture is worth remembering between products: a
         # gallery shot is rarely shared, and an unbounded cache is the very
         # thing this rewrite exists to avoid.
         if len(cache) < PHOTO_CACHE_MAX:
-            cache[url] = small
+            cache[key] = small
         if small is not None:
             out.append(small)
     return out
 
 
-async def _cover_photos(market: str, rows: list[dict], cache: dict) -> list[bytes]:
+async def _cover_photos(market: str, rows: list[dict], cache: dict,
+                        quality: str = DEFAULT_QUALITY) -> list[bytes]:
     """A handful of real products for the cover's hero composition.
 
     Bounded twice over: one picture per product, and at most `COVER_IMAGES`
@@ -1686,19 +1754,21 @@ async def _cover_photos(market: str, rows: list[dict], cache: dict) -> list[byte
         urls = to_dto(detail).get("images") or []
         if not urls:
             continue
-        url = urls[0]
-        if url in cache:
-            if cache[url] is not None:
-                out.append(cache[url])
+        #: the hero is that product's leading picture, so it shares the
+        #: "main" entry its own page will use and is fetched once
+        key = (urls[0], "main")
+        if key in cache:
+            if cache[key] is not None:
+                out.append(cache[key])
             continue
         try:
-            raw = await jasani._fetch_image_bytes(url)
+            raw = await jasani._fetch_image_bytes(urls[0])
         except Exception:
             raw = None
-        small = prepare_image(raw) if raw else None
+        small = prepare_image(raw, slot="main", quality=quality) if raw else None
         del raw
         if len(cache) < PHOTO_CACHE_MAX:
-            cache[url] = small
+            cache[key] = small
         if small is not None:
             out.append(small)
     return out
@@ -1719,9 +1789,10 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
     job = _jobs[token]
     doc = Document(market=market, title=title, count=len(rows), stock_at=stock_at,
                    stock_is_known=stock_is_known, options=options)
-    cache: dict[str, bytes | None] = {}
+    quality = quality_mode(options.get("quality"))
+    cache: dict[tuple, bytes | None] = {}
     job["state"] = "images"
-    doc.cover(await _cover_photos(market, rows, cache))
+    doc.cover(await _cover_photos(market, rows, cache, quality))
     if options.get("contents"):
         # the index needs names before any page is drawn; those are text, not
         # pictures, so reading them ahead costs nothing worth bounding
@@ -1744,7 +1815,7 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
         detail["availableKnown"] = row.get("availableKnown")
         dto = to_dto(detail, stats)
         del detail
-        photos = await _photos_for(market, dto, cache)
+        photos = await _photos_for(market, dto, cache, quality)
         doc.page(dto, photos)
         del photos, dto                       # released before the next product
         job["done"] = n + 1
@@ -1829,7 +1900,7 @@ def assert_price_free(pdf: bytes) -> None:
     """Second line of defence: raise if a currency or a price label reached
     the finished document.
 
-    reportlab writes page text as ASCII85 over Flate, so this reads the drawn
+    reportlab writes page text as a compressed stream, so this reads the drawn
     strings back out rather than scanning raw bytes — a raw scan would pass
     happily on a compressed stream and prove nothing at all.
 
@@ -1846,19 +1917,24 @@ def assert_price_free(pdf: bytes) -> None:
 
 
 def _decode_stream(chunk: bytes) -> bytes:
-    """reportlab writes ASCII85 over Flate by default, so a zlib attempt on
-    its own decodes nothing — and a price check that silently reads an empty
-    string would pass on every document ever made."""
+    """Flate, or ASCII85 over Flate — whichever this document carries.
+
+    `exports` asks reportlab for binary streams, so page text is plain Flate
+    here; a document written before that, or by anything else, is base-85
+    over Flate, and a zlib attempt on its own would decode nothing. A price
+    check that silently read an empty string would pass on every document
+    ever made, so every encoding is tried and the base-85 attempt falls
+    through to zlib rather than giving up on it.
+    """
     import base64
     import zlib
 
     body = chunk.strip()
     if body.startswith(b"Gb") or body.endswith(b"~>"):
         try:
-            cut = body.split(b"~>")[0]
-            body = base64.a85decode(cut, adobe=False)
+            body = base64.a85decode(body.split(b"~>")[0], adobe=False)
         except Exception:
-            return chunk
+            body = chunk
     for attempt in (body, chunk):
         try:
             return zlib.decompress(attempt)
@@ -1892,13 +1968,23 @@ def extract_text(pdf: bytes) -> str:
     bytes were never text, and no amount of sanitizing the text could have
     fixed it.
 
-    Two filters, and the document's real text passes both: the stream's own
-    object dictionary must not say image or font, and a string must sit
-    inside a BT/ET text block.
+    Three filters, and the document's real text passes all three. The word
+    "stream" has to be the keyword that opens one — every real stream is
+    introduced by its own dictionary, so the bytes in front of it end in
+    `>>`, and a photograph's data that happens to spell "stream" does not.
+    The dictionary must not say image or font. And a string must sit inside
+    a BT/ET text block.
+
+    The first of those is what makes binary streams safe to read: without
+    it, a run of JPEG bytes could be mistaken for a content stream and the
+    letters that turn up by chance in it read as drawn text, which is the
+    very failure this function was rewritten to stop.
     """
     out: list[str] = []
     for match in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
         head = pdf[max(0, match.start() - 2500):match.start()]
+        if not head.rstrip().endswith(b">>"):
+            continue                          # not a stream keyword at all
         cut = head.rfind(b" obj")
         if cut >= 0:
             head = head[cut:]

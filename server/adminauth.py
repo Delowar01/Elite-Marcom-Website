@@ -187,6 +187,43 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         created_at INTEGER NOT NULL,
         created_by TEXT NOT NULL DEFAULT ''
     );
+    -- A shareable web catalogue: one row per link, carrying its own frozen
+    -- copy of the products. Only the SHA-256 of the token is stored, so the
+    -- database cannot hand anybody a working link, and the snapshot is never
+    -- rebuilt — a client opening a month-old link sees the catalogue that was
+    -- shared, not whatever the supplier sells today.
+    CREATE TABLE IF NOT EXISTS catalogue_shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_hash TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL DEFAULT '',
+        market TEXT NOT NULL DEFAULT '',
+        products INTEGER NOT NULL DEFAULT 0,
+        options TEXT NOT NULL DEFAULT '{}',
+        snapshot TEXT NOT NULL DEFAULT '',
+        stock_at INTEGER,
+        allow_pdf INTEGER NOT NULL DEFAULT 0,
+        pdf_file TEXT NOT NULL DEFAULT '',
+        pdf_bytes INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT NOT NULL DEFAULT '',
+        expires_at INTEGER,
+        revoked_at INTEGER,
+        revoked_by TEXT NOT NULL DEFAULT '',
+        views INTEGER NOT NULL DEFAULT 0,
+        last_viewed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS catalogue_shares_created
+        ON catalogue_shares(created_at DESC);
+    -- Which picture a supplier URL was turned into, so sharing the same
+    -- products twice re-reads nothing. The file itself is named by the hash
+    -- of its own bytes, so two URLs holding one photograph are one file.
+    CREATE TABLE IF NOT EXISTS catalogue_assets (
+        url_key TEXT PRIMARY KEY,
+        hash TEXT NOT NULL,
+        bytes INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS catalogue_assets_hash ON catalogue_assets(hash);
     """)
     conn.commit()
 

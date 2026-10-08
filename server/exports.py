@@ -15,10 +15,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from reportlab import rl_config
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
+
+#: Streams go in as binary rather than wrapped in ASCII base-85.
+#:
+#: Base-85 encodes four bytes as five printable characters, so it adds a flat
+#: 25% to every compressed stream in the file — on a photographic catalogue
+#: that is a quarter of the whole document, spent on making the bytes safe
+#: for a 7-bit transport nobody has used in thirty years. A PDF is a binary
+#: format and every reader has read binary streams since 1.0.
+#:
+#: It is a library-wide setting because reportlab reads it when it writes a
+#: stream, so it is set once here, at the module every PDF in this
+#: application is drawn through, rather than toggled around a build where two
+#: threads could disagree. The one thing that depended on it is
+#: `catalogue.extract_text`, which now identifies a stream by the dictionary
+#: in front of it instead of trusting that stream data is printable.
+rl_config.useA85 = 0
 
 KIND_LABELS = {
     "contact": "Contact enquiry",
@@ -167,6 +184,50 @@ INK = (0.078, 0.094, 0.122)
 GREY = (0.541, 0.561, 0.596)
 LINE = (0.910, 0.894, 0.871)
 _LOGO_PATH = Path(__file__).parent / "data" / "logo-print.png"
+
+#: The wordmark, resized once and shared by every page of every document.
+_LOGO_CACHE: dict[int, tuple] = {}
+#: pixels per point. Three is already beyond what print resolves; six leaves
+#: room for a reader zooming in and still costs a few kilobytes.
+LOGO_PX_PER_PT = 6.0
+
+
+def logo_reader(height: float = 26.0):
+    """(reader, width, height) for the logo, no larger than it is drawn.
+
+    The shipped artwork is 1660 x 560 — roughly 1,500 dots to the inch at the
+    size a page draws it — and because it carries an alpha channel reportlab
+    writes it as raw RGB plus a soft mask: 49 KB in every document, which on
+    a one-product catalogue was a fifth of the whole file. Resized once to
+    six pixels to the point it is a few kilobytes, the alpha is kept so the
+    mark still sits on a tinted band, and reportlab's own content digest
+    means every page shares the single object.
+    """
+    #: rounded up to a 16pt bucket, so the 19pt page header and the 26pt
+    #: cover share one object instead of embedding the artwork twice. The
+    #: drawn size is whatever the caller asked for; only the stored pixels
+    #: are quantized.
+    key = int(max(16, min(160, -(-max(1.0, height) // 16) * 16)))
+    hit = _LOGO_CACHE.get(key)
+    if hit is not None:
+        return hit
+    from PIL import Image
+
+    try:
+        with Image.open(_LOGO_PATH) as art:
+            art.load()
+            want_h = max(1, int(key * LOGO_PX_PER_PT))
+            if art.height > want_h:
+                art = art.resize((max(1, round(art.width * want_h / art.height)),
+                                  want_h), Image.LANCZOS)
+            buf = io.BytesIO()
+            art.save(buf, "PNG", optimize=True)
+        buf.seek(0)
+        out = (ImageReader(buf), art.width, art.height)
+    except Exception:
+        out = (None, 0, 0)
+    _LOGO_CACHE[key] = out
+    return out
 
 
 def _wrap(text: str, font: str, size: float, width: float) -> list[str]:
@@ -431,13 +492,16 @@ def product_sheet_pdf(item: dict, images: list[bytes], *, currency: str = "") ->
     c = canvas.Canvas(buf, pagesize=A4)
     y = PAGE_H - M
 
-    try:
-        if _LOGO_PATH.exists():
-            logo = ImageReader(str(_LOGO_PATH))
-            lw, lh = logo.getSize()
+    drawn = False
+    logo, lw, lh = logo_reader(26.0)
+    if logo is not None:
+        try:
             h = 26.0
             c.drawImage(logo, M, y - h, width=lw * (h / lh), height=h, mask="auto")
-    except Exception:
+            drawn = True
+        except Exception:
+            drawn = False
+    if not drawn:
         c.setFont("Helvetica-Bold", 15)
         c.setFillColorRGB(*ORANGE)
         c.drawString(M, y - 18, "ELITE MARCOM")
@@ -538,12 +602,63 @@ def product_sheet_pdf(item: dict, images: list[bytes], *, currency: str = "") ->
     return buf.getvalue()
 
 
+class _JPEGReader(ImageReader):
+    """A photograph handed to reportlab as the JPEG it already is.
+
+    reportlab will embed a JPEG verbatim — `/DCTDecode`, the supplier's own
+    bytes — but only when it is given the compressed file; handed a decoded
+    picture it zlib-compresses raw RGB instead, and raw RGB of a photograph
+    barely compresses at all. That was the whole of a catalogue's size: a
+    140 KB product shot became about 1.55 MB in the file, measured, and a
+    page of three of them 5 MB.
+
+    `Canvas.drawImage` also calls `getRGBData()` for the digest it keys an
+    image by — a second full decode of every photograph. The digest is only
+    ever a key, so the compressed bytes serve it exactly as well: the same
+    picture still collapses to one object, and nothing is decoded twice.
+    `_dataA` is the soft mask `drawImage` reads straight afterwards, and a
+    JPEG has no alpha channel, so it is set here rather than left unbound.
+    """
+
+    def getRGBData(self):                    # noqa: N802 - reportlab's name
+        self._dataA = None
+        return self._jpeg
+
+
+def _is_baseline_jpeg(im) -> bool:
+    """Whether this picture can go into a PDF untouched.
+
+    `/DCTDecode` is baseline and extended-sequential JPEG. A progressive one
+    is a different coding and not every reader accepts it inside a PDF, so it
+    takes the re-encoding path; CMYK and anything with an alpha channel do
+    too, because the drawing code expects RGB on white.
+    """
+    return (getattr(im, "format", None) == "JPEG"
+            and im.mode in ("RGB", "L")
+            and not im.info.get("progressive")
+            and not im.info.get("progression"))
+
+
 def _image_box(raw: bytes):
-    from reportlab.lib.utils import ImageReader
+    """(reader, width, height) for a picture about to be drawn.
+
+    A JPEG is passed straight through, because every caller already hands in
+    a bounded one (`catalogue.prepare_image` makes it) and re-encoding it was
+    costing an order of magnitude in file size. Everything else — a PNG, a
+    palette image, anything carrying transparency — is still flattened onto
+    white and re-encoded, which is what keeps the drawing code able to assume
+    RGB.
+    """
     from PIL import Image
 
     try:
         im = Image.open(io.BytesIO(raw))
+        if _is_baseline_jpeg(im):
+            width, height = im.size
+            im.close()
+            reader = _JPEGReader(io.BytesIO(raw))
+            reader._jpeg = raw
+            return reader, width, height
         im.load()
         if im.mode in ("RGBA", "LA", "P"):
             flat = Image.new("RGB", im.size, (255, 255, 255))

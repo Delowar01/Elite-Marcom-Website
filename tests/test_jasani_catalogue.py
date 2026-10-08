@@ -323,8 +323,8 @@ def photos(monkeypatch):
     # watch how much prepared imagery exists at once
     real_prepare = cat.prepare_image
 
-    def counted(raw):
-        out = real_prepare(raw)
+    def counted(raw, **kw):
+        out = real_prepare(raw, **kw)
         if out is not None:
             stats["live"] += len(out)
             stats["peak"] = max(stats["peak"], stats["live"])
@@ -1197,8 +1197,8 @@ def test_the_photograph_cache_stays_bounded_across_many_products(snapshot, photo
     seen = {"max": 0}
     real = cat._photos_for
 
-    async def watched(market, dto, cache):
-        out = await real(market, dto, cache)
+    async def watched(market, dto, cache, *rest):
+        out = await real(market, dto, cache, *rest)
         seen["max"] = max(seen["max"], len(cache))
         return out
 
@@ -1795,6 +1795,160 @@ def test_extract_text_reads_pages_not_pictures():
     for word in cat.PRICE_WORDS:
         assert word not in text.lower(), word
     assert "Plain" in text, "the drawn text is still read"
+
+
+# ---------------- what the document weighs ----------------
+#
+# The photographs are the document. Everything in this section is about the
+# one fact that decided a catalogue's size: whether a picture goes into the
+# file as the JPEG it already is, or is decoded and embedded as compressed
+# raw pixels.
+
+
+def image_streams(pdf: bytes) -> list[tuple[int, bool]]:
+    """(bytes, is_jpeg) for every image in the file."""
+    out = []
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        head = pdf[max(0, m.start() - 2500):m.start()]
+        cut = head.rfind(b" obj")
+        head = head[cut:] if cut >= 0 else head
+        if re.search(rb"/Subtype\s*/Image", head):
+            out.append((len(m.group(1)), b"DCTDecode" in head))
+    return out
+
+
+def test_a_photograph_is_embedded_as_the_jpeg_it_already_is():
+    """The whole of the size problem, in one assertion.
+
+    `prepare_image` produces a small JPEG and the document used to decode it
+    and embed zlib-compressed raw RGB — measured, a 140 KB product shot became
+    about 1.55 MB in the file. The stream in the document is now that JPEG,
+    so the photographs weigh what they weighed.
+    """
+    blobs = [noisy_photo(i) for i in range(3)]
+    pdf = cat.build([{"id": "1", "code": "A", "name": "One", "available": 5,
+                      "availableKnown": True}], {"1": blobs}, market="ksa",
+                    title="T", stock_at=STOCK_AT, stock_is_known=True)
+    photos = [(n, jpeg) for n, jpeg in image_streams(pdf) if jpeg]
+    assert len(photos) == 3, "every photograph is a DCTDecode stream"
+    carried = sum(n for n, _ in photos)
+    source = sum(len(b) for b in blobs)
+    assert carried == source, "the prepared bytes are the embedded bytes"
+
+
+def test_no_stream_is_wrapped_in_ascii_base_eighty_five():
+    """Base-85 adds a flat 25% to every stream so the bytes are printable,
+    which is a cost paid for a transport nobody uses."""
+    pdf = cat.build([{"id": "1", "code": "A", "name": "One", "available": 5,
+                      "availableKnown": True}], {"1": [noisy_photo(4)]},
+                    market="ksa", title="T", stock_at=STOCK_AT,
+                    stock_is_known=True)
+    assert b"ASCII85Decode" not in pdf
+    assert b"/DCTDecode" in pdf
+
+
+def test_drawn_text_is_still_read_back_out_of_binary_streams():
+    """The guard's input. With binary streams a run of photographic bytes can
+    spell "stream", so a stream is now identified by the dictionary in front
+    of it — and the document's real text still reads back."""
+    dto = cat.to_dto(dict(MAGLITE))
+    pdf = cat.build([dto], {dto["id"]: [noisy_photo(7)]},
+                    market="ksa", title="Elite Marcom\nProduct Catalogue",
+                    stock_at=STOCK_AT, stock_is_known=True)
+    text = cat.extract_text(pdf)
+    assert "MAGLITE 5K" in text and "42 units" in text
+    assert MAGLITE["code"] in text
+    assert "5000 mAh magnetic wireless power bank" in text
+    cat.assert_price_free(pdf)
+
+
+def test_the_same_photograph_is_stored_once_however_often_it_is_drawn():
+    """Two products listing one picture, and the cover drawing it again."""
+    one = noisy_photo(11)
+    pdf = cat.build(
+        [{"id": "1", "code": "A", "name": "One", "available": 5, "availableKnown": True},
+         {"id": "2", "code": "B", "name": "Two", "available": 6, "availableKnown": True}],
+        {"1": [one], "2": [one]}, market="ksa", title="T", stock_at=STOCK_AT,
+        stock_is_known=True)
+    photos = [n for n, jpeg in image_streams(pdf) if jpeg]
+    assert len(photos) == 1, "one picture, one object"
+
+
+def test_standard_quality_is_lighter_than_high_and_is_the_default():
+    raw = jpeg_bytes(w=2000, h=2000, seed=3)
+    standard = cat.prepare_image(raw, slot="main", quality="standard")
+    high = cat.prepare_image(raw, slot="main", quality="high")
+    assert len(standard) < len(high)
+    assert cat.quality_mode(None) == "standard"
+    assert cat.quality_mode("high") == "high"
+    for junk in ("", "HIGHEST", "medium", "0", None, 7):
+        assert cat.quality_mode(junk) in ("standard", "high")
+    assert cat.quality_mode("nonsense") == "standard", "unreadable means lighter"
+
+
+def test_a_supporting_picture_is_prepared_smaller_than_the_leading_one():
+    """The page draws a side tile at most 207pt wide and a leading one up to
+    503pt, so preparing them at one size is weight nobody sees."""
+    from PIL import Image
+
+    raw = jpeg_bytes(w=2000, h=2000, seed=5)
+    main = cat.prepare_image(raw, slot="main", quality="standard")
+    side = cat.prepare_image(raw, slot="side", quality="standard")
+    assert Image.open(io.BytesIO(main)).width == cat.PHOTO_DIMS["standard"]["main"]
+    assert Image.open(io.BytesIO(side)).width == cat.PHOTO_DIMS["standard"]["side"]
+    assert len(side) < len(main)
+
+
+def test_a_prepared_photograph_carries_no_metadata_and_is_baseline():
+    """A supplier's camera metadata is not ours to put in a customer document,
+    and a progressive JPEG is a coding /DCTDecode does not promise to read."""
+    from PIL import Image
+
+    source = Image.new("RGB", (900, 900), (120, 90, 60))
+    buf = io.BytesIO()
+    source.save(buf, "JPEG", quality=95, progressive=True,
+                exif=b"Exif\x00\x00" + b"\x00" * 400)
+    out = cat.prepare_image(buf.getvalue(), slot="main", quality="standard")
+    done = Image.open(io.BytesIO(out))
+    assert not done.info.get("exif") and not done.info.get("icc_profile")
+    assert not done.info.get("progressive") and not done.info.get("progression")
+
+
+def test_the_logo_is_not_embedded_at_sixteen_hundred_pixels():
+    """The shipped wordmark is 1660 x 560 and a page draws it 26pt tall:
+    1,500 dots to the inch, and with an alpha channel it costs 49 KB of raw
+    RGB plus a soft mask in every single document."""
+    from server import exports
+
+    exports._LOGO_CACHE.clear()
+    reader, width, height = exports.logo_reader(26.0)
+    assert reader is not None
+    assert height < 560 and width < 1660, "not the shipped artwork"
+    assert height <= 32 * exports.LOGO_PX_PER_PT, "no more than the 16pt bucket"
+    assert exports.logo_reader(26.0)[0] is reader, "cached, not rebuilt per page"
+    # the 19pt page header and the 26pt cover are one object, not two
+    assert exports.logo_reader(19.0)[0] is reader
+
+
+def test_the_document_weighs_what_its_photographs_weigh():
+    """An upper bound on a whole catalogue rather than on one picture. The
+    pool of test photographs repeats, so reportlab's content digest collapses
+    some of them — which is why this is a ceiling and not an equality."""
+    items, photos = [], {}
+    for n in range(8):
+        items.append({"id": str(n), "code": f"ITGL {n}", "name": f"Item {n}",
+                      "description": "A useful item.", "material": "Steel",
+                      "available": 10 + n, "availableKnown": True})
+        photos[str(n)] = [cat.prepare_image(jpeg_bytes(seed=n * 3 + k))
+                          for k in range(3)]
+    pdf = cat.build(items, photos, market="ksa", title="T", stock_at=STOCK_AT,
+                    stock_is_known=True)
+    supplied = sum(len(b) for blobs in photos.values() for b in blobs)
+    embedded = sum(n for n, _ in image_streams(pdf))
+    assert embedded <= supplied + 60_000, "images plus the small logo"
+    assert len(pdf) < supplied * 1.2 + 200_000
+    photographs = [jpeg for size, jpeg in image_streams(pdf) if size > 20_000]
+    assert photographs and all(photographs), "the photographs are JPEG streams"
 
 
 # ---------------- the sanitizer and the guard cannot drift ----------------

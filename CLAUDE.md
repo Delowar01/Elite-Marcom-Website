@@ -381,6 +381,141 @@ documentation). Non-negotiable rules from it:
     all as they were. 500 products with one photograph each measured 4.01 MB
     and 111s after the change (3.61 MB before — the extra is per-page vector
     work, not imagery).
+- **A photograph goes into the PDF as the JPEG it already is.** This was the
+  whole of a catalogue's size, and it was not the layout, the fonts or the
+  vector work: `exports._image_box` re-encoded every prepared JPEG to PNG
+  before handing it to reportlab, and reportlab embeds a decoded picture as
+  zlib-compressed raw RGB. Measured on real photography, a 140 KB product
+  shot became **1.55 MB** in the file; 500 products with one picture each was
+  **428 MB** and 100 with three was **270 MB**. reportlab will embed a JPEG
+  verbatim (`/DCTDecode`) when the source answers `jpeg_fh()`, and
+  `ImageReader` does answer it for a file PIL opened as a JPEG — so the fix
+  is to stop re-encoding, not to subclass anything. `_image_box` now passes a
+  **baseline** RGB/greyscale JPEG straight through and still flattens
+  everything else (PNG, palette, alpha, CMYK, progressive) onto white,
+  because the drawing code assumes RGB and `/DCTDecode` does not promise to
+  read a progressive scan. `_JPEGReader` overrides `getRGBData` to hand back
+  the compressed bytes: `Canvas.drawImage` reads it only for the digest it
+  keys an image by, so the same picture still collapses to one object — the
+  cover hero and the page that repeats it are one stream — and nothing is
+  decoded twice.
+- **Two picture sizes, two quality modes, and the slot is part of the cache
+  key.** A page draws a leading photograph up to 503pt wide or 366pt tall and
+  a supporting one never wider than 207pt, so `PHOTO_DIMS` prepares them at
+  different sizes: Standard 1000/620 px at JPEG 72 with 4:2:0 chroma, High
+  1400/920 at 86 with 4:2:2. Standard is the default and an unreadable mode
+  reads as Standard, never as the heavier document. `prepare_image(raw,
+  slot=, quality=)` with neither argument keeps the old behaviour, which is
+  what the product sheet and the tests use. The URL cache in `_photos_for` is
+  keyed on `(url, slot)`: one picture used as a leading shot by one product
+  and a side view by another is prepared twice, which is honest — the
+  alternative is a leading photograph that is soft because some other product
+  got there first. The cover hero shares the `"main"` entry its own page
+  uses, so it is never fetched twice. Nothing of the original survives: no
+  EXIF, no colour profile, no thumbnail, and `progressive=False` so the
+  picture can always go in untouched.
+- **Streams are binary, not ASCII base-85** (`rl_config.useA85 = 0`, set once
+  in `server/exports.py`). Base-85 writes four bytes as five printable
+  characters — a flat 25% on every stream in the file — to make PDF bytes
+  safe for a 7-bit transport nobody has used in thirty years. It is a
+  library-wide setting read at the moment a stream is written, so it is set at
+  the module every PDF in this application is drawn through rather than
+  toggled around a build where two threads could disagree.
+  **One thing depended on it.** `extract_text` found a stream by scanning for
+  `stream ... endstream`, which is safe only while stream data is printable:
+  in binary data those eight letters turn up by chance, and the letters
+  *around* them would then be read as drawn text — the exact failure the
+  image-stream fix exists to prevent. So a stream is now identified by the
+  dictionary in front of it (the preceding bytes must end in `>>`), which
+  every real stream has and a run of JPEG bytes does not. Measured on a small
+  catalogue, that rejects 18 bogus matches out of 36. `_decode_stream` tries
+  base-85 **and** falls through to zlib rather than giving up, so a document
+  written before this still reads.
+- **The logo was 49 KB in every document.** The shipped wordmark is 1660 x 560
+  with an alpha channel, drawn 26pt tall — about 1,500 dots to the inch — and
+  an alpha channel means raw RGB plus a soft mask. `exports.logo_reader(h)`
+  resizes it once to `LOGO_PX_PER_PT` (6) pixels per point, caches it per
+  drawn height and keeps the alpha, so the mark still sits on a tinted band.
+  On a one-product catalogue that was a fifth of the file.
+- **Measured, with real photography.** The source imagery for a size
+  benchmark has to be real: a flat synthetic swatch compresses to a few
+  kilobytes whatever the filter and film grain compresses to nothing, so
+  either one makes the measurement say whatever it was built to say. The
+  committed "500 products = 4.01 MB" figure came from flat test fixtures and
+  was never a photographic catalogue. Against the site's own photograph
+  library, one product per picture:
+
+  | case | before | after (Standard) | |
+  | --- | --- | --- | --- |
+  | 1 x 1 | 1.60 MB | 0.11 MB | -93% |
+  | 1 x 3 | 5.19 MB | 0.18 MB | -97% |
+  | 25 x 1 | 20.9 MB | 1.16 MB | -94% |
+  | 25 x 3 | 67.8 MB | 2.23 MB | -97% |
+  | 100 x 1 | 86.8 MB | 4.72 MB | -95% |
+  | 100 x 3 | 270 MB | 8.98 MB | -97% |
+  | 500 x 1 | 429 MB | 23.4 MB | -95% |
+  | 500 x 3 | 1329 MB | 44.5 MB | -97% |
+
+  Generation time fell with it (100 x 3: 239s to 84s, and 83s of that 84 is
+  the image pipeline rather than the renderer; 500 x 3: 1200s to 422s) and so
+  did the working set (500 x 3: 4920 MB to 310 MB), because nothing decodes a
+  photograph to raw pixels any more — the largest catalogue went from a
+  document the implementation could not really produce to one it can.
+  High is about twice Standard (100 x 1: 4.72 MB against 9.10 MB).
+  Do not quote a figure this table does not carry.
+- **A shared web catalogue is a frozen copy, not a live view**
+  (`server/catalogue_share.py`, `catalogue_shares` and `catalogue_assets` in
+  admin.db, permission `jasani.view`). `/catalogue/<token>` serves
+  `public/catalogue-view.html` — a standalone viewer, deliberately not built
+  on `styles.css` and with no site nav, so a client on a phone downloads one
+  small stylesheet and a code change needs no **Publish site**. The products,
+  the quantities, the stock timestamp and the photographs are written once
+  and never rebuilt, which is where every other property comes from:
+  - **No supplier call on a page view, ever.** The snapshot comes from the
+    same cached products the PDF is built from, and the pictures are copied
+    into `runtime/catalogue-assets` while the share is being made. A visitor
+    reads our own database and our own files. There is a test that fails if
+    opening a share reaches `_fetch`, `_fetch_image_bytes` or the budget.
+  - **The same price boundary.** Every customer-facing string comes out of
+    `catalogue.to_dto`, and `assert_snapshot_price_free` is the second line,
+    exactly as `assert_price_free` is for the PDF. It names the field and
+    never the figure.
+  - **The link is the credential, so the database cannot hand one out.** Only
+    `sha256(token)` is stored; the token is 128 bits from `secrets`, shown to
+    the admin once, and in no log, audit entry or error message — the audit
+    records the share's **id**, which is what somebody revoking it needs.
+  - **Two stages, because a catalogue is long.** `index.json` is one small
+    record per product (name, code, first picture, availability, categories)
+    and powers the grid, the search and the filters; `p/<i>.json` carries the
+    specifications and the description for the one product a client opened.
+    A page option switched off is left out of the **snapshot**, not hidden by
+    the viewer — a viewer cannot show what it was never given.
+  - **Pictures are addressed by the hash of their own bytes**, so two products
+    carrying one photograph are one file and re-sharing the same products
+    copies nothing; `catalogue_assets` remembers which URL produced which hash
+    so a re-share does not re-read the image host either. A picture is served
+    only under a live token that names it, and the name is 64 hex characters
+    with no separator a traversal could use. Cleanup is mark-and-sweep over
+    the live snapshots, never reference counting, because a count that drifts
+    leaves either a broken picture or a file nobody can delete.
+  - **Revoked means revoked**: the page, the data, the pictures and the
+    document stop together, and the row stays so the history reads straight.
+    An expired link says so (410) because that is something a client can ask
+    about; an unknown and a withdrawn one read the same (404).
+  - **The PDF is drawn in the same pass**, when the share allows one (off by
+    default), so the document a client downloads is built from the pictures
+    the page shows and downloading it is a file read. A share's settings are
+    fixed — change one by making another share.
+  - **A view is a counter and a timestamp.** No address, no user agent, no
+    identifier of any kind, and reading the data does not count as another
+    view. The viewer sets no cookie and loads no analytics.
+  - `noindex,nofollow,noarchive` in the shipped markup **and** as
+    `X-Robots-Tag` on every route; `content.SITEMAP_SKIP` keeps the shell out
+    of the sitemap; nothing is added to robots.txt, because a page that is
+    never fetched is a page whose noindex is never read. The viewer's JS is a
+    file, not inline, because `script-src` is `'self'` with no
+    `'unsafe-inline'` — and there is no `innerHTML` in it, so no supplier
+    string can ever be read as markup.
 - **`supplier_video.CACHE_SCHEMA` invalidates stale verdicts.** Bump it
   whenever a parser change means a stored answer could be improved on; an
   entry written under a lower number is treated as absent and rediscovered.
