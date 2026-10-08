@@ -461,7 +461,8 @@ documentation). Non-negotiable rules from it:
   did the working set (500 x 3: 4920 MB to 310 MB), because nothing decodes a
   photograph to raw pixels any more — the largest catalogue went from a
   document the implementation could not really produce to one it can.
-  High is about twice Standard (100 x 1: 4.72 MB against 9.10 MB).
+  High is about twice Standard and still a tenth of what it was
+  (100 x 1: 4.72 / 9.10 MB; 500 x 1: 23.4 / 45.3 MB against 429 MB).
   Do not quote a figure this table does not carry.
 - **A shared web catalogue is a frozen copy, not a live view**
   (`server/catalogue_share.py`, `catalogue_shares` and `catalogue_assets` in
