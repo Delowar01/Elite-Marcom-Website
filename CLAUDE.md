@@ -788,3 +788,8 @@ documentation). Non-negotiable rules from it:
   includes `ar`; both editions are baked by the same publish action.
 - Workflow: develop on `claude/markdown-file-instructions-y9jr50`, push, and
   fast-forward `main` (the user pulls from `main` to test locally).
+- **Every finished task ends with a complete report in one copyable block.**
+  A fenced block the user can copy whole — what changed and why, the exact
+  code paths, files changed, full test results, verification actually
+  performed, and the remaining limitations stated plainly. Not a summary in
+  prose beside it: the block is the deliverable.
