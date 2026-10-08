@@ -314,6 +314,24 @@ documentation). Non-negotiable rules from it:
     product: the order of preference is the whole description, then all the
     specifications, then readable type, then a moderately smaller gallery,
     and only then the knife.
+  - **The feature row is the only part of the page that could lie, so it is
+    the most tightly held.** `product_features` reads the sanitized DTO's
+    name, description and the material/size/capacity specifications — and
+    nothing else — against `FEATURE_RULES`, a table of explicit patterns.
+    A badge appears only when the product's own words say so, its label is
+    built from the matched text ("15W wireless", "5,000 mAh") rather than
+    written in the table, and nothing is ever inferred from a category or a
+    brand: being in Power Banks is not a claim about wireless charging. Each
+    rule belongs to a **family** that fires once, because "PD 22.5W" and
+    "22.5W charging" are one fact twice and the second slot is better spent.
+    A match is rejected when a negation stands near it **in the same
+    sentence, on either side** — "dishwasher safe parts are not applicable"
+    is a supplier saying the opposite. At most `MAX_FEATURES` (4), and with
+    nothing certain the row is simply absent. The icons are drawn with
+    reportlab primitives in `_icon`: no icon font, no third-party file,
+    nothing to go missing from a deploy. One row per page, under the name,
+    and it is dropped before a specification row or a sentence is — content
+    first, badges second.
   - **The page is composed before anything is drawn.** `_identity_plan`,
     `_description_height` and `_specs_height` measure first, and the gallery
     takes what is left between `GALLERY_MIN` and `GALLERY_MAX`. That is why
@@ -353,8 +371,8 @@ documentation). Non-negotiable rules from it:
     tracked label left every later string on the page letterspaced, drawing
     wider than it was wrapped for and running into its neighbour.
   - **Orange is an accent.** `PAPER`, `SOFT`, `FAINT` are the surfaces; the
-    brand colour is a 2pt rule, a section label, the availability marker and
-    the cover's dilute field. No borders where a tint or a hairline will do:
+    brand colour is a 2pt rule, a section label, the availability marker, a
+    detail inside an icon and the dilute field behind the cover hero. No borders where a tint or a hairline will do:
     specification rows alternate rather than sitting in a table, and a
     photograph gets a soft three-pass shadow rather than an outline.
   - The redesign changed no behaviour: the price guarantee, the sanitizer,

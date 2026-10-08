@@ -635,6 +635,256 @@ def name_parts(name: str) -> tuple[str, str, str]:
     return lead, rest[0], " - ".join(rest[1:])
 
 
+# ---------------- what a product actually says about itself ----------------
+#
+# The feature row is the one part of the page that is not simply a field
+# printed in a nicer typeface, so it is the one part that could lie. The rule
+# is therefore narrow: a badge appears only when the product's own text says
+# so, in words specific enough to be unambiguous, and the label is built from
+# the matched text rather than written here. Nothing is inferred from a
+# category, a brand or a product's general kind — a "power bank" does not get
+# a wireless-charging badge for being a power bank.
+
+def _n(m, group: int = 1) -> str:
+    """The figure a match caught, without a trailing .0."""
+    v = m.group(group) or ""
+    return v[:-2] if v.endswith(".0") else v
+
+
+#: (pattern, icon, label, family). The pattern is searched in the product's
+#: own sanitized name, description and specification values — nowhere else.
+#: A family fires once: "PD 22.5W" and "22.5W charging" are the same fact
+#: twice, and a row that says it twice has a third thing it is not saying.
+#: Order is priority order, most product-defining first.
+FEATURE_RULES: tuple[tuple[str, str, object, str], ...] = (
+    (r"\bmagsafe\b", "magnet", "MagSafe compatible", "magnet"),
+    (r"\b(\d{1,3}(?:\.\d)?)\s*w\b[^.]{0,24}\bwireless\b"
+     r"|\bwireless\b[^.]{0,24}?\b(\d{1,3}(?:\.\d)?)\s*w\b",
+     "wireless", lambda m: f"{_n(m) if m.group(1) else _n(m, 2)}W wireless",
+     "wireless"),
+    (r"\bwireless charg", "wireless", "Wireless charging", "wireless"),
+    (r"\bpd\s*(\d{1,3}(?:\.\d)?)\s*w\b", "bolt", lambda m: f"PD {_n(m)}W",
+     "charge"),
+    (r"\b(\d{1,3}(?:\.\d)?)\s*w\b\s*(?:fast\s*)?charg", "bolt",
+     lambda m: f"{_n(m)}W charging", "charge"),
+    (r"\bfast charg", "bolt", "Fast charging", "charge"),
+    (r"\b(\d{3,6})\s*mah\b", "battery", lambda m: f"{int(_n(m)):,} mAh",
+     "battery"),
+    (r"\b(\d{2,5})\s*ml\b", "droplet", lambda m: f"{int(_n(m)):,} ml", "volume"),
+    (r"\bdouble[- ]?wall(?:ed)?\b", "layers", "Double-walled", "build"),
+    (r"\bstainless steel\b", "layers", "Stainless steel", "build"),
+    (r"\b(\d{1,2})\s*(?:hours|hrs?)\b", "clock", lambda m: f"{_n(m)} hours",
+     "time"),
+    (r"\bip(\d{2})\b", "droplet", lambda m: f"IP{m.group(1)} rated", "water"),
+    (r"\b(?:water[- ]?proof|waterproof)\b", "droplet", "Waterproof", "water"),
+    (r"\bleak[- ]?proof\b", "droplet", "Leak-proof", "water"),
+    (r"\bdishwasher[- ]safe\b", "droplet", "Dishwasher safe", "water"),
+    (r"\b(?:usb[- ]?c|type[- ]?c)\b", "plug", "USB-C", "port"),
+    (r"\bbluetooth\b", "wireless", "Bluetooth", "radio"),
+    (r"\bsolar\b", "sun", "Solar", "power"),
+    (r"\bbpa[- ]?free\b", "leaf", "BPA free", "eco"),
+    (r"\b(?:recycled|rpet|bamboo|organic cotton)\b", "leaf", "Sustainable", "eco"),
+    (r"\b(?:laser engrav|deboss|emboss|screen print|pad print|embroider)",
+     "brand", "Brandable", "brand"),
+    (r"\bgift (?:box|packaging|set)\b", "box", "Gift boxed", "pack"),
+)
+
+#: Three is a row, five is a toolbar. Four keeps the page calm.
+MAX_FEATURES = 4
+
+
+#: "Dishwasher safe parts are not applicable" is a supplier saying the
+#: opposite of what the words alone suggest. A badge is a claim, so a claim
+#: with a negation in front of it in the same sentence is not made.
+_NEGATED = re.compile(r"\b(?:not|no|never|without|excluding|except|unsuitable)\b",
+                      re.I)
+
+
+def _affirmed(hay: str, pattern: str):
+    """The first match of `pattern` that nothing in its sentence negates."""
+    for m in re.finditer(pattern, hay, re.I):
+        lead = hay[max(0, m.start() - 70):m.start()]
+        tail = hay[m.end():m.end() + 70]
+        for stop in (".", "!", "?", "\n", ";"):
+            lead = lead.rsplit(stop, 1)[-1]
+            tail = tail.split(stop, 1)[0]
+        #: both directions, because "dishwasher safe parts are not
+        #: applicable" puts the negation after the words it cancels
+        if not _NEGATED.search(lead) and not _NEGATED.search(tail):
+            return m
+    return None
+
+
+def product_features(dto: dict) -> list[tuple[str, str]]:
+    """[(icon, label)] the product's own words support, at most MAX_FEATURES.
+
+    Reads the sanitized DTO only, so a price statement cannot arrive here
+    either. Returns [] when nothing is certain — a row of invented badges on
+    a customer document would be worse than no row.
+    """
+    parts = [dto.get("name") or "", dto.get("description") or ""]
+    parts += [str(v) for k, v in dto.items()
+              if k in ("material", "size", "capacity") and v]
+    hay = " ".join(parts).lower()
+    out: list[tuple[str, str]] = []
+    families: set[str] = set()
+    for pattern, icon, label, family in FEATURE_RULES:
+        if family in families:
+            continue
+        m = _affirmed(hay, pattern)
+        if not m:
+            continue
+        text = label(m) if callable(label) else label
+        if not text or len(text) > 22:
+            continue
+        families.add(family)
+        out.append((icon, text))
+        if len(out) >= MAX_FEATURES:
+            break
+    return out
+
+
+# ---------------- the icons, drawn rather than downloaded ----------------
+
+def _icon(c, name: str, cx: float, cy: float, r: float) -> None:
+    """A simple line mark in a circle of radius `r` centred on (cx, cy).
+
+    Drawn with reportlab primitives: no icon font, no third-party file, and
+    nothing to go missing from a deploy.
+    """
+    c.setLineWidth(max(0.9, r * 0.11))
+    c.setLineCap(1)
+    c.setLineJoin(1)
+    c.setStrokeColorRGB(*INK)
+    u = r * 0.52                              # the mark's half-extent
+    if name == "battery":
+        c.rect(cx - u, cy - u * 0.62, u * 1.7, u * 1.24, stroke=1, fill=0)
+        c.setFillColorRGB(*ORANGE)
+        c.rect(cx - u + 1.6, cy - u * 0.62 + 1.6, u * 0.8, u * 1.24 - 3.2,
+               stroke=0, fill=1)
+        c.setFillColorRGB(*INK)
+        c.rect(cx + u * 0.7, cy - u * 0.22, u * 0.22, u * 0.44, stroke=0, fill=1)
+    elif name == "bolt":
+        p = c.beginPath()
+        p.moveTo(cx + u * 0.26, cy + u)
+        p.lineTo(cx - u * 0.5, cy + u * 0.02)
+        p.lineTo(cx + u * 0.06, cy + u * 0.02)
+        p.lineTo(cx - u * 0.2, cy - u)
+        p.lineTo(cx + u * 0.56, cy - u * 0.06)
+        p.lineTo(cx, cy - u * 0.06)
+        p.close()
+        c.setFillColorRGB(*ORANGE)
+        c.drawPath(p, stroke=0, fill=1)
+    elif name == "wireless":
+        for k, scale in enumerate((0.42, 0.72, 1.0)):
+            c.setStrokeColorRGB(*(ORANGE if k == 0 else INK))
+            c.arc(cx - u * scale, cy - u * scale - u * 0.3,
+                  cx + u * scale, cy + u * scale - u * 0.3, 35, 110)
+        c.setFillColorRGB(*INK)
+        c.circle(cx, cy - u * 0.74, max(0.8, u * 0.12), stroke=0, fill=1)
+    elif name == "magnet":
+        c.arc(cx - u, cy - u * 0.5, cx + u, cy + u * 1.5, 0, 180)
+        c.line(cx - u, cy + u * 0.5, cx - u, cy - u)
+        c.line(cx + u, cy + u * 0.5, cx + u, cy - u)
+        c.setStrokeColorRGB(*ORANGE)
+        c.line(cx - u, cy - u, cx - u * 0.34, cy - u)
+        c.line(cx + u, cy - u, cx + u * 0.34, cy - u)
+    elif name == "plug":
+        c.rect(cx - u * 0.6, cy - u, u * 1.2, u * 1.4, stroke=1, fill=0)
+        c.line(cx - u * 0.26, cy + u * 0.4, cx - u * 0.26, cy + u)
+        c.line(cx + u * 0.26, cy + u * 0.4, cx + u * 0.26, cy + u)
+    elif name == "droplet":
+        p = c.beginPath()
+        p.moveTo(cx, cy + u)
+        p.curveTo(cx + u * 0.95, cy, cx + u * 0.7, cy - u, cx, cy - u)
+        p.curveTo(cx - u * 0.7, cy - u, cx - u * 0.95, cy, cx, cy + u)
+        c.drawPath(p, stroke=1, fill=0)
+    elif name == "leaf":
+        p = c.beginPath()
+        p.moveTo(cx - u * 0.8, cy - u * 0.8)
+        p.curveTo(cx - u, cy + u * 0.6, cx + u * 0.4, cy + u, cx + u * 0.85, cy + u * 0.85)
+        p.curveTo(cx + u, cy - u * 0.4, cx + u * 0.1, cy - u, cx - u * 0.8, cy - u * 0.8)
+        c.drawPath(p, stroke=1, fill=0)
+        c.setStrokeColorRGB(*ORANGE)
+        c.line(cx - u * 0.5, cy - u * 0.5, cx + u * 0.6, cy + u * 0.6)
+    elif name == "layers":
+        for k, dy in enumerate((u * 0.62, 0.0, -u * 0.62)):
+            c.setStrokeColorRGB(*(ORANGE if k == 0 else INK))
+            p = c.beginPath()
+            p.moveTo(cx - u, cy + dy)
+            p.lineTo(cx, cy + dy + u * 0.42)
+            p.lineTo(cx + u, cy + dy)
+            p.lineTo(cx, cy + dy - u * 0.42)
+            p.close()
+            c.drawPath(p, stroke=1, fill=0)
+    elif name == "clock":
+        c.circle(cx, cy, u, stroke=1, fill=0)
+        c.line(cx, cy, cx, cy + u * 0.55)
+        c.setStrokeColorRGB(*ORANGE)
+        c.line(cx, cy, cx + u * 0.45, cy)
+    elif name == "sun":
+        c.circle(cx, cy, u * 0.46, stroke=1, fill=0)
+        c.setStrokeColorRGB(*ORANGE)
+        for k in range(8):
+            a = k * 3.14159 / 4
+            import math
+
+            c.line(cx + math.cos(a) * u * 0.72, cy + math.sin(a) * u * 0.72,
+                   cx + math.cos(a) * u, cy + math.sin(a) * u)
+    elif name == "box":
+        c.rect(cx - u, cy - u * 0.85, u * 2, u * 1.7, stroke=1, fill=0)
+        c.setStrokeColorRGB(*ORANGE)
+        c.line(cx, cy - u * 0.85, cx, cy + u * 0.85)
+        c.line(cx - u, cy + u * 0.2, cx + u, cy + u * 0.2)
+    elif name == "calendar":
+        c.rect(cx - u, cy - u * 0.9, u * 2, u * 1.7, stroke=1, fill=0)
+        c.line(cx - u, cy + u * 0.34, cx + u, cy + u * 0.34)
+        c.setStrokeColorRGB(*ORANGE)
+        c.line(cx - u * 0.45, cy + u * 0.8, cx - u * 0.45, cy + u * 1.15)
+        c.line(cx + u * 0.45, cy + u * 0.8, cx + u * 0.45, cy + u * 1.15)
+    elif name == "check":
+        c.circle(cx, cy, u * 0.95, stroke=1, fill=0)
+        c.setStrokeColorRGB(*ORANGE)
+        c.setLineWidth(max(1.1, r * 0.14))
+        p = c.beginPath()
+        p.moveTo(cx - u * 0.42, cy + u * 0.04)
+        p.lineTo(cx - u * 0.08, cy - u * 0.36)
+        p.lineTo(cx + u * 0.46, cy + u * 0.38)
+        c.drawPath(p, stroke=1, fill=0)
+    elif name == "brand":
+        c.circle(cx, cy, u * 0.92, stroke=1, fill=0)
+        c.setFillColorRGB(*ORANGE)
+        c.circle(cx, cy, u * 0.34, stroke=0, fill=1)
+    else:                                     # a mark rather than nothing
+        c.circle(cx, cy, u * 0.8, stroke=1, fill=0)
+    c.setStrokeColorRGB(*INK)
+
+
+FEATURE_ROW_H = 54.0
+
+
+def _feature_row(c, features: list[tuple[str, str]], x: float, top: float,
+                 w: float) -> None:
+    """A quiet row of what the product does, under its name.
+
+    Not a table and not a badge wall: a hairline above, evenly spaced marks,
+    a short label under each. Four at most, and none of them invented.
+    """
+    if not features:
+        return
+    c.setFillColorRGB(*LINE)
+    c.rect(x, top, w, 0.6, stroke=0, fill=1)
+    slot = w / len(features)
+    for i, (icon, label) in enumerate(features):
+        cx = x + slot * i + slot / 2
+        _icon(c, icon, cx, top - 20, 11.0)
+        c.setFont("Helvetica-Bold", 7.4)
+        c.setFillColorRGB(0.28, 0.30, 0.34)
+        c.drawCentredString(cx, top - 44, label[:24])
+    c.setFillColorRGB(*LINE)
+    c.rect(x, top - FEATURE_ROW_H, w, 0.6, stroke=0, fill=1)
+
+
 # ---------------- page furniture ----------------
 
 def _logo(c, x: float, y: float, height: float = 26.0) -> float:
@@ -724,9 +974,17 @@ def _cover_hero(c, readers: list, x: float, bottom: float, w: float, h: float) -
     if n == 0:
         return
     if n == 1:
-        # one product is a deliberate presentation, not an empty page
-        pw = w * 0.74
-        _photo_tile(c, readers[0], x + (w - pw) / 2, bottom, pw, h, shadow=True)
+        # one product is a deliberate presentation, not an empty page: the
+        # picture sits on a dilute field, offset, so the composition has a
+        # foreground and a background rather than one centred rectangle
+        pw = w * 0.72
+        px = x + (w - pw) / 2
+        c.saveState()
+        c.setFillColorRGB(*ORANGE)
+        c.setFillAlpha(0.10)
+        c.roundRect(px + pw * 0.16, bottom - 18, pw, h, 4, stroke=0, fill=1)
+        c.restoreState()
+        _photo_tile(c, readers[0], px, bottom, pw, h, shadow=True)
         return
     if n == 2:
         main_w = (w - gap) * 0.62
@@ -752,27 +1010,34 @@ def _cover_hero(c, readers: list, x: float, bottom: float, w: float, h: float) -
 def _cover_meta(c, *, market: str, count: int, stock_at, generated: float) -> None:
     """The operational facts, compact and at the foot. They have to be on the
     cover; they do not have to be the cover."""
-    y = 150.0
     cols = [
-        (f"{market.upper()} CATALOGUE",
+        ("box", f"{market.upper()} CATALOGUE",
          f"{count:,} product{'' if count == 1 else 's'}"),
-        ("PREPARED", time.strftime("%d %b %Y", time.localtime(generated))),
-        ("STOCK UPDATED",
+        ("calendar", "PREPARED",
+         time.strftime("%d %b %Y", time.localtime(generated))),
+        ("clock", "STOCK UPDATED",
          (time.strftime("%d %b %Y  ·  %H:%M", time.localtime(float(stock_at)))
           if stock_at else "not available")),
     ]
-    w = (PAGE_W - 2 * M) / 3
-    for i, (label, value) in enumerate(cols):
-        x = M + i * w
+    #: three quiet cards rather than three columns of loose text — the same
+    #: height, but the band reads as one designed object
+    gap = 14.0
+    card_w = (PAGE_W - 2 * M - 2 * gap) / 3
+    card_h = 54.0
+    card_y = 118.0
+    for i, (icon, label, value) in enumerate(cols):
+        x = M + i * (card_w + gap)
+        _panel(c, x, card_y, card_w, card_h, PAPER, 3.0)
+        c.setFillColorRGB(*LINE)
+        c.rect(x, card_y, card_w, 0.6, stroke=0, fill=1)
+        _icon(c, icon, x + 20, card_y + card_h - 20, 9.0)
         c.setFillColorRGB(*GREY)
         #: a point and a half on each of these: the band stays the same size,
         #: but it is read on a phone as often as on a desk
-        _tracked(c, x, y, label, "Helvetica-Bold", 7.2, 1.4)
+        _tracked(c, x + 36, card_y + card_h - 24, label, "Helvetica-Bold", 7.2, 1.4)
         c.setFont("Helvetica-Bold", 11.5)
         c.setFillColorRGB(*INK)
-        c.drawString(x, y - 18, value[:38])
-    c.setFillColorRGB(*LINE)
-    c.rect(M, 108, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
+        c.drawString(x + 20, card_y + 14, value[:34])
     c.setFont("Helvetica", 8.2)
     c.setFillColorRGB(0.44, 0.46, 0.50)
     ty = 92.0
@@ -1062,7 +1327,7 @@ def _specs(c, rows: list[tuple[str, str]], x: float, top: float, w: float,
         c.setFillColorRGB(*INK)
         vy = y - 6
         for vline in vlines:
-            c.drawString(x + label_w, vy, vline)
+            c.drawRightString(x + w, vy, vline)
             vy -= 10
         y -= row_h
         band += 1
@@ -1078,21 +1343,22 @@ def _availability(c, item: dict, *, stock_at, stock_is_known: bool,
     _panel(c, M, by, PAGE_W - 2 * M, band_h, FAINT, 3.0)
     c.setFillColorRGB(*ORANGE)
     c.rect(M, by, 2.6, band_h, stroke=0, fill=1)
+    _icon(c, "check", M + 26, by + band_h - 23, 8.5)
     c.setFillColorRGB(*GREY)
-    _tracked(c, M + 18, by + band_h - 20, "AVAILABLE NOW", "Helvetica-Bold", 7.0, 1.6)
+    _tracked(c, M + 40, by + band_h - 20, "AVAILABLE NOW", "Helvetica-Bold", 7.0, 1.6)
     headline, _ = stock_sentence(item.get("available"), stock_is_known)
     figure, _, unit = headline.partition(" ")
     if unit:
         c.setFont("Helvetica-Bold", 25)
         c.setFillColorRGB(*INK)
-        c.drawString(M + 18, by + 18, figure)
+        c.drawString(M + 26, by + 18, figure)
         c.setFont("Helvetica", 9.4)
         c.setFillColorRGB(*GREY)
-        c.drawString(M + 24 + stringWidth(figure, "Helvetica-Bold", 25), by + 18, unit)
+        c.drawString(M + 32 + stringWidth(figure, "Helvetica-Bold", 25), by + 18, unit)
     else:
         c.setFont("Helvetica-Bold", 14)
         c.setFillColorRGB(*INK)
-        c.drawString(M + 18, by + 20, headline)
+        c.drawString(M + 26, by + 20, headline)
     if show_date:
         c.setFillColorRGB(*GREY)
         _tracked(c, PAGE_W - M - 18 - _tracked_width("STOCK UPDATED", "Helvetica",
@@ -1141,10 +1407,17 @@ def _product_page(c, item: dict, photos: list[bytes], *, page_no: int, options: 
     #: the gallery is what is left over, inside its own bounds — so a sparse
     #: product fills the page with its photographs instead of leaving a hole,
     #: and a product with twelve specifications still prints all twelve
-    spare = top - (plan["height"] + 12 + need + floor) - 26
+    #: what the product's own words support, under its name — and only if
+    #: the page can seat it without taking the pictures below their floor
+    features = product_features(item) if options.get("specs", True) else []
+    feat_h = FEATURE_ROW_H + 14 if features else 0.0
+    spare = top - (plan["height"] + 12 + feat_h + need + floor) - 26
     #: a short record keeps the gallery generous; a long one is allowed to
     #: take a further 44pt from it rather than lose its last sentences
-    lowest = GALLERY_FLOOR if need > 210 else GALLERY_MIN
+    lowest = GALLERY_FLOOR if (need > 210 or features) else GALLERY_MIN
+    if features and spare < GALLERY_FLOOR:
+        features, feat_h = [], 0.0           # content first, badges second
+        spare = top - (plan["height"] + 12 + need + floor) - 26
     gallery_h = max(lowest, min(GALLERY_MAX, spare))
     if not readers:
         #: with no photograph there is nothing to grow: a half-page of empty
@@ -1155,6 +1428,9 @@ def _product_page(c, item: dict, photos: list[bytes], *, page_no: int, options: 
     y = top - gallery_h - 26
     y = _identity(c, plan, M, y)
     y -= 12
+    if features:
+        _feature_row(c, features, M, y, content_w)
+        y -= feat_h
 
     band_h = max(0.0, y - floor)
     if two_up:

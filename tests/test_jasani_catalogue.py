@@ -1684,7 +1684,9 @@ def test_a_sparse_product_fills_the_page_rather_than_leaving_a_hole(monkeypatch)
          cartonVolume="0.24", hsCode="1234", barcode="999")
     loaded = rec.pages[0][3]
     assert sparse > loaded, "a page with little to say gives the room to the picture"
-    assert cat.GALLERY_MIN <= loaded <= sparse <= cat.GALLERY_MAX
+    #: the floor, not GALLERY_MIN: a loaded page may also be carrying a
+    #: feature row, and the gallery is what yields for it
+    assert cat.GALLERY_FLOOR <= loaded <= sparse <= cat.GALLERY_MAX
 
 
 def test_twelve_specifications_all_print_on_the_one_page():
@@ -2008,3 +2010,125 @@ def test_the_cover_sets_the_full_hierarchy():
     for line in ("ELITE MARCOM", "CORPORATE GIFTS", "PRODUCT CATALOGUE",
                  "Saudi Arabia", "KSA CATALOGUE", "PREPARED", "STOCK UPDATED"):
         assert line in text, line
+
+
+# ---------------- the feature row says only what the product says ----------
+
+def _feat(**kw) -> list[tuple[str, str]]:
+    item = {"id": "1", "code": "A", "name": "Item", "available": 5,
+            "availableKnown": True}
+    item.update(kw)
+    return cat.product_features(cat.to_dto(item))
+
+
+def test_the_maglite_features_are_the_ones_its_own_words_support():
+    assert _feat(
+        name="Maglite 5K - 5000 mAh Magnetic Wireless Power Bank - Black",
+        description=("15W wireless charging and PD 22.5W fast charging over "
+                     "USB-C for any MagSafe-compatible phone."),
+        capacity="5000 mAh") == [
+        ("magnet", "MagSafe compatible"), ("wireless", "15W wireless"),
+        ("bolt", "PD 22.5W"), ("battery", "5,000 mAh")]
+
+
+def test_a_product_that_says_nothing_specific_gets_no_badges():
+    """The row is omitted rather than filled with guesses."""
+    assert _feat(name="Product Number 004",
+                 description="A well-made corporate gift suited to events.") == []
+    assert _feat(name="Tote Bag", description="") == []
+
+
+def test_a_badge_is_never_inferred_from_a_category_or_a_brand():
+    """Being a power bank is not a claim about wireless charging."""
+    feats = _feat(name="Pocket Power Bank", brand="MagSafe Co",
+                  categories=["Power Banks", "Wireless Chargers"],
+                  description="A compact power bank for travel.")
+    assert feats == [], feats
+
+
+def test_a_negated_sentence_is_not_a_feature():
+    """"Dishwasher safe parts are not applicable" says the opposite."""
+    labels = [t for _, t in _feat(
+        name="Bottle", description="Dishwasher safe parts are not applicable. "
+                                   "Holds 500 ml.")]
+    assert "Dishwasher safe" not in labels
+    assert "500 ml" in labels
+
+
+def test_one_fact_is_not_shown_twice():
+    """"PD 22.5W" and "22.5W charging" are the same thing; the second slot
+    goes to something the row is not yet saying."""
+    labels = [t for _, t in _feat(
+        name="Charger", description="PD 22.5W fast charging. 22.5W charging "
+                                    "over USB-C. 5000 mAh cell.")]
+    assert labels.count("PD 22.5W") == 1
+    assert "22.5W charging" not in labels
+    assert "5,000 mAh" in labels
+
+
+def test_at_most_four_badges():
+    many = _feat(name="Everything", capacity="500 ml",
+                 material="Stainless steel",
+                 description=("Double-walled and dishwasher safe, BPA free, "
+                              "keeps drinks hot for 12 hours, laser engraved, "
+                              "supplied in a gift box, USB-C, bluetooth, "
+                              "waterproof, solar, recycled."))
+    assert len(many) <= cat.MAX_FEATURES == 4
+
+
+def test_the_feature_row_is_drawn_and_labelled():
+    text = cat.extract_text(cat.build([{
+        "id": "1", "code": "ITGL 1455",
+        "name": "Maglite 5K - 5000 mAh Magnetic Wireless Power Bank - Black",
+        "description": "15W wireless charging over USB-C for MagSafe phones.",
+        "capacity": "5000 mAh", "available": 42, "availableKnown": True}],
+        {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True))
+    for label in ("MagSafe compatible", "15W wireless", "5,000 mAh"):
+        assert label in text, label
+
+
+def test_the_feature_row_never_costs_a_specification(monkeypatch):
+    """Content first: the badges are dropped before a spec row is."""
+    item = {"id": "1", "code": "A",
+            "name": "Maglite 5K - 5000 mAh Magnetic Wireless Power Bank - Black",
+            "description": NAPIER_BODY + " 15W wireless charging over USB-C.",
+            "brand": "Giftology", "color": "Black", "material": "ABS",
+            "size": "104 mm", "capacity": "5000 mAh", "unitsPerCarton": 100,
+            "cartonDimensions": "44 x 32 x 26 cm", "cartonWeight": "14.2",
+            "cartonVolume": "0.08", "hsCode": "8507.60", "barcode": "629110821",
+            "categories": ["Power Banks"], "options": ["Black", "White"],
+            "available": 42, "availableKnown": True}
+    text = cat.extract_text(cat.build([item], {}, market="ksa", title="T",
+                                      stock_at=STOCK_AT, stock_is_known=True))
+    for label in ("Brand", "Colour", "Material", "Size", "Capacity",
+                  "Units per carton", "Carton size", "Carton weight",
+                  "Carton volume", "HS code", "Barcode", "Category", "Options"):
+        assert label in text, label
+    assert "non-MagSafe smartphones." in text, "and the description is whole"
+    assert "Page 2" in text and "Page 3" not in text
+
+
+def test_a_feature_label_is_built_from_the_matched_text():
+    """Never a fixed string where the product gives a figure."""
+    assert ("battery", "3,350 mAh") in _feat(
+        name="Slim Pack", description="A 3350 mAh pocket battery.")
+    assert ("droplet", "750 ml") in _feat(
+        name="Flask", description="A 750 ml vacuum flask.")
+
+
+def test_the_cover_band_and_availability_carry_their_marks(snapshot):
+    """Drawn vector icons, so nothing can go missing from a deploy."""
+    marks: list[str] = []
+    real = cat._icon
+
+    def watched(c, name, cx, cy, r):
+        marks.append(name)
+        real(c, name, cx, cy, r)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cat, "_icon", watched)
+        cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 2,
+                    "availableKnown": True}], {}, market="ksa", title="T",
+                  stock_at=STOCK_AT, stock_is_known=True)
+    assert {"box", "calendar", "clock"} <= set(marks), "the cover's three cards"
+    assert "check" in marks, "the availability mark"
