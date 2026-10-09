@@ -599,7 +599,8 @@ def test_an_unknown_quantity_says_so_rather_than_printing_zero():
     pdf = cat.build([{"id": "1", "code": "A", "name": "Mystery", "available": 0}],
                     {}, market="ksa", title="T", stock_at=None, stock_is_known=False)
     text = cat.extract_text(pdf)
-    assert "Availability unavailable" in text
+    assert "AVAILABILITY UNAVAILABLE" in text
+    assert "AVAILABLE NOW" not in text, "and it must not also claim to be"
     assert "0 units" not in text
     assert "synchronisation date unavailable" in text
 
@@ -608,6 +609,159 @@ def test_zero_stock_is_printed_as_zero_when_it_really_is_zero():
     pdf = cat.build([{"id": "1", "code": "A", "name": "Sold Out", "available": 0}],
                     {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
     assert "0 units" in cat.extract_text(pdf)
+
+
+# ---------------- the availability label is the verdict ----------------
+#
+# Production review found "AVAILABLE NOW" over "0 units" on ITWC 1302,
+# Maglite 5K - Navy Blue: a genuinely empty product, correctly reported as
+# empty, under a label that had been written once and never read the figures.
+# A reader takes the label away from the page, so the label is the bug.
+
+
+@pytest.mark.parametrize("available,known,state", [
+    (7, True, "in"),
+    (1, True, "in"),
+    (1248, True, "in"),
+    (0, True, "out"),
+    (0.4, True, "out"),            # prints "0 units", so it is not available
+    (0.6, True, "in"),             # prints "1 units"
+    (0, False, "unknown"),
+    (7, False, "unknown"),         # a figure nobody vouches for is no figure
+    (None, True, "unknown"),
+    ("", True, "unknown"),
+    ("n/a", True, "unknown"),
+])
+def test_the_three_availability_states_are_read_from_the_figures(available, known, state):
+    assert cat.stock_state(available, known) == state
+
+
+@pytest.mark.parametrize("available,known", [
+    (7, True), (0, True), (0.4, True), (1248, True),
+    (0, False), (None, True), ("n/a", True),
+])
+def test_the_state_and_the_printed_quantity_cannot_disagree(available, known):
+    """The whole of the defect in one assertion: whatever the band says in
+    words must be what its number says. `stock_state` reads the integer
+    `stock_sentence` would print, not the raw value, which is why a quantity
+    of 0.4 is OUT OF STOCK rather than AVAILABLE NOW over a printed nought."""
+    state = cat.stock_state(available, known)
+    headline = cat.stock_sentence(available, known)[0]
+    if state == "unknown":
+        assert headline == "Availability unavailable"
+        return
+    figure = headline.partition(" ")[0]
+    assert headline.endswith(" units"), headline
+    n = int(figure.replace(",", ""))
+    assert (n > 0) == (state == "in"), (state, headline)
+
+
+def test_a_genuinely_empty_product_is_not_labelled_available(snapshot):
+    """The reported page, rebuilt."""
+    pdf = cat.build([{"id": "1", "code": "ITWC 1302",
+                      "name": "Maglite 5K - Navy Blue", "available": 0,
+                      "availableKnown": True}], {}, market="ksa", title="T",
+                    stock_at=STOCK_AT, stock_is_known=True)
+    text = cat.extract_text(pdf)
+    assert "OUT OF STOCK" in text
+    assert "AVAILABLE NOW" not in text, "the contradiction this corrects"
+    assert "0 units" in text, "the real figure still prints"
+    #: and the market's synchronisation date is untouched by any of it
+    assert "STOCK UPDATED" in text
+    assert time.strftime("%d %B %Y", time.localtime(STOCK_AT)) in text
+
+
+def test_all_three_availability_states_on_one_document():
+    """One PDF, one market, three products — the three states the band can
+    be in — read back out of the finished document's text."""
+    pdf = cat.build([
+        {"id": "1", "code": "ITGL 1000", "name": "In Stock", "available": 1248,
+         "availableKnown": True},
+        {"id": "2", "code": "ITWC 1302", "name": "Maglite 5K - Navy Blue",
+         "available": 0, "availableKnown": True},
+        {"id": "3", "code": "ITGL 1002", "name": "Not Synchronised",
+         "available": 0, "availableKnown": False},
+    ], {}, market="ksa", title="T", stock_at=STOCK_AT, stock_is_known=True)
+    text = cat.extract_text(pdf)
+
+    #: each label exactly once, on its own product's page
+    assert text.count("AVAILABLE NOW") == 1
+    assert text.count("OUT OF STOCK") == 1
+    assert text.count("AVAILABILITY UNAVAILABLE") == 1
+
+    #: and the quantities that belong with them
+    assert "1,248 units" in text, "known positive"
+    assert "0 units" in text, "known zero"
+    assert text.count("units") == 2, "the unknown one prints no quantity"
+    assert cat.STOCK_UNKNOWN_FIGURE in text
+
+    #: each label and its figure are on the same page, not merely both
+    #: somewhere in the document — the code is one drawn string, while the
+    #: name is set in parts, so the code is what a page is found by
+    pages = {code: chunk for code, chunk in
+             ((c, text.split(c, 1)[1].split("www.elitemarcom.com", 1)[0])
+              for c in ("ITGL 1000", "ITWC 1302", "ITGL 1002"))}
+    assert "AVAILABLE NOW" in pages["ITGL 1000"]
+    assert "1,248 units" in pages["ITGL 1000"]
+    assert "OUT OF STOCK" in pages["ITWC 1302"]
+    assert "0 units" in pages["ITWC 1302"]
+    assert "AVAILABLE NOW" not in pages["ITWC 1302"], "the reported defect"
+    assert "AVAILABILITY UNAVAILABLE" in pages["ITGL 1002"]
+    assert "units" not in pages["ITGL 1002"]
+    assert cat.STOCK_UNKNOWN_FIGURE in pages["ITGL 1002"]
+
+    #: the market timestamp is on all three product pages, unchanged — and a
+    #: fourth time on the approved cover's own metadata band
+    assert text.count("STOCK UPDATED") == 4
+    assert time.strftime("%d %B %Y", time.localtime(STOCK_AT)) in text
+
+
+def test_an_unknown_quantity_prints_no_number_at_all():
+    """Not a nought, and not the raw figure either — a quantity nobody
+    reported is the one case where there is nothing honest to print."""
+    pdf = cat.build([{"id": "1", "code": "A", "name": "Not Synchronised",
+                      "available": 99, "availableKnown": False}], {},
+                    market="ksa", title="T", stock_at=STOCK_AT,
+                    stock_is_known=True)
+    text = cat.extract_text(pdf)
+    assert "AVAILABILITY UNAVAILABLE" in text
+    assert "99" not in text, "a figure the sync never confirmed"
+    assert "units" not in text, "and no quantity of any kind"
+    assert cat.STOCK_UNKNOWN_FIGURE in text
+    #: the figure's own place carries words, never a nought. The market's
+    #: synchronisation date is a different fact and still prints.
+    between = text.split("AVAILABILITY UNAVAILABLE", 1)[1]
+    assert between.split("STOCK UPDATED", 1)[0].strip() == cat.STOCK_UNKNOWN_FIGURE
+    assert "STOCK UPDATED" in between
+
+
+@pytest.mark.parametrize("available,known,mark", [
+    (7, True, "check"),
+    (0, True, "cross"),
+    (0, False, "dash"),
+])
+def test_every_state_draws_its_own_mark(available, known, mark, snapshot):
+    """A tick beside OUT OF STOCK is the same contradiction as the words, so
+    the mark is chosen from the same verdict as the label."""
+    assert set(cat._STOCK_ICON) == set(cat.STOCK_LABEL) == {"in", "out", "unknown"}
+    assert len(set(cat._STOCK_ICON.values())) == 3, "three states, three marks"
+
+    marks: list[str] = []
+    real = cat._icon
+
+    def watched(c, name, cx, cy, r):
+        marks.append(name)
+        real(c, name, cx, cy, r)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cat, "_icon", watched)
+        cat.build([{"id": "1", "code": "A", "name": "Item",
+                    "available": available, "availableKnown": known}], {},
+                  market="ksa", title="T", stock_at=STOCK_AT,
+                  stock_is_known=True)
+    assert mark in marks, (mark, marks)
+    for other in set(cat._STOCK_ICON.values()) - {mark}:
+        assert other not in marks, f"{other} does not belong on this page"
 
 
 def test_a_product_the_stock_sync_passed_over_prints_as_unavailable():
@@ -625,9 +779,10 @@ def test_a_product_the_stock_sync_passed_over_prints_as_unavailable():
     text = cat.extract_text(pdf)
     assert "7 units" in text
     assert "4 units" in text
-    assert "Availability unavailable" in text
+    assert "AVAILABILITY UNAVAILABLE" in text
     #: and only the one product, not all three
-    assert text.count("Availability unavailable") == 1
+    assert text.count("AVAILABILITY UNAVAILABLE") == 1
+    assert text.count("AVAILABLE NOW") == 2, "the two that really are"
 
 
 def test_the_stock_date_is_the_sync_not_the_moment_of_generation():
@@ -915,7 +1070,10 @@ def test_a_product_the_stock_sync_skipped_stays_unknown(tmp_path, monkeypatch):
     text = cat.extract_text(pdf_for(["a", "b", "c"]))
     assert "12 units" in text
     assert "0 units" in text, "a real zero is printed as zero"
-    assert "Availability unavailable" in text, "an unknown one is not"
+    assert "AVAILABILITY UNAVAILABLE" in text, "an unknown one is not"
+    #: and each of the three is labelled as what it is
+    assert text.count("AVAILABLE NOW") == 1, "only the counted one"
+    assert text.count("OUT OF STOCK") == 1, "only the genuinely empty one"
 
 
 def test_the_merge_marks_only_the_products_the_supplier_answered_for():

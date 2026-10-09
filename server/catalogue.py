@@ -207,6 +207,35 @@ def stock_sentence(available, known: bool) -> tuple[str, str]:
     return f"{n} units", ""
 
 
+#: The three answers the availability band may give, and the only three.
+#: `AVAILABLE_NOW` over `0 units` is what a reader takes away from the page,
+#: and it is wrong — a label and the figure beneath it must be one statement.
+STOCK_LABEL = {"in": "AVAILABLE NOW",
+               "out": "OUT OF STOCK",
+               "unknown": "AVAILABILITY UNAVAILABLE"}
+#: What stands where the figure would, when there is no figure to print. Not
+#: a number, because an unknown quantity printed as 0 is the same lie read
+#: from the other direction.
+STOCK_UNKNOWN_FIGURE = "Not reported"
+
+
+def stock_state(available, known: bool) -> str:
+    """``"in"`` | ``"out"`` | ``"unknown"`` — one reading of the figures that
+    the label, the mark and the quantity all take, so they cannot disagree.
+
+    The verdict is read off the integer `_num` would **print**, not the raw
+    value, because that is the number on the page: a quantity of 0.4 prints
+    as "0 units" and has to say OUT OF STOCK rather than AVAILABLE NOW.
+    """
+    if not known:
+        return "unknown"
+    try:
+        n = int(round(float(available)))
+    except (TypeError, ValueError):
+        return "unknown"                 # exactly when `_num` prints nothing
+    return "in" if n > 0 else "out"
+
+
 def when(ts) -> str:
     if not ts:
         return ""
@@ -895,6 +924,21 @@ def _icon(c, name: str, cx: float, cy: float, r: float) -> None:
         p.lineTo(cx - u * 0.08, cy - u * 0.36)
         p.lineTo(cx + u * 0.46, cy + u * 0.38)
         c.drawPath(p, stroke=1, fill=0)
+    elif name == "cross":
+        #: out of stock. A tick beside "OUT OF STOCK" is the same
+        #: contradiction as the words, so the mark changes with them.
+        c.circle(cx, cy, u * 0.95, stroke=1, fill=0)
+        c.setStrokeColorRGB(*ORANGE)
+        c.setLineWidth(max(1.1, r * 0.14))
+        c.line(cx - u * 0.36, cy - u * 0.36, cx + u * 0.36, cy + u * 0.36)
+        c.line(cx - u * 0.36, cy + u * 0.36, cx + u * 0.36, cy - u * 0.36)
+    elif name == "dash":
+        #: nothing is known. A bar rather than a cross, because the supplier
+        #: did not say empty, it said nothing.
+        c.circle(cx, cy, u * 0.95, stroke=1, fill=0)
+        c.setStrokeColorRGB(*ORANGE)
+        c.setLineWidth(max(1.1, r * 0.14))
+        c.line(cx - u * 0.4, cy, cx + u * 0.4, cy)
     elif name == "brand":
         c.circle(cx, cy, u * 0.92, stroke=1, fill=0)
         c.setFillColorRGB(*ORANGE)
@@ -1221,31 +1265,48 @@ def _specs(c, rows: list[tuple[str, str]], x: float, top: float, w: float,
     return y
 
 
+#: Which mark stands beside each of the three labels.
+_STOCK_ICON = {"in": "check", "out": "cross", "unknown": "dash"}
+
+
 def _availability(c, item: dict, *, stock_at, stock_is_known: bool,
                   show_date: bool) -> None:
     """Pinned above the footer so every page in the document agrees, and read
-    as part of the catalogue rather than stamped on it."""
+    as part of the catalogue rather than stamped on it.
+
+    The label is not a heading, it is the **verdict**, so it is read from the
+    same figures as the number beneath it. The band used to print a fixed
+    "AVAILABLE NOW" over whatever `stock_sentence` returned, which on a
+    genuinely empty product (ITWC 1302, Maglite 5K - Navy Blue) said
+    "AVAILABLE NOW / 0 units" — two statements, one page, contradicting each
+    other. There are three states and each one gets its own label, its own
+    mark and its own treatment of the quantity.
+    """
     band_h = 74.0
     by = 64.0
+    state = stock_state(item.get("available"), stock_is_known)
     _panel(c, M, by, PAGE_W - 2 * M, band_h, FAINT, 3.0)
     c.setFillColorRGB(*ORANGE)
     c.rect(M, by, 2.6, band_h, stroke=0, fill=1)
-    _icon(c, "check", M + 26, by + band_h - 23, 8.5)
+    _icon(c, _STOCK_ICON[state], M + 26, by + band_h - 23, 8.5)
     c.setFillColorRGB(*GREY)
-    _tracked(c, M + 40, by + band_h - 20, "AVAILABLE NOW", "Helvetica-Bold", 7.0, 1.6)
-    headline, _ = stock_sentence(item.get("available"), stock_is_known)
-    figure, _, unit = headline.partition(" ")
-    if unit:
+    _tracked(c, M + 40, by + band_h - 20, STOCK_LABEL[state],
+             "Helvetica-Bold", 7.0, 1.6)
+    if state == "unknown":
+        #: no number at all — a quantity nobody reported is not a nought,
+        #: and printing one is the same mistake the other way round
+        c.setFont("Helvetica-Bold", 14)
+        c.setFillColorRGB(*INK)
+        c.drawString(M + 26, by + 20, STOCK_UNKNOWN_FIGURE)
+    else:
+        figure, _, unit = stock_sentence(item.get("available"),
+                                         stock_is_known)[0].partition(" ")
         c.setFont("Helvetica-Bold", 25)
         c.setFillColorRGB(*INK)
         c.drawString(M + 26, by + 18, figure)
         c.setFont("Helvetica", 9.4)
         c.setFillColorRGB(*GREY)
         c.drawString(M + 32 + stringWidth(figure, "Helvetica-Bold", 25), by + 18, unit)
-    else:
-        c.setFont("Helvetica-Bold", 14)
-        c.setFillColorRGB(*INK)
-        c.drawString(M + 26, by + 20, headline)
     if show_date:
         c.setFillColorRGB(*GREY)
         _tracked(c, PAGE_W - M - 18 - _tracked_width("STOCK UPDATED", "Helvetica",

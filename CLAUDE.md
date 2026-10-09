@@ -314,6 +314,25 @@ documentation). Non-negotiable rules from it:
     product: the order of preference is the whole description, then all the
     specifications, then readable type, then a moderately smaller gallery,
     and only then the knife.
+  - **The availability band's label is the verdict, not a heading.** It used
+    to be a fixed "AVAILABLE NOW" drawn above whatever `stock_sentence`
+    returned, so a genuinely empty product printed "AVAILABLE NOW / 0 units"
+    — two statements on one page contradicting each other, which production
+    review found on ITWC 1302, Maglite 5K - Navy Blue. `stock_state` is now
+    the one reading of the figures that the label (`STOCK_LABEL`), the mark
+    (`_STOCK_ICON`) and the quantity all take: **in** → AVAILABLE NOW and the
+    figure, **out** → OUT OF STOCK and the real nought, **unknown** →
+    AVAILABILITY UNAVAILABLE and `STOCK_UNKNOWN_FIGURE` ("Not reported")
+    where the number would be, because a quantity nobody reported is not a
+    nought and printing one is the same lie read from the other side. The
+    verdict is taken from the integer `_num` would **print**, not the raw
+    value, so a quantity of 0.4 prints "0 units" under OUT OF STOCK rather
+    than claiming to be available. The mark moves with the words — a tick
+    beside OUT OF STOCK is the same contradiction as the label — so `_icon`
+    gained `cross` and `dash`. Nothing else in the band moved: the panel, the
+    orange rule, the 74pt height, the type sizes and the STOCK UPDATED
+    timestamp are as they were, and a known-positive page is byte-identical
+    to before the correction.
   - **The feature row is the only part of the page that could lie, so it is
     the most tightly held.** `product_features` reads the sanitized DTO's
     name, description and the material/size/capacity specifications — and
