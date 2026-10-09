@@ -126,12 +126,16 @@
     var text = node("div", "cv-card__text");
     if (item.code) text.appendChild(node("span", "cv-card__code", item.code));
     text.appendChild(node("span", "cv-card__name", item.name || "Product"));
-    if (item.stockText) {
-      var low = item.known && typeof item.qty === "number" &&
+    if (item.stockLabel) {
+      /* The server decided what the quantity means; this prints it. The
+         label is a plain text node so it takes the line's own small grey
+         type, and the figure stays in the <b> that carries the ink colour
+         and the low-stock accent. */
+      var low = item.stockState === "in" && typeof item.qty === "number" &&
                 item.qty > 0 && item.qty <= state.lowStock;
       var line = node("span", "cv-card__stock" + (low ? " is-low" : ""));
-      var qty = node("b", null, item.stockText);
-      line.appendChild(qty);
+      line.appendChild(document.createTextNode(item.stockLabel + " · "));
+      line.appendChild(node("b", null, item.stockFigure || ""));
       if (low) line.appendChild(node("span", null, " · low stock"));
       text.appendChild(line);
     }
@@ -245,10 +249,14 @@
     var side = node("div");
     if (item.code) side.appendChild(node("p", "cv-d-eyebrow", item.code));
     side.appendChild(node("h2", "cv-d-name", item.name || "Product"));
-    if (item.stockText) {
+    if (item.stockLabel) {
+      /* Label then figure, the order the PDF page uses. A generic word was
+         once appended after the figure, which turned an empty product and
+         an unanswered one into sentences that contradicted themselves. The
+         server decides the words now; nothing here is written by hand. */
       var box = node("div", "cv-d-stock");
-      box.appendChild(node("strong", null, item.stockText));
-      box.appendChild(node("span", null, "available"));
+      box.appendChild(node("span", null, item.stockLabel));
+      box.appendChild(node("strong", null, item.stockFigure || ""));
       side.appendChild(box);
     }
     if (item.desc) side.appendChild(node("p", "cv-d-desc", item.desc));

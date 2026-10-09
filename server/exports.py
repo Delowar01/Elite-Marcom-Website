@@ -525,8 +525,21 @@ def product_sheet_pdf(item: dict, images: list[bytes], *, currency: str = "") ->
     c.drawString(M, y, meta)
     y -= 20
 
-    available = int(item.get("available", 0) or 0)
-    chips = ["Currently out of stock" if available <= 0 else "In stock"]
+    #: Unknown is not zero. The sheet read `available <= 0` and therefore
+    #: told an admin "Currently out of stock" about a product the stock
+    #: synchronisation had simply never answered for — the one reading the
+    #: catalogue page is careful never to make. `catalogue.stock_state` is
+    #: that reading, and this is the third surface to go through it.
+    from .catalogue import stock_state
+
+    #: imported inside the function because `catalogue` draws through this
+    #: module, so a module-level import would be a cycle
+    known = item.get("availableKnown")
+    state = stock_state(item.get("available"),
+                        True if known is None else bool(known))
+    chips = [{"in": "In stock",
+              "out": "Currently out of stock",
+              "unknown": "Availability not reported"}[state]]
     if item.get("incoming"):
         chips.append("More arriving " + str(item.get("incomingDate") or "soon") + " (estimated)")
     c.setFont("Helvetica", 7.6)

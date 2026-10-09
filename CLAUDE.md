@@ -332,7 +332,12 @@ documentation). Non-negotiable rules from it:
     gained `cross` and `dash`. Nothing else in the band moved: the panel, the
     orange rule, the 74pt height, the type sizes and the STOCK UPDATED
     timestamp are as they were, and a known-positive page is byte-identical
-    to before the correction.
+    to before the correction. `stock_state` is now the one reading on all
+    three surfaces — the catalogue page, the shared web viewer and the admin
+    product sheet, whose chips are In stock / Currently out of stock /
+    **Availability not reported**. The sheet used to judge `available <= 0`,
+    which told an admin a product was out of stock when the synchronisation
+    had simply never answered for it.
   - **The feature row is the only part of the page that could lie, so it is
     the most tightly held.** `product_features` reads the sanitized DTO's
     name, description and the material/size/capacity specifications — and
@@ -340,7 +345,24 @@ documentation). Non-negotiable rules from it:
     A badge appears only when the product's own words say so, its label is
     built from the matched text ("15W wireless", "5,000 mAh") rather than
     written in the table, and nothing is ever inferred from a category or a
-    brand: being in Power Banks is not a claim about wireless charging. Each
+    brand: being in Power Banks is not a claim about wireless charging.
+    **A figure is a figure, however it is punctuated**, and every numeric
+    rule is built from one pattern (`_figure_before`) and one normalization
+    (`_fig`) so a comma cannot make one badge right and another wrong. The
+    old `\b(\d{3,6})\s*mah\b` could not match across a separator: on a real
+    description reading "The 5,000 mAh capacity …" the scan failed at the
+    "5" and matched the "000" three characters later, so ITWC 1302 told a
+    customer "0 mAh" — and `\b(\d{1,3})\s*w\b` turned "1,500 W" into
+    "500W charging", a lower claim about a real product. `_FIGURE` is three
+    branches and the order is the fix: **grouped** first so the whole number
+    wins at the leftmost position; **four digits or more**, which cannot be
+    a group tail and so needs no guard ("USB 3.0 and a 5000 mAh cell" still
+    matches); and a **short** one-to-three-digit run, refused directly after
+    a digit or a digit and a separator, so the tail of a malformed "5,00" is
+    no badge rather than a wrong one. `_fig` then prints it one way —
+    grouped in thousands, the fraction as written, no trailing ".0" — so
+    "5000" and "5,000" and "5 000" are one badge and a reader comparing two
+    products is not reading two conventions. Each
     rule belongs to a **family** that fires once, because "PD 22.5W" and
     "22.5W charging" are one fact twice and the second slot is better spent.
     A match is rejected when a negation stands near it **in the same
@@ -567,6 +589,22 @@ documentation). Non-negotiable rules from it:
     `catalogue.to_dto`, and `assert_snapshot_price_free` is the second line,
     exactly as `assert_price_free` is for the PDF. It names the field and
     never the figure.
+  - **Python decides what a quantity means; the browser prints it.** The
+    viewer drew `stockText` and then the word "available" after it, so an
+    empty product and one the supplier never answered for each read as a
+    sentence contradicting itself. `catalogue_share.stock_presentation`
+    returns `stockState` / `stockLabel` / `stockFigure` from
+    `catalogue.stock_state` and `STOCK_LABEL` — the PDF page's own reading,
+    not a second one written in JavaScript, because two sets of rounding and
+    threshold rules are two that can disagree in front of a client. A new
+    snapshot stores the three fields; an **older** share carries only `qty`
+    and `known`, which is all the function needs, so a link already sent
+    renders correctly without being regenerated and **without being
+    rewritten** — the frozen record is read to render, never edited to
+    render, and a test asserts the stored bytes are unchanged afterwards.
+    An unknown item's frozen figure stays in the snapshot and is dropped
+    from the *payload*: a stale number the browser never receives is one it
+    can never print.
   - **The link is the credential, so the database cannot hand one out.** Only
     `sha256(token)` is stored; the token is 128 bits from `secrets`, shown to
     the admin once, and in no log, audit entry or error message — the audit

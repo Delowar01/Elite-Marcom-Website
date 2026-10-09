@@ -718,10 +718,65 @@ def name_parts(name: str) -> tuple[str, str, str]:
 # category, a brand or a product's general kind — a "power bank" does not get
 # a wireless-charging badge for being a power bank.
 
-def _n(m, group: int = 1) -> str:
-    """The figure a match caught, without a trailing .0."""
-    v = m.group(group) or ""
-    return v[:-2] if v.endswith(".0") else v
+#: What a supplier may put between the thousands of a figure. A comma is the
+#: common one; `clean_text` turns a non-breaking space into a plain one but
+#: leaves a narrow no-break space alone, and "5 000" is simply how much of
+#: the world writes it.
+_GROUP_SEP = r"[,\u202f\u00a0 ]"
+
+#: One figure, however it is punctuated: "5000", "5,000", "5 000", "22.5",
+#: "1,000.5". Three branches, and the order and the guards are the whole of
+#: the correction:
+#:
+#: 1. the **grouped** form first, so a scan arriving at the "5" of "5,000"
+#:    takes the whole number instead of failing there and matching the "000"
+#:    three characters later — precisely how `\d{3,6}` turned a 5,000 mAh
+#:    power bank into a badge reading "0 mAh" on a customer document;
+#: 2. **four digits or more**, which cannot be the tail of a group, so it
+#:    needs no guard and "USB 3.0 and a 5000 mAh cell" still matches;
+#: 3. a **short** run of one to three digits, which *could* be a group tail,
+#:    so it is refused directly after a digit or after a digit and a
+#:    separator. That is what stops a malformed "5,00" or "5 00" from being
+#:    read as a number of its own — better no badge than a wrong one.
+_FIGURE = (r"\d{1,3}(?:" + _GROUP_SEP + r"\d{3})+(?:\.\d+)?"
+           r"|\d{4,}(?:\.\d+)?"
+           r"|(?<!\d)(?<!\d" + _GROUP_SEP + r")\d{1,3}(?:\.\d+)?")
+
+#: Where a figure may begin. `\b` keeps it out of the middle of a part
+#: number ("ITGL5000"), and the lookbehind keeps the scan from starting
+#: *inside* a figure: after a comma or a decimal point `\b` holds, so without
+#: it the tail of a malformed "5,00" would still be read as a number of its
+#: own. A digit needs no mention — `\b` already refuses after one.
+_FIGURE_IN = r"\b(?<![.,])(" + _FIGURE + r")(?![\d,])"
+
+
+def _figure_before(unit: str, lead: str = "") -> str:
+    """A pattern catching one figure immediately before `unit`.
+
+    Every numeric rule is built from this, so a separator a supplier happens
+    to use cannot make one badge right and another wrong. `lead` is for a
+    rule whose figure follows a word rather than whitespace ("PD22.5W"),
+    where a word boundary would refuse the digit.
+    """
+    if lead:
+        return lead + "(" + _FIGURE + r")(?![\d,])\s*" + unit
+    return _FIGURE_IN + r"\s*" + unit
+
+
+def _fig(m, group: int = 1) -> str:
+    """A captured figure as the page should print it: grouped in thousands,
+    the fraction as the supplier wrote it, and no trailing ".0".
+
+    One normalization for every rule. "5000" and "5,000" and "5 000" are the
+    same number and must produce the same badge, because a reader comparing
+    two products should not be reading two conventions.
+    """
+    raw = re.sub(_GROUP_SEP, "", m.group(group) or "")
+    whole, _, frac = raw.partition(".")
+    frac = frac.rstrip("0")
+    if not whole.isdigit():
+        return ""
+    return f"{int(whole):,}.{frac}" if frac else f"{int(whole):,}"
 
 
 #: (pattern, icon, label, family). The pattern is searched in the product's
@@ -731,22 +786,22 @@ def _n(m, group: int = 1) -> str:
 #: Order is priority order, most product-defining first.
 FEATURE_RULES: tuple[tuple[str, str, object, str], ...] = (
     (r"\bmagsafe\b", "magnet", "MagSafe compatible", "magnet"),
-    (r"\b(\d{1,3}(?:\.\d)?)\s*w\b[^.]{0,24}\bwireless\b"
-     r"|\bwireless\b[^.]{0,24}?\b(\d{1,3}(?:\.\d)?)\s*w\b",
-     "wireless", lambda m: f"{_n(m) if m.group(1) else _n(m, 2)}W wireless",
+    (_figure_before(r"w\b") + r"[^.]{0,24}\bwireless\b"
+     r"|\bwireless\b[^.]{0,24}?" + _figure_before(r"w\b"),
+     "wireless", lambda m: f"{_fig(m) if m.group(1) else _fig(m, 2)}W wireless",
      "wireless"),
     (r"\bwireless charg", "wireless", "Wireless charging", "wireless"),
-    (r"\bpd\s*(\d{1,3}(?:\.\d)?)\s*w\b", "bolt", lambda m: f"PD {_n(m)}W",
+    (_figure_before(r"w\b", lead=r"\bpd\s*"), "bolt", lambda m: f"PD {_fig(m)}W",
      "charge"),
-    (r"\b(\d{1,3}(?:\.\d)?)\s*w\b\s*(?:fast\s*)?charg", "bolt",
-     lambda m: f"{_n(m)}W charging", "charge"),
+    (_figure_before(r"w\b") + r"\s*(?:fast\s*)?charg", "bolt",
+     lambda m: f"{_fig(m)}W charging", "charge"),
     (r"\bfast charg", "bolt", "Fast charging", "charge"),
-    (r"\b(\d{3,6})\s*mah\b", "battery", lambda m: f"{int(_n(m)):,} mAh",
+    (_figure_before(r"mah\b"), "battery", lambda m: f"{_fig(m)} mAh",
      "battery"),
-    (r"\b(\d{2,5})\s*ml\b", "droplet", lambda m: f"{int(_n(m)):,} ml", "volume"),
+    (_figure_before(r"ml\b"), "droplet", lambda m: f"{_fig(m)} ml", "volume"),
     (r"\bdouble[- ]?wall(?:ed)?\b", "layers", "Double-walled", "build"),
     (r"\bstainless steel\b", "layers", "Stainless steel", "build"),
-    (r"\b(\d{1,2})\s*(?:hours|hrs?)\b", "clock", lambda m: f"{_n(m)} hours",
+    (_figure_before(r"(?:hours|hrs?)\b"), "clock", lambda m: f"{_fig(m)} hours",
      "time"),
     (r"\bip(\d{2})\b", "droplet", lambda m: f"IP{m.group(1)} rated", "water"),
     (r"\b(?:water[- ]?proof|waterproof)\b", "droplet", "Waterproof", "water"),

@@ -2337,6 +2337,142 @@ def test_the_maglite_features_are_the_ones_its_own_words_support():
         ("bolt", "PD 22.5W"), ("battery", "5,000 mAh")]
 
 
+# ---------------- a figure is a figure, however it is punctuated ----------
+#
+# Production review found "0 mAh" on ITWC 1302, Maglite 5K - Navy Blue. The
+# description read "The 5,000 mAh capacity provides reliable backup power",
+# and `\b(\d{3,6})\s*mah\b` could not match across the comma: the scan failed
+# at the "5" and matched the "000" three characters later, so a 5,000 mAh
+# power bank advertised zero capacity on a customer document. Every numeric
+# rule is now built from one figure pattern and one normalization.
+
+
+@pytest.mark.parametrize("written", [
+    "5,000", "5000", "5 000", "5\u00a0000", "5\u202f000",
+])
+def test_a_grouped_figure_reads_as_the_number_it_is(written):
+    """The reported defect, in every separator a supplier might use. NBSP is
+    included because `clean_text` turns it into a plain space and the narrow
+    one survives untouched — both must land on the same badge."""
+    feats = _feat(name="Power Bank",
+                  description=f"The {written} mAh capacity provides reliable "
+                              "backup power on the move.")
+    assert feats == [("battery", "5,000 mAh")], (written, feats)
+
+
+@pytest.mark.parametrize("text,wanted", [
+    ("A 5,000 mAh cell.", "5,000 mAh"),
+    ("A 5000 mAh cell.", "5,000 mAh"),
+    ("A 10,000 mAh cell.", "10,000 mAh"),
+    ("A 10000 mAh cell.", "10,000 mAh"),
+    ("A 2,500mAh cell.", "2,500 mAh"),
+    ("Holds 1,000 ml.", "1,000 ml"),
+    ("Holds 1000 ml.", "1,000 ml"),
+    ("Holds 750 ml.", "750 ml"),
+    ("A 22.5W charging base.", "22.5W charging"),
+    ("A 15W charging base.", "15W charging"),
+    ("A 15 W charging base.", "15W charging"),
+    ("A 1,500 W fast charging base.", "1,500W charging"),
+    ("PD 22.5W over USB-C.", "PD 22.5W"),
+    ("PD22.5W over USB-C.", "PD 22.5W"),
+    ("PD 1,500W over USB-C.", "PD 1,500W"),
+    ("Keeps drinks hot for 12 hours.", "12 hours"),
+    ("Burns for 1,200 hours.", "1,200 hours"),
+    ("Wireless 15W charging pad.", "15W wireless"),
+    ("Wireless 1,500W charging pad.", "1,500W wireless"),
+])
+def test_every_numeric_badge_prints_the_figure_the_text_carries(text, wanted):
+    labels = [t for _, t in _feat(name="Item", description=text)]
+    assert wanted in labels, (text, labels)
+
+
+@pytest.mark.parametrize("text", [
+    "The 5,000 mAh capacity provides reliable backup power.",
+    "A 1,000 ml flask.",
+    "A 1,500 W fast charging base.",
+    "Burns for 1,200 hours.",
+    "A 10,000 mAh cell.",
+])
+def test_no_badge_ever_prints_a_smaller_number_than_the_text(text):
+    """The failure mode, stated as a rule: the tail of a grouped figure must
+    never become a figure of its own. "1,500 W" produced "500W charging"
+    before this, which is a different and lower claim about a real product."""
+    import re as _re
+
+    biggest = max(int(g.replace(",", "").replace(" ", "").split(".")[0])
+                  for g in _re.findall(r"\d[\d, ]*(?:\.\d+)?", text))
+    for _, label in _feat(name="Item", description=text):
+        for found in _re.findall(r"\d[\d,]*", label):
+            assert int(found.replace(",", "")) == biggest, (label, text)
+
+
+@pytest.mark.parametrize("text", [
+    "Model ITGL5000 mAh listed.",      # a part number is not a capacity
+    "A 5,00 mAh bank.",                # malformed: better nothing than "0"
+    "A 5 00 ml flask.",
+])
+def test_a_figure_is_not_read_out_of_the_middle_of_something_else(text):
+    assert [t for _, t in _feat(name="Item", description=text)
+            if "mAh" in t or " ml" in t] == [], text
+
+
+def test_ordinary_prose_around_a_figure_still_matches():
+    """The guard that stops a partial match must not cost a real one: a
+    decimal earlier in the sentence, brackets, and a comma straight after."""
+    for text, wanted in (
+            ("USB 3.0 and a 5000 mAh cell.", "5,000 mAh"),
+            ("Capacity (5,000 mAh), in black.", "5,000 mAh"),
+            ("Rated 5,000 mAh; charges twice.", "5,000 mAh"),
+            ("Version 2 holds 1,000 ml.", "1,000 ml")):
+        labels = [t for _, t in _feat(name="Item", description=text)]
+        assert wanted in labels, (text, labels)
+
+
+def test_the_real_maglite_description_is_the_regression():
+    """The production record, as reviewed. Both ways of writing the capacity
+    give the same badge, and neither gives the one that was reported."""
+    for capacity in ("The 5,000 mAh capacity provides reliable backup power "
+                     "for a phone or a pair of earbuds.",
+                     "The 5000 mAh capacity provides reliable backup power "
+                     "for a phone or a pair of earbuds."):
+        feats = _feat(name="Maglite 5K - 5000 mAh Magnetic Wireless Power Bank",
+                      description=capacity)
+        labels = [t for _, t in feats]
+        assert "5,000 mAh" in labels, (capacity, labels)
+        assert "0 mAh" not in labels, "the reported defect"
+
+    #: and on the finished page, which is where a customer reads it
+    text = cat.extract_text(cat.build([{
+        "id": "1", "code": "ITWC 1302", "name": "Maglite 5K - Navy Blue",
+        "description": ("The 5,000 mAh capacity provides reliable backup "
+                        "power on the move."),
+        "available": 0, "availableKnown": True}], {}, market="ksa", title="T",
+        stock_at=STOCK_AT, stock_is_known=True))
+    assert "5,000 mAh" in text
+    #: "5,000 mAh" of course contains "0 mAh", so the assertion has to be
+    #: that no *standalone* figure of nought reached the page
+    assert not re.search(r"(?<![\d,])0 mAh", text), text
+
+
+def test_the_figure_normalizer_is_one_function_for_every_rule():
+    """Separately, because every badge's figure goes through it."""
+    import re as _re
+
+    def fig(written):
+        m = _re.search(cat._FIGURE_IN, f"a {written} x")
+        return cat._fig(m) if m else None
+
+    assert fig("5000") == "5,000"
+    assert fig("5,000") == "5,000"
+    assert fig("5 000") == "5,000"
+    assert fig("1,000,000") == "1,000,000"
+    assert fig("750") == "750"
+    assert fig("22.5") == "22.5"
+    assert fig("22.50") == "22.5", "a trailing nought is noise"
+    assert fig("22.0") == "22"
+    assert fig("1,000.5") == "1,000.5"
+
+
 def test_a_product_that_says_nothing_specific_gets_no_badges():
     """The row is omitted rather than filled with guesses."""
     assert _feat(name="Product Number 004",

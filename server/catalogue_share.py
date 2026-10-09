@@ -272,6 +272,38 @@ def _remember_url(url: str, digest: str, size: int) -> None:
 
 # ---------------- the snapshot ----------------
 
+#: The three fields the viewer renders, and the only stock strings it draws.
+#: Python decides what a quantity *means* — `catalogue.stock_state` is the one
+#: reading of the figures, shared with the PDF page — and the browser prints
+#: what it is given. A second set of rounding and threshold rules written in
+#: JavaScript would be a second standard, and two standards are one that can
+#: disagree with a client's document.
+STOCK_PRESENTATION_KEYS = ("stockState", "stockLabel", "stockFigure")
+
+
+def stock_presentation(item: dict) -> dict:
+    """`{stockState, stockLabel, stockFigure}` for one frozen product.
+
+    Written into a new snapshot, and derived here for an older one. A share
+    made before these fields existed carries only `qty` and `known`, which is
+    all this needs: the verdict is recomputed from the **frozen** figures, so
+    an old link keeps its own quantities, its own known/unknown verdict and
+    its own timestamp and simply gains the wording the page should always
+    have used. Nothing is written back — the commercial snapshot a client is
+    holding is not edited in order to render it.
+    """
+    stored = str(item.get("stockState") or "")
+    if stored in cat.STOCK_LABEL:
+        state = stored
+    else:
+        state = cat.stock_state(item.get("qty"), bool(item.get("known", True)))
+    figure = (cat.STOCK_UNKNOWN_FIGURE if state == "unknown"
+              else cat.stock_sentence(item.get("qty"), True)[0])
+    return {"stockState": state,
+            "stockLabel": cat.STOCK_LABEL[state],
+            "stockFigure": item.get("stockFigure") or figure}
+
+
 #: What a share carries about one product. Every one of these comes out of
 #: `catalogue.to_dto`, so the share and the PDF are the same record read
 #: twice, and a field the panel's toggles switched off is left out of the
@@ -296,6 +328,7 @@ def snapshot_product(dto: dict, images: list[str], options: dict) -> dict:
         #: are one that can drift
         out["stockText"] = cat.stock_sentence(dto.get("available"),
                                               cat._item_known(dto))[0]
+        out.update(stock_presentation(out))
     cats = [c for c in (dto.get("categories") or []) if c][:4]
     if cats:
         out["cats"] = cats
@@ -673,8 +706,16 @@ def index_payload(row: dict) -> dict:
         if item.get("img"):
             small["img"] = item["img"][0]
         if "qty" in item:
-            small["qty"] = item.get("qty")
+            shown = stock_presentation(item)
+            small.update(shown)
             small["known"] = bool(item.get("known", True))
+            #: the quantity travels only where it is an answer. An unknown
+            #: item's frozen figure is whatever the snapshot happened to
+            #: carry — stale, or a plain nought — and a number the viewer
+            #: never receives is a number it can never print.
+            if shown["stockState"] != "unknown":
+                small["qty"] = item.get("qty")
+            #: kept for a browser still holding the previous viewer
             small["stockText"] = item.get("stockText") or ""
         if item.get("cats"):
             small["cats"] = item["cats"]
@@ -726,8 +767,15 @@ def product_payload(row: dict, index: int) -> dict | None:
     items = data.get("products") or []
     if not isinstance(index, int) or index < 0 or index >= len(items):
         return None
+    #: a copy, because the parsed snapshot is cached and shared between
+    #: requests: the frozen record is read to render, never edited to render
     item = dict(items[index])
     item["i"] = index
+    if "qty" in item:
+        shown = stock_presentation(item)
+        item.update(shown)
+        if shown["stockState"] == "unknown":
+            item.pop("qty", None)
     return item
 
 

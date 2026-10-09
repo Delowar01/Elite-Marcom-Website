@@ -780,6 +780,45 @@ def test_product_sheet_pdf_carries_no_price(tmp_path, monkeypatch):
     assert client.get("/api/admin/jasani/items/ksa/nope/sheet").status_code == 404
 
 
+@pytest.mark.parametrize("available,known,chip,forbidden", [
+    (42, True, "In stock", "Currently out of stock"),
+    (0, True, "Currently out of stock", "In stock"),
+    (0, False, "Availability not reported", "Currently out of stock"),
+    (77, False, "Availability not reported", "In stock"),
+])
+def test_the_product_sheet_does_not_read_unknown_as_out_of_stock(
+        available, known, chip, forbidden):
+    """The sheet judged `available <= 0`, so a product the stock
+    synchronisation had never answered for was told to an admin as
+    "Currently out of stock". It now goes through `catalogue.stock_state`,
+    the same reading the catalogue page and the shared viewer use."""
+    from server import catalogue as cat
+    from server import exports
+
+    pdf = exports.product_sheet_pdf(
+        {"id": "1", "code": "ITGL 1302", "name": "Maglite 5K - Navy Blue",
+         "available": available, "availableKnown": known, "specs": []}, [])
+    text = cat.extract_text(pdf)
+    assert chip in text, (available, known, text)
+    assert forbidden not in text, (available, known, forbidden)
+
+
+def test_the_product_sheet_still_reports_incoming_stock_independently():
+    """Incoming is a different fact from availability and keeps its own
+    chip, whatever the availability verdict is."""
+    from server import catalogue as cat
+    from server import exports
+
+    for available, known, chip in ((0, True, "Currently out of stock"),
+                                   (0, False, "Availability not reported")):
+        text = cat.extract_text(exports.product_sheet_pdf(
+            {"id": "1", "code": "A", "name": "Item", "available": available,
+             "availableKnown": known, "incoming": 120,
+             "incomingDate": "12 Nov 2026", "specs": []}, []))
+        assert chip in text
+        assert "More arriving 12 Nov 2026 (estimated)" in text
+
+
 def test_jasani_console_status_and_search(tmp_path, monkeypatch):
     from server import jasani
 

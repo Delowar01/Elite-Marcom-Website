@@ -274,6 +274,180 @@ def test_a_page_option_that_is_off_is_not_in_the_payload(snapshot, photos):
     assert "specs" not in product
     assert "desc" not in product
     assert "qty" not in product and "stockText" not in product
+    #: and no presentation either — a viewer cannot print what it was never
+    #: given, which is the whole reason an option is applied to the snapshot
+    for key in cs.STOCK_PRESENTATION_KEYS:
+        assert key not in product, key
+
+
+# ---------------- the three stock states a client is shown ----------------
+#
+# The viewer used to print `stockText` and then the word "available" after
+# it, which read as "0 units available" on an empty product and "Availability
+# unavailable available" on one the supplier never answered for. Python now
+# decides what a quantity means — one reading, shared with the PDF page — and
+# the browser prints what it is handed.
+
+
+@pytest.fixture
+def states(tmp_path, monkeypatch):
+    """Three products, one in each state, and nothing near the supplier."""
+    monkeypatch.setattr(jasani, "_CACHE_DIR", tmp_path)
+    products = [
+        {"id": "3000", "code": "ITGL 3000", "name": "Plenty", "brand": "", "color": "",
+         "categories": ["Drinkware"], "image": "", "images": [],
+         "description": "A useful item.",
+         "stock": {"available": 500, "known": True, "incoming": 0}},
+        {"id": "3001", "code": "ITWC 1302", "name": "Maglite 5K - Navy Blue",
+         "brand": "", "color": "", "categories": ["Power Banks"],
+         "image": "", "images": [], "description": "A useful item.",
+         "stock": {"available": 0, "known": True, "incoming": 0}},
+        {"id": "3002", "code": "ITGL 3002", "name": "Never Answered For",
+         "brand": "", "color": "", "categories": ["Notebooks"],
+         "image": "", "images": [], "description": "A useful item.",
+         #: a stale figure the synchronisation never confirmed
+         "stock": {"available": 77, "known": False, "incoming": 0}},
+    ]
+    (tmp_path / "giveaways-ksa.json").write_text(json.dumps(
+        {"fetchedAt": STOCK_AT, "stockAt": STOCK_AT, "products": products}),
+        encoding="utf-8")
+    return products
+
+
+WANTED = {
+    "ITGL 3000": ("in", "AVAILABLE NOW", "500 units"),
+    "ITWC 1302": ("out", "OUT OF STOCK", "0 units"),
+    "ITGL 3002": ("unknown", "AVAILABILITY UNAVAILABLE", "Not reported"),
+}
+
+
+def test_the_three_stock_states_reach_the_viewer_as_the_server_decided(states, photos):
+    share = make_share(ids=["3000", "3001", "3002"])
+    rows = {i["code"]: i for i in
+            client.get(share["url"] + "/index.json").json()["items"]}
+    assert set(rows) == set(WANTED)
+    for code, (state, label, figure) in WANTED.items():
+        row = rows[code]
+        assert (row["stockState"], row["stockLabel"], row["stockFigure"]) == \
+            (state, label, figure), code
+    #: and the same three answers on the detail each card opens — read by
+    #: the index the card carries rather than by an assumed order
+    for row in rows.values():
+        product = client.get(
+            share["url"] + f"/p/{row['i']}.json").json()["product"]
+        state, label, figure = WANTED[product["code"]]
+        assert (product["stockState"], product["stockLabel"],
+                product["stockFigure"]) == (state, label, figure), product["code"]
+
+
+def test_an_unknown_quantity_never_leaves_the_server(states, photos):
+    """The frozen snapshot keeps the figure it froze — that is the promise —
+    but a number that answers nothing is not sent to a browser, so it cannot
+    be printed by this viewer or by any later one."""
+    share = make_share(ids=["3002"])
+    frozen = cs.snapshot_of({"id": share["id"]})["products"][0]
+    assert frozen["qty"] == 77, "the snapshot is still frozen"
+
+    index = client.get(share["url"] + "/index.json")
+    product = client.get(share["url"] + "/p/0.json")
+    for res in (index, product):
+        assert "77" not in res.text, res.text
+    assert "qty" not in product.json()["product"]
+    assert "qty" not in index.json()["items"][0]
+
+
+def test_the_viewer_never_says_a_quantity_is_available(states, photos):
+    """The two sentences production review found, asserted as absent from
+    everything a browser is served: the page, the data and the script."""
+    share = make_share(ids=["3000", "3001", "3002"])
+    served = client.get(share["url"]).text
+    served += client.get(share["url"] + "/index.json").text
+    for n in range(3):
+        served += client.get(share["url"] + f"/p/{n}.json").text
+    served += client.get("/js/catalogue-view.js").text
+    for wrong in ("0 units available", "Availability unavailable available",
+                  "units available"):
+        assert wrong not in served, wrong
+    #: the script prints the server's own fields and nothing of its own
+    script = client.get("/js/catalogue-view.js").text
+    assert "stockLabel" in script and "stockFigure" in script
+    assert '"available"' not in script and "'available'" not in script
+
+
+def test_an_old_snapshot_renders_without_being_regenerated(states, photos):
+    """A link a client is already holding was written before any of this.
+
+    Its products carry `qty`, `known` and `stockText` and none of the
+    presentation fields. It must open, read correctly in all three states,
+    and come out of the database exactly as it went in — normalizing to
+    render must not edit what a client is holding.
+    """
+    share = make_share(ids=["3000", "3001", "3002"])
+    data = cs.snapshot_of({"id": share["id"]})
+    #: wind the stored snapshot back to the shape it had before this change
+    old = json.loads(json.dumps(data))
+    for item in old["products"]:
+        for key in cs.STOCK_PRESENTATION_KEYS:
+            item.pop(key, None)
+    raw = json.dumps(old)
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("UPDATE catalogue_shares SET snapshot=? WHERE id=?",
+                     (raw, share["id"]))
+        conn.commit()
+    cs._SNAPSHOTS.clear()
+
+    rows = {i["code"]: i for i in
+            client.get(share["url"] + "/index.json").json()["items"]}
+    for code, (state, label, figure) in WANTED.items():
+        row = rows[code]
+        assert (row["stockState"], row["stockLabel"], row["stockFigure"]) == \
+            (state, label, figure), f"old snapshot, {code}"
+    assert "qty" not in rows["ITGL 3002"], "and still no stale figure"
+    for n in range(3):
+        assert client.get(share["url"] + f"/p/{n}.json").status_code == 200
+
+    stored = aa._connect().execute(
+        "SELECT snapshot FROM catalogue_shares WHERE id=?",
+        (share["id"],)).fetchone()["snapshot"]
+    assert stored == raw, "rendering an old share rewrote it"
+
+
+def test_normalizing_an_old_product_reads_only_its_frozen_figures():
+    """The unit, directly: `qty` and `known` are enough, and a stored verdict
+    is believed rather than recomputed so a frozen share cannot drift."""
+    assert cs.stock_presentation({"qty": 500, "known": True}) == {
+        "stockState": "in", "stockLabel": "AVAILABLE NOW",
+        "stockFigure": "500 units"}
+    assert cs.stock_presentation({"qty": 0, "known": True}) == {
+        "stockState": "out", "stockLabel": "OUT OF STOCK",
+        "stockFigure": "0 units"}
+    assert cs.stock_presentation({"qty": 77, "known": False}) == {
+        "stockState": "unknown", "stockLabel": "AVAILABILITY UNAVAILABLE",
+        "stockFigure": "Not reported"}
+    #: a record with no verdict at all follows the market, as everywhere else
+    assert cs.stock_presentation({"qty": 4})["stockState"] == "in"
+    #: and the labels are the PDF's own, not a second set
+    assert cs.stock_presentation({"qty": 1, "known": True})["stockLabel"] == \
+        cat.STOCK_LABEL["in"]
+    assert cs.stock_presentation({"known": False})["stockFigure"] == \
+        cat.STOCK_UNKNOWN_FIGURE
+
+
+def test_a_share_in_three_states_still_costs_no_supplier_call(states, photos):
+    """The correction is presentation only: reading it is still our own
+    database and our own files."""
+    share = make_share(ids=["3000", "3001", "3002"])
+
+    def boom(*a, **k):
+        raise AssertionError("a share view reached the supplier")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(jasani, "_fetch", boom)
+        mp.setattr(jasani, "_budget_ok", boom)
+        assert client.get(share["url"]).status_code == 200
+        assert client.get(share["url"] + "/index.json").status_code == 200
+        assert client.get(share["url"] + "/p/0.json").status_code == 200
 
 
 # ---------------- pictures ----------------
