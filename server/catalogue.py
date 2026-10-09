@@ -718,49 +718,75 @@ def name_parts(name: str) -> tuple[str, str, str]:
 # category, a brand or a product's general kind — a "power bank" does not get
 # a wireless-charging badge for being a power bank.
 
-#: What a supplier may put between the thousands of a figure. A comma is the
-#: common one; `clean_text` turns a non-breaking space into a plain one but
-#: leaves a narrow no-break space alone, and "5 000" is simply how much of
-#: the world writes it.
+#: What may join the thousands of a figure **in a structured measurement
+#: field**: a comma, a narrow no-break space, a no-break space, or an
+#: ordinary space. The field's own job is to carry a measurement, so there
+#: is nothing else the digits could be.
 _GROUP_SEP = r"[,\u202f\u00a0 ]"
 
-#: One figure, however it is punctuated: "5000", "5,000", "5 000", "22.5",
-#: "1,000.5". Three branches, and the order and the guards are the whole of
-#: the correction:
-#:
-#: 1. the **grouped** form first, so a scan arriving at the "5" of "5,000"
-#:    takes the whole number instead of failing there and matching the "000"
-#:    three characters later — precisely how `\d{3,6}` turned a 5,000 mAh
-#:    power bank into a badge reading "0 mAh" on a customer document;
-#: 2. **four digits or more**, which cannot be the tail of a group, so it
-#:    needs no guard and "USB 3.0 and a 5000 mAh cell" still matches;
-#: 3. a **short** run of one to three digits, which *could* be a group tail,
-#:    so it is refused directly after a digit or after a digit and a
-#:    separator. That is what stops a malformed "5,00" or "5 00" from being
-#:    read as a number of its own — better no badge than a wrong one.
-_FIGURE = (r"\d{1,3}(?:" + _GROUP_SEP + r"\d{3})+(?:\.\d+)?"
-           r"|\d{4,}(?:\.\d+)?"
-           r"|(?<!\d)(?<!\d" + _GROUP_SEP + r")\d{1,3}(?:\.\d+)?")
+#: What may join them **in free prose**, which is the same list without the
+#: ordinary space. "5 000 mAh" in a sentence is as likely to be four of
+#: something as it is one number, and no word list settles that reliably —
+#: the sentence is simply not a measurement field. A comma is this feed's
+#: own convention and the two no-break spaces are typography; all three say
+#: "these digits are one number" in any context.
+_PROSE_SEP = r"[,\u202f\u00a0]"
 
-#: Where a figure may begin. `\b` keeps it out of the middle of a part
-#: number ("ITGL5000"), and the lookbehind keeps the scan from starting
-#: *inside* a figure: after a comma or a decimal point `\b` holds, so without
-#: it the tail of a malformed "5,00" would still be read as a number of its
-#: own. A digit needs no mention — `\b` already refuses after one.
-_FIGURE_IN = r"\b(?<![.,])(" + _FIGURE + r")(?![\d,])"
+#: Where a figure may **not begin**, whatever the source: directly after a
+#: digit and any separator. The ordinary space stays in this list even for
+#: prose, because it is what stops the "000" of "5 000" being read as a
+#: number of its own — refusing to join them is not the same as agreeing to
+#: read half of one.
+_TAIL_SEP = r"[,\u202f\u00a0 ]"
 
 
-def _figure_before(unit: str, lead: str = "") -> str:
+def _figure(group_sep: str) -> str:
+    """One figure, however it is punctuated: "5000", "5,000", "5 000",
+    "22.5", "1,000.5". Three branches, and the order and the guards are the
+    whole of the correction:
+
+    1. the **grouped** form first, so a scan arriving at the "5" of "5,000"
+       takes the whole number instead of failing there and matching the
+       "000" three characters later — precisely how `\d{3,6}` turned a
+       5,000 mAh power bank into a badge reading "0 mAh" on a customer
+       document;
+    2. **four digits or more**, which cannot be the tail of a group, so it
+       needs no guard and "USB 3.0 and a 5000 mAh cell" still matches;
+    3. a **short** run of one to three digits, which *could* be a group
+       tail, so it is refused directly after a digit or after a digit and a
+       separator. That is what stops a malformed "5,00" or "5 00" from being
+       read as a number of its own — better no badge than a wrong one, and
+       it is also what keeps a prose "5 000" from degrading into "0".
+    """
+    return (r"\d{1,3}(?:" + group_sep + r"\d{3})+(?:\.\d+)?"
+            r"|\d{4,}(?:\.\d+)?"
+            r"|(?<!\d)(?<!\d" + _TAIL_SEP + r")\d{1,3}(?:\.\d+)?")
+
+
+_FIGURE = _figure(_GROUP_SEP)
+_FIGURE_PROSE = _figure(_PROSE_SEP)
+
+
+def _figure_before(unit: str, lead: str = "", figure: str = _FIGURE) -> str:
     """A pattern catching one figure immediately before `unit`.
 
     Every numeric rule is built from this, so a separator a supplier happens
     to use cannot make one badge right and another wrong. `lead` is for a
     rule whose figure follows a word rather than whitespace ("PD22.5W"),
-    where a word boundary would refuse the digit.
+    where a word boundary would refuse the digit. `figure` is what decides
+    the source's trust level — `_FIGURE` for a measurement field,
+    `_FIGURE_PROSE` for a sentence.
+
+    `\b` keeps a figure out of the middle of a part number ("ITGL5000"),
+    and the lookbehind keeps the scan from starting *inside* one: after a
+    comma or a decimal point `\b` holds, so without it the tail of a
+    malformed "5,00" would still be read as a number. A digit needs no
+    mention — `\b` already refuses after one.
     """
+    body = "(" + figure + r")(?![\d,])"
     if lead:
-        return lead + "(" + _FIGURE + r")(?![\d,])\s*" + unit
-    return _FIGURE_IN + r"\s*" + unit
+        return lead + body + r"\s*" + unit
+    return r"\b(?<![.,])" + body + r"\s*" + unit
 
 
 def _fig(m, group: int = 1) -> str:
@@ -779,43 +805,54 @@ def _fig(m, group: int = 1) -> str:
     return f"{int(whole):,}.{frac}" if frac else f"{int(whole):,}"
 
 
-#: (pattern, icon, label, family). The pattern is searched in the product's
-#: own sanitized name, description and specification values — nowhere else.
-#: A family fires once: "PD 22.5W" and "22.5W charging" are the same fact
-#: twice, and a row that says it twice has a third thing it is not saying.
-#: Order is priority order, most product-defining first.
-FEATURE_RULES: tuple[tuple[str, str, object, str], ...] = (
-    (r"\bmagsafe\b", "magnet", "MagSafe compatible", "magnet"),
-    (_figure_before(r"w\b") + r"[^.]{0,24}\bwireless\b"
-     r"|\bwireless\b[^.]{0,24}?" + _figure_before(r"w\b"),
-     "wireless", lambda m: f"{_fig(m) if m.group(1) else _fig(m, 2)}W wireless",
-     "wireless"),
-    (r"\bwireless charg", "wireless", "Wireless charging", "wireless"),
-    (_figure_before(r"w\b", lead=r"\bpd\s*"), "bolt", lambda m: f"PD {_fig(m)}W",
-     "charge"),
-    (_figure_before(r"w\b") + r"\s*(?:fast\s*)?charg", "bolt",
-     lambda m: f"{_fig(m)}W charging", "charge"),
-    (r"\bfast charg", "bolt", "Fast charging", "charge"),
-    (_figure_before(r"mah\b"), "battery", lambda m: f"{_fig(m)} mAh",
-     "battery"),
-    (_figure_before(r"ml\b"), "droplet", lambda m: f"{_fig(m)} ml", "volume"),
-    (r"\bdouble[- ]?wall(?:ed)?\b", "layers", "Double-walled", "build"),
-    (r"\bstainless steel\b", "layers", "Stainless steel", "build"),
-    (_figure_before(r"(?:hours|hrs?)\b"), "clock", lambda m: f"{_fig(m)} hours",
-     "time"),
-    (r"\bip(\d{2})\b", "droplet", lambda m: f"IP{m.group(1)} rated", "water"),
-    (r"\b(?:water[- ]?proof|waterproof)\b", "droplet", "Waterproof", "water"),
-    (r"\bleak[- ]?proof\b", "droplet", "Leak-proof", "water"),
-    (r"\bdishwasher[- ]safe\b", "droplet", "Dishwasher safe", "water"),
-    (r"\b(?:usb[- ]?c|type[- ]?c)\b", "plug", "USB-C", "port"),
-    (r"\bbluetooth\b", "wireless", "Bluetooth", "radio"),
-    (r"\bsolar\b", "sun", "Solar", "power"),
-    (r"\bbpa[- ]?free\b", "leaf", "BPA free", "eco"),
-    (r"\b(?:recycled|rpet|bamboo|organic cotton)\b", "leaf", "Sustainable", "eco"),
-    (r"\b(?:laser engrav|deboss|emboss|screen print|pad print|embroider)",
-     "brand", "Brandable", "brand"),
-    (r"\bgift (?:box|packaging|set)\b", "box", "Gift boxed", "pack"),
-)
+#: (pattern, icon, label, family), built once per figure pattern — one
+#: table for a structured measurement field and one for prose — so the rules
+#: themselves are written exactly once and differ only in whether an
+#: ordinary space may join a figure's thousands. A family fires once: "PD
+#: 22.5W" and "22.5W charging" are the same fact twice, and a row that says
+#: it twice has a third thing it is not saying. Order is priority order,
+#: most product-defining first.
+def _rules(figure: str) -> tuple[tuple[str, str, object, str], ...]:
+    def before(unit: str, lead: str = "") -> str:
+        return _figure_before(unit, lead=lead, figure=figure)
+
+    return (
+        (r"\bmagsafe\b", "magnet", "MagSafe compatible", "magnet"),
+        (before(r"w\b") + r"[^.]{0,24}\bwireless\b"
+         r"|\bwireless\b[^.]{0,24}?" + before(r"w\b"),
+         "wireless", lambda m: f"{_fig(m) if m.group(1) else _fig(m, 2)}W wireless",
+         "wireless"),
+        (r"\bwireless charg", "wireless", "Wireless charging", "wireless"),
+        (before(r"w\b", lead=r"\bpd\s*"), "bolt", lambda m: f"PD {_fig(m)}W",
+         "charge"),
+        (before(r"w\b") + r"\s*(?:fast\s*)?charg", "bolt",
+         lambda m: f"{_fig(m)}W charging", "charge"),
+        (r"\bfast charg", "bolt", "Fast charging", "charge"),
+        (before(r"mah\b"), "battery", lambda m: f"{_fig(m)} mAh",
+         "battery"),
+        (before(r"ml\b"), "droplet", lambda m: f"{_fig(m)} ml", "volume"),
+        (r"\bdouble[- ]?wall(?:ed)?\b", "layers", "Double-walled", "build"),
+        (r"\bstainless steel\b", "layers", "Stainless steel", "build"),
+        (before(r"(?:hours|hrs?)\b"), "clock", lambda m: f"{_fig(m)} hours",
+         "time"),
+        (r"\bip(\d{2})\b", "droplet", lambda m: f"IP{m.group(1)} rated", "water"),
+        (r"\b(?:water[- ]?proof|waterproof)\b", "droplet", "Waterproof", "water"),
+        (r"\bleak[- ]?proof\b", "droplet", "Leak-proof", "water"),
+        (r"\bdishwasher[- ]safe\b", "droplet", "Dishwasher safe", "water"),
+        (r"\b(?:usb[- ]?c|type[- ]?c)\b", "plug", "USB-C", "port"),
+        (r"\bbluetooth\b", "wireless", "Bluetooth", "radio"),
+        (r"\bsolar\b", "sun", "Solar", "power"),
+        (r"\bbpa[- ]?free\b", "leaf", "BPA free", "eco"),
+        (r"\b(?:recycled|rpet|bamboo|organic cotton)\b", "leaf", "Sustainable", "eco"),
+        (r"\b(?:laser engrav|deboss|emboss|screen print|pad print|embroider)",
+         "brand", "Brandable", "brand"),
+        (r"\bgift (?:box|packaging|set)\b", "box", "Gift boxed", "pack"),
+    )
+
+
+FEATURE_RULES = _rules(_FIGURE)
+FEATURE_RULES_PROSE = _rules(_FIGURE_PROSE)
+
 
 #: Three is a row, five is a toolbar. Four keeps the page calm.
 MAX_FEATURES = 4
@@ -828,19 +865,20 @@ _NEGATED = re.compile(r"\b(?:not|no|never|without|excluding|except|unsuitable)\b
                       re.I)
 
 
-#: A figure grouped with an **ASCII space**, and only that. A comma is this
-#: feed's own grouping convention and a no-break space is typography: both
-#: say "these digits are one number" and neither is ambiguous. A plain space
-#: is ordinary language, where "4 750 ml" is as likely to be four bottles of
-#: 750 ml as it is one measurement of 4,750.
+#: A figure grouped with an **ASCII space**, which only a structured
+#: measurement field is allowed to write — prose cannot produce one, because
+#: `_PROSE_SEP` will not join across a space in the first place.
 _SPACE_GROUPED = re.compile(r"\d{1,3}(?: \d{3})+")
 
-#: The words that settle it, immediately before the leading group. Each one
-#: is unambiguously about *how many*, so the digits after it are a count and
-#: the digits after those are the measurement. Deliberately short: a vague
-#: word here would suppress a real specification, which is the opposite
-#: mistake and just as bad. "4 pcs 750 ml" and "4 x 750 ml" need nothing —
-#: the word between the two figures already stops them being read as one.
+#: Count words, immediately before the leading group. **This guards exactly
+#: one thing**: a supplier who writes a quantity into a field whose job is a
+#: measurement — `capacity = "set of 4 750 ml"`. It is not, and was never
+#: able to be, the answer for prose: "a gift set containing 4 750 ml
+#: bottles" slipped straight past it, and the fix for that is not another
+#: word. Prose is safe because an ordinary space does not group there at
+#: all; this list is the small residue that still earns its place on the one
+#: source where a space *does* group. Keep it short — a vague word here
+#: suppresses a real specification, which is the same mistake reversed.
 _COUNT_LEAD = re.compile(
     r"(?:\b(?:set|sets|pack|packs|box|boxes|case|cases|carton|cartons"
     r"|bundle|bundles|pair|pairs|tray|trays)\s+of"
@@ -850,14 +888,13 @@ _COUNT_LEAD = re.compile(
 def _is_counted(hay: str, m) -> bool:
     """Whether this match read a count and a measurement as one number.
 
-    A badge is optional; a plausible wrong badge is not. "Set of 4 750 ml
-    bottles" produced "4,750 ml" — a specification no reader would question
-    and the product does not have. Where a count word stands immediately in
-    front of a space-grouped figure, the grouped reading is refused and the
-    rule simply finds nothing, because the honest alternative — pulling the
-    750 back out of a number we have just said we cannot read — would mean
-    unpicking the guard that stops a malformed "5 00 ml" becoming "0 ml".
-    No badge is the right answer here.
+    A badge is optional; a plausible wrong badge is not. "Set of 4 750 ml"
+    read as "4,750 ml" is a specification no reader would question and the
+    product does not have. Where a count word stands immediately in front of
+    a space-grouped figure the grouped reading is refused and the rule finds
+    nothing, because the honest alternative — pulling the 750 back out of a
+    number we have just said we cannot read — would mean unpicking the guard
+    that stops a malformed "5 00 ml" becoming "0 ml".
     """
     for group in _SPACE_GROUPED.finditer(hay, m.start(), m.end()):
         lead = hay[max(0, group.start() - 24):group.start()]
@@ -866,11 +903,15 @@ def _is_counted(hay: str, m) -> bool:
     return False
 
 
-def _affirmed(hay: str, pattern: str):
-    """The first match of `pattern` that nothing in its sentence negates and
-    that is not a count being read as part of a measurement."""
+def _affirmed(hay: str, pattern: str, *, guard_counts: bool = False):
+    """The first match of `pattern` that nothing in its sentence negates.
+
+    `guard_counts` is for a structured measurement field, the one source
+    where an ordinary space joins a figure's thousands and a count written
+    into the field could therefore be read as part of the measurement.
+    """
     for m in re.finditer(pattern, hay, re.I):
-        if _is_counted(hay, m):
+        if guard_counts and _is_counted(hay, m):
             continue
         lead = hay[max(0, m.start() - 70):m.start()]
         tail = hay[m.end():m.end() + 70]
@@ -884,23 +925,65 @@ def _affirmed(hay: str, pattern: str):
     return None
 
 
+#: Fields whose whole job is to carry a measurement. In one of these the
+#: field itself is the context, so "5 000 mAh" can only be one number and an
+#: ordinary space is allowed to join it. Each is read **on its own, never
+#: joined** — a `capacity` of "2" beside a `size` of "500 ml" is two facts,
+#: and concatenating them would invent "2 500 ml".
+STRUCTURED_FIELDS = ("capacity", "size")
+
+#: Free prose, read as one passage so a negation still reaches across a
+#: sentence boundary exactly as it always did. `material` belongs here and
+#: not above: "Stainless steel" describes a material, it does not promise
+#: that a figure inside it is a measurement, and treating it as structured
+#: would hand it the space-grouping licence for nothing.
+PROSE_FIELDS = ("name", "description", "material")
+
+
+def feature_sources(dto: dict) -> list[tuple[str, bool]]:
+    """`(text, structured)` in order of trust: every measurement field on
+    its own first, then the prose as one passage."""
+    out = [(str(dto[key]).lower(), True)
+           for key in STRUCTURED_FIELDS if dto.get(key)]
+    prose = " ".join(str(dto.get(key) or "") for key in PROSE_FIELDS).strip()
+    if prose:
+        out.append((prose.lower(), False))
+    return out
+
+
 def product_features(dto: dict) -> list[tuple[str, str]]:
     """[(icon, label)] the product's own words support, at most MAX_FEATURES.
 
     Reads the sanitized DTO only, so a price statement cannot arrive here
     either. Returns [] when nothing is certain — a row of invented badges on
     a customer document would be worse than no row.
+
+    **Where a figure was written decides how far it is trusted.** The fields
+    used to be joined into one string before anything was read, which threw
+    away the one fact that settles an ambiguous figure: whether "5 000 mAh"
+    came from a `capacity` field or from the middle of "a gift set
+    containing 4 750 ml bottles". They are read separately now, a structured
+    measurement field accepts an ordinary space between thousands and prose
+    does not, and that closes the whole class rather than naming the verbs
+    it appears after. A missing badge is acceptable; a plausible false
+    specification is not.
+
+    Families still deduplicate across every source, so a product saying
+    MagSafe in its name and again in its description earns one badge.
     """
-    parts = [dto.get("name") or "", dto.get("description") or ""]
-    parts += [str(v) for k, v in dto.items()
-              if k in ("material", "size", "capacity") and v]
-    hay = " ".join(parts).lower()
+    sources = feature_sources(dto)
     out: list[tuple[str, str]] = []
     families: set[str] = set()
-    for pattern, icon, label, family in FEATURE_RULES:
+    for structured_rule, prose_rule in zip(FEATURE_RULES, FEATURE_RULES_PROSE):
+        pattern, icon, label, family = structured_rule
         if family in families:
             continue
-        m = _affirmed(hay, pattern)
+        m = None
+        for text, structured in sources:
+            m = _affirmed(text, pattern if structured else prose_rule[0],
+                          guard_counts=structured)
+            if m:
+                break
         if not m:
             continue
         text = label(m) if callable(label) else label

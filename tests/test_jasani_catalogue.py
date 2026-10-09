@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import pathlib
 import re
 import time
 
@@ -2337,27 +2338,57 @@ def test_the_maglite_features_are_the_ones_its_own_words_support():
         ("bolt", "PD 22.5W"), ("battery", "5,000 mAh")]
 
 
-# ---------------- a figure is a figure, however it is punctuated ----------
+# ---------------- where a figure was written decides how far it is trusted --
 #
-# Production review found "0 mAh" on ITWC 1302, Maglite 5K - Navy Blue. The
-# description read "The 5,000 mAh capacity provides reliable backup power",
-# and `\b(\d{3,6})\s*mah\b` could not match across the comma: the scan failed
-# at the "5" and matched the "000" three characters later, so a 5,000 mAh
-# power bank advertised zero capacity on a customer document. Every numeric
-# rule is now built from one figure pattern and one normalization.
+# Two defects, one architecture. `\b(\d{3,6})\s*mah\b` could not match across
+# a separator, so "The 5,000 mAh capacity …" matched the "000" and ITWC 1302
+# told a customer "0 mAh". Accepting an ordinary space as a separator fixed
+# that and opened the other end: "Set of 4 750 ml bottles" became "4,750 ml",
+# and no list of count words closes it — "a gift set containing 4 750 ml
+# bottles" walked straight through one. The fields are no longer joined
+# before they are read, and the source decides: a measurement field may
+# group with a space, a sentence may not.
 
 
-@pytest.mark.parametrize("written", [
-    "5,000", "5000", "5 000", "5\u00a0000", "5\u202f000",
-])
-def test_a_grouped_figure_reads_as_the_number_it_is(written):
-    """The reported defect, in every separator a supplier might use. NBSP is
-    included because `clean_text` turns it into a plain space and the narrow
-    one survives untouched — both must land on the same badge."""
-    feats = _feat(name="Power Bank",
-                  description=f"The {written} mAh capacity provides reliable "
-                              "backup power on the move.")
-    assert feats == [("battery", "5,000 mAh")], (written, feats)
+def _struct(**kw) -> list[tuple[str, str]]:
+    """A badge read from a structured measurement field."""
+    return _feat(name="Item", description="A useful item.", **kw)
+
+
+def test_the_sources_are_separated_and_ranked():
+    """The contract the rest of this section rests on."""
+    assert cat.STRUCTURED_FIELDS == ("capacity", "size")
+    assert cat.PROSE_FIELDS == ("name", "description", "material")
+    dto = cat.to_dto({"id": "1", "code": "A", "name": "Flask",
+                      "description": "A useful item.", "material": "Steel",
+                      "capacity": "750 ml", "size": "104 x 66 mm",
+                      "available": 5, "availableKnown": True})
+    #: every measurement field on its own, then the prose as one passage
+    assert cat.feature_sources(dto) == [
+        ("750 ml", True), ("104 x 66 mm", True),
+        ("flask a useful item. steel", False)]
+
+
+def test_two_structured_fields_are_never_joined():
+    """A capacity of "2" beside a size of "500 ml" is two facts; joining
+    them would invent "2 500 ml"."""
+    assert _struct(capacity="2", size="500 ml") == [("droplet", "500 ml")]
+
+
+# ---- what every source accepts -------------------------------------------
+
+#: The spellings that are one number wherever they are written. A comma is
+#: this feed's own convention and U+202F is typography; neither is language.
+UNAMBIGUOUS = ["5,000", "5\u202f000", "5000"]
+
+
+@pytest.mark.parametrize("written", UNAMBIGUOUS)
+def test_an_unambiguous_figure_reads_the_same_in_prose_and_in_a_field(written):
+    wanted = ("battery", "5,000 mAh")
+    assert wanted in _feat(
+        name="Power Bank",
+        description=f"The {written} mAh capacity provides backup power."), written
+    assert wanted in _struct(capacity=f"{written} mAh"), written
 
 
 @pytest.mark.parametrize("text,wanted", [
@@ -2369,10 +2400,12 @@ def test_a_grouped_figure_reads_as_the_number_it_is(written):
     ("Holds 1,000 ml.", "1,000 ml"),
     ("Holds 1000 ml.", "1,000 ml"),
     ("Holds 750 ml.", "750 ml"),
+    ("750 ml bottle.", "750 ml"),
     ("A 22.5W charging base.", "22.5W charging"),
     ("A 15W charging base.", "15W charging"),
     ("A 15 W charging base.", "15W charging"),
     ("A 1,500 W fast charging base.", "1,500W charging"),
+    ("1,500 W fast charging station.", "1,500W charging"),
     ("PD 22.5W over USB-C.", "PD 22.5W"),
     ("PD22.5W over USB-C.", "PD 22.5W"),
     ("PD 1,500W over USB-C.", "PD 1,500W"),
@@ -2380,8 +2413,10 @@ def test_a_grouped_figure_reads_as_the_number_it_is(written):
     ("Burns for 1,200 hours.", "1,200 hours"),
     ("Wireless 15W charging pad.", "15W wireless"),
     ("Wireless 1,500W charging pad.", "1,500W wireless"),
+    ("IP68 rated.", "IP68 rated"),
+    ("24 items of 500 ml.", "500 ml"),
 ])
-def test_every_numeric_badge_prints_the_figure_the_text_carries(text, wanted):
+def test_every_numeric_badge_prints_the_figure_the_prose_carries(text, wanted):
     labels = [t for _, t in _feat(name="Item", description=text)]
     assert wanted in labels, (text, labels)
 
@@ -2394,9 +2429,9 @@ def test_every_numeric_badge_prints_the_figure_the_text_carries(text, wanted):
     "A 10,000 mAh cell.",
 ])
 def test_no_badge_ever_prints_a_smaller_number_than_the_text(text):
-    """The failure mode, stated as a rule: the tail of a grouped figure must
+    """The first failure mode, as a rule: the tail of a grouped figure must
     never become a figure of its own. "1,500 W" produced "500W charging"
-    before this, which is a different and lower claim about a real product."""
+    before this, a different and lower claim about a real product."""
     import re as _re
 
     biggest = max(int(g.replace(",", "").replace(" ", "").split(".")[0])
@@ -2414,6 +2449,7 @@ def test_no_badge_ever_prints_a_smaller_number_than_the_text(text):
 def test_a_figure_is_not_read_out_of_the_middle_of_something_else(text):
     assert [t for _, t in _feat(name="Item", description=text)
             if "mAh" in t or " ml" in t] == [], text
+    assert [t for _, t in _struct(capacity=text) if "mAh" in t or " ml" in t] == []
 
 
 def test_ordinary_prose_around_a_figure_still_matches():
@@ -2428,9 +2464,153 @@ def test_ordinary_prose_around_a_figure_still_matches():
         assert wanted in labels, (text, labels)
 
 
+# ---- an ordinary space: a measurement field only -------------------------
+
+@pytest.mark.parametrize("value,wanted", [
+    ("5 000 mAh", ("battery", "5,000 mAh")),
+    ("10 000 mAh", ("battery", "10,000 mAh")),
+    ("1 500 ml", ("droplet", "1,500 ml")),
+    ("1 500 W charging", ("bolt", "1,500W charging")),
+    ("1 200 hours", ("clock", "1,200 hours")),
+    #: and every unambiguous spelling, in the same field
+    ("5,000 mAh", ("battery", "5,000 mAh")),
+    ("5000 mAh", ("battery", "5,000 mAh")),
+    ("5\u202f000 mAh", ("battery", "5,000 mAh")),
+    ("5\u00a0000 mAh", ("battery", "5,000 mAh")),
+])
+def test_a_measurement_field_may_group_with_an_ordinary_space(value, wanted):
+    """The field's own job is to carry a measurement, so there is nothing
+    else the digits could be."""
+    assert wanted in _struct(capacity=value), value
+    assert wanted in _struct(size=value), value
+
+
+#: Free prose carrying a space-grouped figure. The verbs are deliberately
+#: varied and none of them is known to the code: the badge is withheld
+#: because the *source* is a sentence, not because the phrase was listed.
+AMBIGUOUS_PROSE = [
+    "A gift set containing 4 750 ml bottles.",
+    "Contains 4 750 ml bottles.",
+    "Includes 4 750 ml bottles.",
+    "Comes with 4 750 ml bottles.",
+    "Featuring 4 750 ml bottles.",
+    "Gift set: 4 750 ml bottles.",
+    "Four bottles, 4 750 ml.",
+    "Pack includes 2 500 ml bottles.",
+    "Box contains 6 250 ml cups.",
+    "Supplied as 12 330 ml cans.",
+    "Holding 2 500 ml between them.",
+    "Each kit has 6 250 ml cups.",
+    #: including the forms the old word list did catch — same answer now,
+    #: for a reason that does not depend on the words
+    "Set of 4 750 ml bottles.",
+    "Pack of 2 500 ml bottles.",
+    "Quantity 4 750 ml bottles.",
+    "Qty 4 750 ml bottles.",
+    #: and a figure that is genuinely one number but written ambiguously:
+    #: prose cannot tell, so prose does not say
+    "A 5 000 mAh power bank.",
+    "A 1 500 W charging station.",
+    "Lasts 1 200 hours.",
+]
+
+
+@pytest.mark.parametrize("text", AMBIGUOUS_PROSE)
+def test_prose_never_groups_across_an_ordinary_space(text):
+    """No false specification, and no quietly halved one either: the "750"
+    is not pulled back out of a number we have just said we cannot read."""
+    numeric = [t for _, t in _feat(name="Item", description=text)
+               if any(unit in t for unit in ("mAh", " ml", "W", "hours"))]
+    assert numeric == [], (text, numeric)
+
+
+def test_the_prose_rule_needs_no_list_of_verbs():
+    """The point of the architecture: a phrasing nobody anticipated behaves
+    the same as one that was. Asserted against the code, not a fixture —
+    none of these words appears in the module."""
+    source = pathlib.Path(cat.__file__).read_text(encoding="utf-8").lower()
+    for verb in ("containing", "contains", "includes", "comes with",
+                 "featuring", "holding", "each", "kit", "supplied as"):
+        assert f'"{verb}"' not in source and f"'{verb}'" not in source, verb
+    for text in ("A gift set containing 4 750 ml bottles.",
+                 "Something nobody wrote a rule for: 7 250 ml."):
+        assert [t for _, t in _feat(name="Item", description=text)
+                if " ml" in t] == [], text
+
+
+def test_a_no_break_space_folded_to_an_ordinary_one_is_prose_again():
+    """Honest about a consequence rather than quiet about it. `clean_text`
+    turns U+00A0 into an ordinary space before any of this runs, so in a
+    sentence it is indistinguishable from language and is not grouped; in a
+    measurement field it still is. U+202F survives and is unambiguous
+    everywhere."""
+    dto = cat.to_dto({"id": "1", "code": "A", "name": "Item", "available": 5,
+                      "availableKnown": True,
+                      "description": "A 5\u00a0000 mAh power bank."})
+    assert dto["description"] == "A 5 000 mAh power bank.", "clean_text folds it"
+    assert cat.product_features(dto) == [], "so prose will not group it"
+    assert ("battery", "5,000 mAh") in _struct(capacity="5\u00a0000 mAh")
+    assert ("battery", "5,000 mAh") in _feat(
+        name="Item", description="A 5\u202f000 mAh power bank."), "U+202F survives"
+
+
+# ---- what the count guard still protects ---------------------------------
+#
+# Exactly one thing: a quantity written into a field whose job is a
+# measurement. It was never able to be the answer for prose, and prose no
+# longer needs one.
+
+
+@pytest.mark.parametrize("value,misreading", [
+    ("set of 4 750 ml", "4,750 ml"),
+    ("pack of 2 500 ml", "2,500 ml"),
+    ("box of 6 250 ml", "6,250 ml"),
+    ("case of 12 330 ml", "12,330 ml"),
+    ("carton of 24 500 ml", "24,500 ml"),
+    ("pair of 2 500 ml", "2,500 ml"),
+    ("qty 4 750 ml", "4,750 ml"),
+    ("quantity 4 750 ml", "4,750 ml"),
+    ("units: 4 750 ml", "4,750 ml"),
+    ("pieces 6 250 ml", "6,250 ml"),
+])
+def test_a_count_written_into_a_measurement_field_is_not_the_measurement(
+        value, misreading):
+    feats = _struct(capacity=value)
+    labels = [t for _, t in feats]
+    assert misreading not in labels, value
+    assert [t for t in labels if t.endswith(" ml")] == [], (value, labels)
+
+
+@pytest.mark.parametrize("value,wanted", [
+    #: a word between the two figures already separates them
+    ("4 pieces 750 ml", "750 ml"),
+    ("4 pcs 750 ml", "750 ml"),
+    ("4 x 750 ml", "750 ml"),
+    ("3 x 1000 mAh", "1,000 mAh"),
+    #: a count word that is not immediately in front of the figure says
+    #: nothing about it
+    ("holds 1 500 ml", "1,500 ml"),
+    ("per unit 1 500 ml", "1,500 ml"),
+])
+def test_the_count_guard_does_not_suppress_a_real_measurement(value, wanted):
+    assert wanted in [t for _, t in _struct(capacity=value)], value
+
+
+def test_the_count_words_are_short_and_explicit():
+    """A vague word in that list would suppress a real specification, which
+    is the same mistake in the other direction."""
+    for word in ("bottle", "capacity", "holds", "with", "and", "of", "each",
+                 "size", "volume", "large", "the"):
+        labels = [t for _, t in _struct(capacity=f"{word} 1 500 ml")]
+        assert "1,500 ml" in labels, word
+
+
+# ---- the production record -----------------------------------------------
+
 def test_the_real_maglite_description_is_the_regression():
-    """The production record, as reviewed. Both ways of writing the capacity
-    give the same badge, and neither gives the one that was reported."""
+    """The reported product, as reviewed. Its description writes the
+    capacity with a comma, which is unambiguous in prose, so it reads the
+    same as it always should have."""
     for capacity in ("The 5,000 mAh capacity provides reliable backup power "
                      "for a phone or a pair of earbuds.",
                      "The 5000 mAh capacity provides reliable backup power "
@@ -2454,129 +2634,12 @@ def test_the_real_maglite_description_is_the_regression():
     assert not re.search(r"(?<![\d,])0 mAh", text), text
 
 
-# ---------------- a count is not the start of a measurement ----------------
-#
-# Supporting an ASCII space as a thousands separator is what "5 000 mAh"
-# needs and what "Set of 4 750 ml bottles" cannot survive: the second reads
-# as 4,750 ml, which is a specification no reader would question and the
-# product does not have. A badge is optional; a plausible wrong one is not.
-
-
-@pytest.mark.parametrize("text,wanted", [
-    ("5 000 mAh power bank.", ("battery", "5,000 mAh")),
-    ("Capacity 5 000 mAh.", ("battery", "5,000 mAh")),
-    ("A 10 000 mAh cell.", ("battery", "10,000 mAh")),
-    ("1 500 W charging station.", ("bolt", "1,500W charging")),
-    ("A 1 000 ml bottle.", ("droplet", "1,000 ml")),
-    ("Lasts 1 200 hours.", ("clock", "1,200 hours")),
-    #: the three unambiguous spellings keep working beside the ambiguous one
-    ("A 5,000 mAh cell.", ("battery", "5,000 mAh")),
-    ("A 5\u00a0000 mAh cell.", ("battery", "5,000 mAh")),
-    ("A 5\u202f000 mAh cell.", ("battery", "5,000 mAh")),
-    ("A 5000 mAh cell.", ("battery", "5,000 mAh")),
-])
-def test_a_space_grouped_figure_still_reads_as_one_number(text, wanted):
-    assert wanted in _feat(name="Item", description=text), text
-
-
-#: Every shape this guard exists for, and what the text really says.
-COUNTED = [
-    ("Set of 4 750 ml bottles.", "4,750 ml"),
-    ("A set of 4 750 ml bottles.", "4,750 ml"),
-    ("Sets of 4 750 ml bottles.", "4,750 ml"),
-    ("Pack of 2 500 ml bottles.", "2,500 ml"),
-    ("Box of 6 250 ml cups.", "6,250 ml"),
-    ("Case of 12 330 ml cans.", "12,330 ml"),
-    ("Carton of 24 500 ml bottles.", "24,500 ml"),
-    ("Pair of 2 500 ml flasks.", "2,500 ml"),
-    ("Bundle of 2 500 ml flasks.", "2,500 ml"),
-    ("Quantity 4 750 ml bottles.", "4,750 ml"),
-    ("Qty 4 750 ml bottles.", "4,750 ml"),
-    ("Qty: 4 750 ml bottles.", "4,750 ml"),
-    ("Units: 4 750 ml bottles.", "4,750 ml"),
-    ("Pieces 6 250 ml cups.", "6,250 ml"),
-]
-
-
-@pytest.mark.parametrize("text,misreading", COUNTED)
-def test_a_count_is_never_read_as_part_of_the_measurement(text, misreading):
-    """The wrong figure must not appear — and since the real one cannot be
-    recovered from a number we have just said we cannot read, no badge at
-    all is the right answer. Asserted as both: never the misreading, and
-    nothing invented in its place."""
-    feats = _feat(name="Item", description=text)
-    labels = [t for _, t in feats]
-    assert misreading not in labels, text
-    volume = [t for t in labels if t.endswith(" ml") or t.endswith(" mAh")]
-    assert volume == [], (text, volume)
-
-
-@pytest.mark.parametrize("text,wanted", [
-    #: a word between the two figures already separates them, so these never
-    #: needed the guard and must not be caught by it
-    ("4 pieces 750 ml.", "750 ml"),
-    ("4 pcs 750 ml.", "750 ml"),
-    ("4 x 750 ml bottles.", "750 ml"),
-    ("Bundle of 3 1000 mAh units.", "1,000 mAh"),
-    #: a count word that is not immediately in front of the figure says
-    #: nothing about it
-    ("This set of bottles holds 1 500 ml.", "1,500 ml"),
-    ("Pieces of the set hold 1 500 ml.", "1,500 ml"),
-    ("Sold in units of 1 500 ml.", "1,500 ml"),
-    #: and a rejected reading does not cost a later, honest one
-    ("Set of 4 750 ml bottles, each holding 750 ml.", "750 ml"),
-    ("Pack of 2 500 ml bottles. The 5,000 mAh bank is included.", "5,000 mAh"),
-])
-def test_the_count_guard_does_not_suppress_a_real_measurement(text, wanted):
-    assert wanted in [t for _, t in _feat(name="Item", description=text)], text
-
-
-def test_only_an_ascii_space_is_treated_as_ambiguous():
-    """A comma is this feed's own grouping convention and a narrow no-break
-    space is typography: both say "these digits are one number", so a count
-    word in front of one changes nothing.
-
-    A **plain** no-break space is the exception, and not by choice:
-    `clean_text` folds U+00A0 to an ordinary space long before the feature
-    parser sees the text, so by then it is indistinguishable from language
-    and is guarded like one. It still groups — "5\u00a0000 mAh" is 5,000 mAh —
-    it simply also gets the benefit of the doubt withdrawn.
-    """
-    for written in ("4,750", "4\u202f750"):
-        labels = [t for _, t in _feat(
-            name="Item", description=f"Set of {written} ml bottles.")]
-        assert "4,750 ml" in labels, repr(written)
-
-    folded = cat.to_dto({"id": "1", "code": "A", "name": "Item", "available": 5,
-                         "availableKnown": True,
-                         "description": "Set of 4\u00a0750 ml bottles."})
-    assert folded["description"] == "Set of 4 750 ml bottles.", "clean_text folds it"
-    assert cat.product_features(folded) == [], "so the guard sees language"
-    assert ("battery", "5,000 mAh") in _feat(
-        name="Item", description="A 5\u00a0000 mAh cell."), "and it still groups"
-
-    #: the guard's own reading of what is ambiguous
-    assert cat._SPACE_GROUPED.search("4 750")
-    for unambiguous in ("4,750", "4\u202f750", "4750"):
-        assert not cat._SPACE_GROUPED.search(unambiguous), repr(unambiguous)
-
-
-def test_the_count_words_are_short_and_explicit():
-    """A vague word here would suppress a real specification, which is the
-    same mistake in the other direction."""
-    for word in ("bottle", "capacity", "holds", "with", "and", "of", "each",
-                 "size", "volume", "large", "the"):
-        labels = [t for _, t in _feat(
-            name="Item", description=f"A {word} 1 500 ml flask.")]
-        assert "1,500 ml" in labels, word
-
-
 def test_the_figure_normalizer_is_one_function_for_every_rule():
     """Separately, because every badge's figure goes through it."""
     import re as _re
 
-    def fig(written):
-        m = _re.search(cat._FIGURE_IN, f"a {written} x")
+    def fig(written, figure=cat._FIGURE):
+        m = _re.search(cat._figure_before(r"x", figure=figure), f"a {written} x")
         return cat._fig(m) if m else None
 
     assert fig("5000") == "5,000"
@@ -2588,6 +2651,9 @@ def test_the_figure_normalizer_is_one_function_for_every_rule():
     assert fig("22.50") == "22.5", "a trailing nought is noise"
     assert fig("22.0") == "22"
     assert fig("1,000.5") == "1,000.5"
+    #: and the prose pattern is the same function with one separator removed
+    assert fig("5,000", cat._FIGURE_PROSE) == "5,000"
+    assert fig("5 000", cat._FIGURE_PROSE) is None
 
 
 def test_a_product_that_says_nothing_specific_gets_no_badges():

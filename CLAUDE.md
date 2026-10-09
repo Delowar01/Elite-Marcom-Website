@@ -353,34 +353,51 @@ documentation). Non-negotiable rules from it:
     description reading "The 5,000 mAh capacity …" the scan failed at the
     "5" and matched the "000" three characters later, so ITWC 1302 told a
     customer "0 mAh" — and `\b(\d{1,3})\s*w\b` turned "1,500 W" into
-    "500W charging", a lower claim about a real product. `_FIGURE` is three
-    branches and the order is the fix: **grouped** first so the whole number
-    wins at the leftmost position; **four digits or more**, which cannot be
-    a group tail and so needs no guard ("USB 3.0 and a 5000 mAh cell" still
-    matches); and a **short** one-to-three-digit run, refused directly after
-    a digit or a digit and a separator, so the tail of a malformed "5,00" is
-    no badge rather than a wrong one. `_fig` then prints it one way —
-    grouped in thousands, the fraction as written, no trailing ".0" — so
-    "5000" and "5,000" and "5 000" are one badge and a reader comparing two
-    products is not reading two conventions.
-    **A count is not the start of a measurement.** Accepting a plain space
-    as a separator is what "5 000 mAh" needs and what "Set of 4 750 ml
-    bottles" cannot survive — it read as 4,750 ml, a specification no reader
-    would question and the product does not have. A comma is this feed's own
-    convention and a narrow no-break space is typography; both say "one
-    number". A plain space is language, so `_is_counted` refuses the grouped
-    reading when one of a short, explicit list of count words
-    (`_COUNT_LEAD` — set/pack/box/case/carton/bundle/pair/tray *of*,
-    quantity, qty, pcs, pieces, units) stands immediately in front of it.
-    The rule then finds nothing, and **no badge is the answer**: pulling the
-    750 back out of a number we have just said we cannot read would mean
-    unpicking the guard that stops "5 00 ml" becoming "0 ml". Keep that list
-    short — a vague word here suppresses a real specification, which is the
-    same mistake in the other direction, and "4 pcs 750 ml" and "4 x 750 ml"
-    need nothing because the word between the figures already separates
-    them. One wrinkle worth knowing: `clean_text` folds U+00A0 to an
-    ordinary space before any of this runs, so a plain no-break space groups
-    but is guarded like language; only U+202F stays unambiguous. Each
+    "500W charging", a lower claim about a real product. `_figure(sep)` is
+    three branches and the order is the fix: **grouped** first so the whole
+    number wins at the leftmost position; **four digits or more**, which
+    cannot be a group tail and so needs no guard ("USB 3.0 and a 5000 mAh
+    cell" still matches); and a **short** one-to-three-digit run, refused
+    directly after a digit or a digit and any separator (`_TAIL_SEP`, which
+    always includes the ordinary space), so the tail of a malformed "5,00"
+    — or of a prose "5 000" — is no badge rather than a wrong one. `_fig`
+    then prints it one way: grouped in thousands, the fraction as written,
+    no trailing ".0".
+    **Where a figure was written decides how far it is trusted.** Accepting
+    an ordinary space as a separator is what "5 000 mAh" needs and what "Set
+    of 4 750 ml bottles" cannot survive — it read as 4,750 ml, a
+    specification no reader would question and the product does not have.
+    The first attempt was a list of count words, and it was the wrong shape:
+    "a gift set containing 4 750 ml bottles" walked straight through it, and
+    no enumeration of verbs ever closes that. The fields used to be joined
+    into one string before anything was read, which threw away the fact that
+    settles it. They are read separately now (`feature_sources`):
+    `STRUCTURED_FIELDS` (**capacity, size**) are measurement fields, read
+    one at a time and never joined — a capacity of "2" beside a size of
+    "500 ml" would otherwise invent "2 500 ml" — and they accept
+    `_GROUP_SEP`, ordinary space included, because the field itself is the
+    context. `PROSE_FIELDS` (**name, description, material**) are read as
+    one passage, so negation still reaches across a sentence, and they
+    accept `_PROSE_SEP`, which is the same list **without** the ordinary
+    space. `material` is prose deliberately: "Stainless steel" describes a
+    material, it does not promise that a figure inside it is a measurement.
+    Two rule tables are built from one literal definition (`_rules(figure)`)
+    so the rules are written once; families still deduplicate across every
+    source. **A missing badge is acceptable; a plausible false
+    specification is not** — prose carrying "5 000 mAh" simply gets no
+    badge, and the 750 is never pulled back out of a number we have just
+    said we cannot read.
+    `_is_counted` / `_COUNT_LEAD` survive, and guard **exactly one thing**:
+    a quantity written into a field whose job is a measurement
+    (`capacity = "set of 4 750 ml"`), the one source where a space still
+    groups. It is passed `guard_counts=True` from there and nowhere else.
+    Keep that list short — a vague word in it suppresses a real
+    specification, which is the same mistake reversed — and do not grow it
+    to cover prose, which no longer needs it.
+    One wrinkle, asserted rather than glossed: `clean_text` folds U+00A0 to
+    an ordinary space before any of this runs, so a plain no-break space
+    still groups in a measurement field but is read as language in prose;
+    only U+202F is unambiguous everywhere. Each
     rule belongs to a **family** that fires once, because "PD 22.5W" and
     "22.5W charging" are one fact twice and the second slot is better spent.
     A match is rejected when a negation stands near it **in the same
