@@ -8,11 +8,16 @@ coordinate that looks odd is a coordinate that was measured.
 
 Three rules the translation keeps.
 
-**Only two things are raster.** The official wordmark and the branded hero
-photograph are images because they are photographs and artwork; the
-background, the orange field, the watermark, every letter, the metadata band,
-its icons and its rules are vector or text. The page stays searchable, scales
-without pixels, and does not carry a flattened picture of itself.
+**Three things are raster, and they are the approved artwork.** The official
+wordmark (`logo.png`), the faint watermark symbol derived from it
+(`watermark.png`) and the branded hero photograph (`hero.jpg`) are images
+because that is what the master supplies them as. Everything else — the
+background fall, the orange field and its shading, every letter, the metadata
+band, its icons and its rules — is vector or text, so the page stays
+searchable, scales without pixels, and does not carry a flattened picture of
+itself. Those three drawn images reach the file as five image XObjects: the
+hero is one opaque JPEG, while the wordmark and the watermark each carry a
+separate greyscale soft mask for their transparency.
 
 **The hero is supplied, not composed.** The seven product applications in it
 — backpack, tote, bottle, two notebooks, power bank, pen — were projected
@@ -55,7 +60,7 @@ MUTED = "#6B6A75"
 LINE = "#D9D5D0"
 SHADOW = "#A7917E"
 
-# ---------------- the two surfaces beneath everything ----------------
+# ---------------- what sits beneath everything ----------------
 
 #: A restrained white-to-Ground fall, beginning only below the heading, so
 #: the whole title sits on pure white.
@@ -68,12 +73,13 @@ FIELD_PATH = "M152 0 C146 28 146 53 140 80 C134 108 121 138 108 151 L55 250.555 
 FIELD_AXIS = ((112.0, 0.0), (210.0, 65.0))
 FIELD_STOPS = ((0.00, "#F4C09A"), (0.40, "#ED9458"), (0.76, "#E56C25"), (1.00, "#DE6423"))
 
-#: A very faint symbol, clipped to the field. Its 12 mm right bleed is
-#: deliberate and is cropped by the page.
+#: A very faint symbol, clipped to the field — `watermark.png`, the second of
+#: the three raster assets. Its 12 mm right bleed is deliberate and is cropped
+#: by the page.
 WATERMARK_BOX = (126.0, 39.0, 96.0, 96.0)
 WATERMARK_ALPHA = 0.075
 
-# ---------------- the two raster assets ----------------
+# ---------------- the other two raster assets ----------------
 
 #: 57 mm wide; the height is the source's own 518/1629 ratio and nothing
 #: else. The wordmark is never re-typeset, traced or recoloured.

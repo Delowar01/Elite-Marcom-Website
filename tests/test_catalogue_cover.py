@@ -131,14 +131,44 @@ def test_the_cover_is_exactly_one_page_and_the_product_follows():
 
 
 @measured
-def test_only_the_wordmark_and_the_hero_are_raster():
-    """Everything else — the field, the gradient, the band, the icons, every
-    letter — stays vector or text."""
+def test_only_the_three_approved_cover_assets_are_raster():
+    """Three pictures, and they are the approved artwork: the official
+    wordmark, the faint watermark symbol derived from it, and the branded
+    hero. Everything else — the field, the gradient, the band, the icons,
+    every letter — stays vector or text.
+
+    The count of *drawn* pictures is three; the count of image XObjects
+    behind them is five, because the two PNGs keep their transparency as a
+    separate greyscale soft mask. Both are asserted, so neither reading can
+    be mistaken for the other, and a fourth picture fails whichever way it
+    arrives.
+    """
     doc = pymupdf.open(stream=one_product_pdf(), filetype="pdf")
-    sizes = sorted((w, h) for _, _, w, h, *_ in doc[0].get_images(full=True))
-    assert (518, 518) in sizes, "the watermark"
-    assert (1629, 518) in sizes, "the official wordmark, at its own size"
-    assert len(sizes) == 3, f"one more raster than the design has: {sizes}"
+    #: (xref, smask xref, width, height, bpc, colourspace, …, filter, …)
+    images = doc[0].get_images(full=True)
+    by_size = {(im[2], im[3]): im for im in images}
+    assert len(images) == 3, (
+        f"one more raster than the design has: {sorted(by_size)}")
+
+    wordmark = by_size.get((1629, 518))
+    watermark = by_size.get((518, 518))
+    assert wordmark, f"the official wordmark, at its own size: {sorted(by_size)}"
+    assert watermark, f"the watermark symbol: {sorted(by_size)}"
+    hero = next(im for im in images if im is not wordmark and im is not watermark)
+
+    masks = []
+    for name, im in (("wordmark", wordmark), ("watermark", watermark)):
+        assert im[1], f"the {name}'s transparency must survive as a soft mask"
+        masks.append(im[1])
+        assert doc.xref_get_key(im[1], "ColorSpace")[1] == "/DeviceGray", name
+    assert hero[1] == 0, "the hero is baked opaque, so it carries no mask"
+    assert hero[8] == "DCTDecode", f"the hero goes in as its own JPEG: {hero[8]}"
+    assert hero[3] / hero[2] == pytest.approx(
+        cover.HERO_BOX[3] / cover.HERO_BOX[2], abs=0.001), "the hero's own box"
+
+    xobjects = {im[0] for im in images} | set(masks)
+    assert len(xobjects) == 5, (
+        f"three pictures, two soft masks, nothing else: {sorted(xobjects)}")
 
 
 def test_the_cover_text_is_real_text():

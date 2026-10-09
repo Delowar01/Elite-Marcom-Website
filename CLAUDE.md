@@ -467,11 +467,18 @@ documentation). Non-negotiable rules from it:
   improved, rounded off or re-judged; the implementation map wins for cover
   visuals, and the catalogue's own logic still wins for stock, selection,
   counts, dates, prices, images, sharing and size.
-  - **Only two things are raster.** The official wordmark and the branded
-    hero. The background fall, the orange field, the watermark, every letter,
-    the metadata band, its three icons and its rules are vector or text, so
-    the page stays searchable and scales without pixels. A test fails if a
-    third raster appears.
+  - **Three things are raster, and they are the approved artwork.** The
+    official wordmark (`logo.png`), the faint watermark symbol derived from it
+    (`watermark.png`) and the branded hero photograph (`hero.jpg`) — the
+    master supplies all three as images and the watermark is deliberately not
+    traced. The background fall, the orange field and its shading, every
+    letter, the metadata band, its three icons and its rules are vector or
+    text, so the page stays searchable and scales without pixels. A test
+    fails if a fourth raster appears. Those three drawn images are carried by
+    **five** image XObjects: the hero is one opaque JPEG, and the wordmark and
+    the watermark each have a greyscale soft mask for their transparency — so
+    a test counting objects rather than drawn pictures must say five, and
+    `page.get_images()` on the cover says three.
   - **The wordmark is a file, never a drawing.** `logo.png` is the approved
     source byte for byte — SHA-256 `38cb42d7…`, asserted in a test — placed
     at 16/12 mm, 57 mm wide and `57 × 518 / 1629` tall, which is its own
@@ -515,6 +522,14 @@ documentation). Non-negotiable rules from it:
     the first embedded fonts this application ships; the standard 14 are
     still what every other page uses. If the files go missing the cover sets
     in Helvetica rather than failing, and `fonts_ready()` says so.
+    The faces are under the **SIL Open Font License 1.1**, which the fonts'
+    own name table declares, and the licence travels with them:
+    `server/data/fonts/OFL.txt` is the authoritative text as distributed with
+    the upstream family (`google/fonts/ofl/poppins`), copyright 2020 The
+    Poppins Project Authors. It is verbatim and must stay beside the files —
+    the OFL requires the notice to be bundled with the font software, so
+    moving or trimming it is a licence matter, not tidying. Never write
+    licence text by hand.
 
 - **A shared web catalogue is a frozen copy, not a live view**
   (`server/catalogue_share.py`, `catalogue_shares` and `catalogue_assets` in

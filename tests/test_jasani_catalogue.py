@@ -1778,10 +1778,15 @@ def _all_image_streams(pdf: bytes) -> list[tuple[int, bool]]:
 # raw pixels.
 
 
-#: The approved cover brings three images of its own — the wordmark, the
-#: watermark and the branded hero — and they are the same bytes in every
-#: catalogue. A test about a product's photographs subtracts them.
-COVER_IMAGE_BYTES = sorted(
+#: Every image a catalogue carries that is not a product's photograph: the
+#: approved cover's three pictures — the wordmark, the watermark and the
+#: branded hero — plus the header wordmark each product page draws. That is
+#: **seven** image XObjects rather than four, because the wordmark, the
+#: watermark and the page header each keep their transparency as a separate
+#: greyscale soft mask; only the baked hero goes in alone. They are the same
+#: bytes in every catalogue, so a test about a product's photographs
+#: subtracts them.
+CHROME_IMAGE_BYTES = sorted(
     n for n, _ in _all_image_streams(cat.build(
         [{"id": "x", "code": "X", "name": "X", "available": 1,
           "availableKnown": True}], {}, market="ksa", title="T",
@@ -1791,7 +1796,7 @@ COVER_IMAGE_BYTES = sorted(
 def image_streams(pdf: bytes) -> list[tuple[int, bool]]:
     """(bytes, is_jpeg) for every image a *product* put in the file."""
     out = list(_all_image_streams(pdf))
-    for size in COVER_IMAGE_BYTES:
+    for size in CHROME_IMAGE_BYTES:
         for n, row in enumerate(out):
             if row[0] == size:
                 out.pop(n)
@@ -1928,11 +1933,12 @@ def test_the_document_weighs_what_its_photographs_weigh():
     supplied = sum(len(b) for blobs in photos.values() for b in blobs)
     embedded = sum(n for n, _ in image_streams(pdf))
     assert embedded <= supplied + 60_000, "images plus the small logo"
-    #: the approved cover is a fixed cost — the same wordmark, watermark and
-    #: branded hero whatever the catalogue — so it is named rather than
-    #: hidden inside a looser bound
-    cover_cost = sum(COVER_IMAGE_BYTES)
-    assert len(pdf) < supplied * 1.2 + cover_cost + 200_000
+    #: the chrome is a fixed cost — the approved cover's wordmark, watermark
+    #: and branded hero, plus each page's header wordmark, the same bytes
+    #: whatever the catalogue — so it is named rather than hidden inside a
+    #: looser bound
+    chrome_cost = sum(CHROME_IMAGE_BYTES)
+    assert len(pdf) < supplied * 1.2 + chrome_cost + 200_000
     photographs = [jpeg for size, jpeg in image_streams(pdf) if size > 20_000]
     assert photographs and all(photographs), "the photographs are JPEG streams"
 
