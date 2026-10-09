@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import io
 import json
+import pathlib
 import time
+import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -112,12 +114,21 @@ def jpeg_bytes(seed=0, w=800, h=800) -> bytes:
 
 @pytest.fixture
 def photos(monkeypatch):
-    """Every image URL answers with a real JPEG, and the reads are counted."""
+    """Every image URL answers with a real JPEG, and the reads are counted.
+
+    A test can make the image host behave like one: set `replace` to serve
+    different bytes from that moment on (a supplier swapping a photograph
+    behind the same address), or `fail` to make it unreachable.
+    """
     made: dict[str, bytes] = {}
-    stats = {"fetches": 0}
+    stats: dict = {"fetches": 0, "replace": None, "fail": False}
 
     async def serve(url):
         stats["fetches"] += 1
+        if stats["fail"]:
+            return None
+        if stats["replace"] is not None:
+            return stats["replace"]
         made.setdefault(url, jpeg_bytes(seed=len(made)))
         return made[url]
 
@@ -579,6 +590,356 @@ def test_a_picture_is_prepared_once_per_distinct_photograph(big_snapshot, photos
     again = make_share(ids=[str(3000 + n) for n in range(120)])
     assert photos["fetches"] == 120, "re-sharing re-reads nothing"
     assert again["products"] == 120
+
+
+# ---------------- two builds, one photograph, at the same moment ----------------
+
+def test_the_same_picture_written_concurrently_lands_once_and_whole():
+    """Two share builds meeting one uncached photograph.
+
+    Both see the destination missing and both write it. With a temporary
+    file named after the picture rather than after the writer they were
+    writing the same path and then both renaming it, and whoever lost the
+    race renamed a file that was no longer there.
+    """
+    import threading
+
+    encoded = jpeg_bytes(seed=11) * 3           # bytes, not a valid image: the
+    digest = cs.hashlib.sha256(encoded).hexdigest()   # store does not care
+    (cs.assets_dir() / f"{digest}.webp").unlink(missing_ok=True)
+    start = threading.Barrier(12)
+    out, errors = [], []
+
+    def write():
+        try:
+            start.wait(timeout=10)
+            out.append(cs.store_asset(encoded))
+        except Exception as exc:                # pragma: no cover - the bug
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=write) for _ in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(20)
+
+    assert not errors, errors
+    assert out == [digest] * 12, "every caller agrees on the hash"
+    final = list(cs.assets_dir().glob("*.webp"))
+    assert len(final) == 1, final
+    assert final[0].read_bytes() == encoded, "whole bytes, never a partial file"
+    assert not list(cs.assets_dir().glob("*.part")), "no temporary debris"
+
+
+def test_different_pictures_written_concurrently_all_survive():
+    import threading
+
+    blobs = [jpeg_bytes(seed=n) + bytes([n]) for n in range(8)]
+    done, errors = [], []
+    start = threading.Barrier(len(blobs))
+
+    def write(blob):
+        try:
+            start.wait(timeout=10)
+            done.append((cs.store_asset(blob), blob))
+        except Exception as exc:                # pragma: no cover
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=write, args=(b,)) for b in blobs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(20)
+
+    assert not errors, errors
+    assert len({d for d, _ in done}) == len(blobs)
+    for digest, blob in done:
+        assert (cs.assets_dir() / f"{digest}.webp").read_bytes() == blob
+    assert not list(cs.assets_dir().glob("*.part"))
+
+
+def test_the_sweep_clears_debris_a_dead_writer_left(snapshot, photos):
+    """Nothing but a crashed write ever makes a `.part`, so an old one is
+    debris. A fresh one belongs to a build that may still be running."""
+    stale = cs.assets_dir() / ("a" * 64 + ".0-deadbeef.part")
+    stale.write_bytes(b"half a picture")
+    import os as _os
+    old_time = time.time() - 2 * cs.ASSET_GRACE_S
+    _os.utime(stale, (old_time, old_time))
+    young = cs.assets_dir() / ("b" * 64 + ".0-cafebabe.part")
+    young.write_bytes(b"still being written")
+    cs.cleanup()
+    assert not stale.exists(), "the abandoned temporary file is gone"
+    assert young.exists(), "a write in progress is left alone"
+    young.unlink()
+
+
+def test_a_failed_write_leaves_no_temporary_file(monkeypatch):
+    def boom(self, data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", boom)
+    with pytest.raises(OSError):
+        cs.store_asset(b"anything")
+    assert not list(cs.assets_dir().glob("*.part"))
+
+
+# ---------------- a cached picture must not outlive the link ----------------
+
+def test_a_picture_is_cacheable_but_must_be_revalidated(snapshot, photos):
+    share = make_share(ids=["2000"])
+    img = client.get(share["url"] + "/index.json").json()["items"][0]["img"]
+    got = client.get(share["url"] + "/i/" + img + ".webp")
+    assert got.status_code == 200
+    cache = got.headers["cache-control"]
+    assert "no-cache" in cache and "private" in cache
+    assert "max-age=86400" not in cache
+    assert "public" not in cache and "immutable" not in cache
+    # the content hash is the validator, so a live link answers 304
+    etag = got.headers["etag"]
+    assert etag == f'"{img}"'
+    again = client.get(share["url"] + "/i/" + img + ".webp",
+                       headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert again.headers["etag"] == etag
+    assert not again.content
+
+
+def test_a_revoked_link_cannot_revalidate_a_cached_picture(snapshot, photos):
+    share = make_share(ids=["2000"])
+    img = client.get(share["url"] + "/index.json").json()["items"][0]["img"]
+    etag = client.get(share["url"] + "/i/" + img + ".webp").headers["etag"]
+    client.post("/api/admin/jasani/catalogue/shares/revoke",
+                json={"id": share["id"]}, headers=csrf())
+    after = client.get(share["url"] + "/i/" + img + ".webp",
+                       headers={"If-None-Match": etag})
+    assert after.status_code == 404, "a withdrawn link must not answer 304"
+    assert client.get(share["url"] + "/i/" + img + ".webp").status_code == 404
+
+
+def test_an_expired_link_cannot_revalidate_a_cached_picture(snapshot, photos):
+    share = make_share(ids=["2000"])
+    img = client.get(share["url"] + "/index.json").json()["items"][0]["img"]
+    etag = client.get(share["url"] + "/i/" + img + ".webp").headers["etag"]
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("UPDATE catalogue_shares SET expires_at=? WHERE id=?",
+                     (int(time.time()) - 60, share["id"]))
+        conn.commit()
+    after = client.get(share["url"] + "/i/" + img + ".webp",
+                       headers={"If-None-Match": etag})
+    assert after.status_code == 410, "a lapsed link must not answer 304"
+
+
+def test_the_page_the_data_and_the_document_are_never_stored(snapshot, photos):
+    share = make_share(ids=["2000"], allowPdf=True)
+    for path in ("", "/index.json", "/p/0.json", "/pdf"):
+        res = client.get(share["url"] + path)
+        assert res.status_code == 200, path
+        assert res.headers["cache-control"] == "no-store", path
+
+
+# ---------------- a supplier can replace a picture behind one address -------
+
+def test_a_fresh_mapping_is_reused_without_reading_the_image_host(snapshot, photos):
+    make_share(ids=["2000"])
+    assert photos["fetches"] == 1
+    make_share(ids=["2000"])
+    assert photos["fetches"] == 1, "a second share re-reads nothing"
+
+
+def test_a_stale_mapping_is_revalidated_and_unchanged_bytes_keep_their_hash(
+        snapshot, photos):
+    first = make_share(ids=["2000"])
+    before = client.get(first["url"] + "/index.json").json()["items"][0]["img"]
+    _age_mappings()
+    second = make_share(ids=["2000"])
+    assert photos["fetches"] == 2, "the stale mapping was read again"
+    after = client.get(second["url"] + "/index.json").json()["items"][0]["img"]
+    assert after == before, "same bytes, same hash, same one file"
+    assert len(list(cs.assets_dir().glob("*.webp"))) == 1
+
+
+def test_a_replaced_photograph_reaches_a_new_share_and_not_an_old_one(
+        snapshot, photos):
+    old_share = make_share(ids=["2000"])
+    old_img = client.get(old_share["url"] + "/index.json").json()["items"][0]["img"]
+    photos["replace"] = jpeg_bytes(seed=7, w=700, h=700)
+    _age_mappings()
+    new_share = make_share(ids=["2000"])
+    new_img = client.get(new_share["url"] + "/index.json").json()["items"][0]["img"]
+    assert new_img != old_img, "the new share has the supplier's new picture"
+    # and the share already in a client's hands is untouched
+    assert client.get(old_share["url"] + "/index.json").json()["items"][0]["img"] \
+        == old_img
+    assert client.get(old_share["url"] + "/i/" + old_img + ".webp").status_code == 200
+    assert client.get(new_share["url"] + "/i/" + new_img + ".webp").status_code == 200
+
+
+def test_an_unreachable_image_host_leaves_the_last_known_good_picture(
+        snapshot, photos):
+    share = make_share(ids=["2000"])
+    img = client.get(share["url"] + "/index.json").json()["items"][0]["img"]
+    _age_mappings()
+    photos["fail"] = True
+    again = make_share(ids=["2000"])
+    assert client.get(again["url"] + "/index.json").json()["items"][0]["img"] == img
+    # and the fetch time was not moved, so the next share tries again
+    photos["fail"] = False
+    photos["replace"] = jpeg_bytes(seed=9, w=640, h=640)
+    third = make_share(ids=["2000"])
+    assert client.get(third["url"] + "/index.json").json()["items"][0]["img"] != img
+
+
+def test_a_page_view_never_revalidates_the_source(snapshot, photos, monkeypatch):
+    share = make_share(ids=["2000"])
+    _age_mappings()
+
+    async def boom(url):
+        raise AssertionError("a page view read the image host")
+
+    monkeypatch.setattr(jasani, "_fetch_image_bytes", boom)
+    data = client.get(share["url"] + "/index.json").json()
+    assert client.get(share["url"]).status_code == 200
+    assert client.get(share["url"] + "/i/" + data["items"][0]["img"]
+                      + ".webp").status_code == 200
+
+
+def _age_mappings(days: float = 8.0) -> None:
+    """Push every URL mapping past the freshness window."""
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("UPDATE catalogue_assets SET fetched_at=?",
+                     (int(time.time() - days * 86400),))
+        conn.commit()
+
+
+# ---------------- a client's link survives a backup and restore -------------
+
+def test_a_live_share_is_carried_by_a_backup_and_comes_back_working(
+        snapshot, photos):
+    from server import backup
+
+    share = make_share(ids=["2000", "2001"], allowPdf=True)
+    url = share["url"]
+    token = url.rsplit("/", 1)[-1]
+    img = client.get(url + "/index.json").json()["items"][0]["img"]
+    blob, manifest = backup.create()
+    assert manifest["catalogueShares"] == 1
+    assert token not in blob.decode("latin-1"), "no raw token in a backup"
+
+    # the server is lost: rows, pictures and the document all go
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("DELETE FROM catalogue_shares")
+        conn.execute("DELETE FROM catalogue_assets")
+        conn.commit()
+    cs._SNAPSHOTS.clear()
+    cs._HASHES.clear()
+    for path in list(cs.assets_dir().glob("*.webp")) + list(cs.pdf_dir().glob("*.pdf")):
+        path.unlink()
+    assert client.get(url).status_code == 404
+
+    info = backup.restore(blob, "owner@elitemarcom.com")
+    assert info["restoredShares"] == 1 and info["sharesUntouched"] is False
+
+    # the link the client is holding works again, with the same token
+    page = client.get(url)
+    assert page.status_code == 200 and 'data-state="ok"' in page.text
+    data = client.get(url + "/index.json").json()
+    assert data["count"] == 2 and data["allowPdf"] is True
+    assert data["items"][0]["img"] == img
+    assert client.get(url + "/i/" + img + ".webp").status_code == 200
+    pdf = client.get(url + "/pdf")
+    assert pdf.status_code == 200 and pdf.content[:5] == b"%PDF-"
+
+
+def test_a_restore_keeps_the_history_a_share_carries(snapshot, photos):
+    from server import backup
+
+    share = make_share(ids=["2000"])
+    for _ in range(4):
+        client.get(share["url"])
+    blob, _ = backup.create()
+    backup.restore(blob, "owner@elitemarcom.com")
+    listed = client.get("/api/admin/jasani/catalogue/shares").json()["shares"]
+    mine = [s for s in listed if s["id"] == share["id"]][0]
+    assert mine["views"] == 4
+    assert mine["createdBy"] == "owner@elitemarcom.com"
+    assert mine["state"] == "live"
+
+
+def test_a_backup_carries_one_copy_of_a_photograph_two_shares_name(
+        snapshot, photos):
+    import zipfile
+
+    from server import backup
+
+    make_share(ids=["2004"])
+    make_share(ids=["2005"])          # the same picture, deliberately
+    blob, _ = backup.create()
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        pictures = [n for n in z.namelist() if n.startswith("catalogue-assets/")]
+    assert len(pictures) == 1, pictures
+
+
+def test_a_revoked_share_keeps_its_history_but_not_its_weight(snapshot, photos):
+    import zipfile
+
+    from server import backup
+
+    live = make_share(ids=["2000"])
+    gone = make_share(ids=["2001"], allowPdf=True)
+    client.post("/api/admin/jasani/catalogue/shares/revoke",
+                json={"id": gone["id"]}, headers=csrf())
+    blob, manifest = backup.create()
+    assert manifest["catalogueShares"] == 1, "only the live one is live"
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        data = json.loads(z.read("data.json"))
+        assert not [n for n in z.namelist() if n.startswith("catalogue-shares/")]
+    rows = {r["id"]: r for r in data["catalogueShares"]}
+    assert rows[gone["id"]]["revoked_at"], "the history is kept"
+    assert rows[gone["id"]]["snapshot"] == "" and rows[gone["id"]]["pdf_file"] == ""
+    assert rows[live["id"]]["snapshot"], "the live one keeps its catalogue"
+
+
+def test_a_backup_from_before_shared_catalogues_leaves_them_alone(
+        snapshot, photos):
+    """Restoring an older backup must not quietly take down every link a
+    client is holding — it has nothing to say about them."""
+    from server import backup
+
+    share = make_share(ids=["2000"])
+    blob, _ = backup.create()
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    data = json.loads(members["data.json"])
+    data.pop("catalogueShares", None)
+    data.pop("catalogueAssets", None)
+    members["data.json"] = json.dumps(data).encode()
+    old = io.BytesIO()
+    with zipfile.ZipFile(old, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, body in members.items():
+            z.writestr(name, body)
+    info = backup.restore(old.getvalue(), "owner@elitemarcom.com")
+    assert info["sharesUntouched"] is True
+    assert client.get(share["url"]).status_code == 200
+
+
+def test_restoring_never_reaches_the_supplier(snapshot, photos, monkeypatch):
+    from server import backup
+
+    share = make_share(ids=["2000"])
+    blob, _ = backup.create()
+
+    def boom(*a, **kw):
+        raise AssertionError("a restore reached the supplier")
+
+    monkeypatch.setattr(jasani, "_fetch", boom)
+    monkeypatch.setattr(jasani, "_fetch_image_bytes", boom)
+    monkeypatch.setattr(jasani, "_budget_ok", boom)
+    backup.restore(blob, "owner@elitemarcom.com")
+    assert client.get(share["url"] + "/index.json").json()["count"] == 1
 
 
 # ---------------- the viewer's own assets ----------------

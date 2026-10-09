@@ -2,10 +2,18 @@
 
 A backup is a single zip holding everything the panel owns: page content
 (all languages), pages created in the panel, design overrides, settings,
-rental inventory, media
-metadata and the uploaded media files themselves. Customer submissions are
-deliberately NOT included — they are encrypted personal data with their own
-retention rules and must not travel in an operational backup.
+rental inventory, media metadata and the uploaded media files themselves.
+Customer submissions are deliberately NOT included — they are encrypted
+personal data with their own retention rules and must not travel in an
+operational backup.
+
+**Shared catalogue links are included**, because a client is holding one. A
+link that stopped working after a restore would be a broken promise made to
+somebody outside the company, so the zip carries the share rows, the frozen
+snapshots, the photographs the live ones reference and their optional
+documents. It does not carry a raw token and does not need to: the client has
+it, and the database only ever stored its SHA-256. `catalogue_share` decides
+what is worth carrying; this module only packs it.
 """
 from __future__ import annotations
 
@@ -33,6 +41,7 @@ def _rows(table: str, columns: str) -> list[dict]:
 
 def create() -> tuple[bytes, dict]:
     from . import adminauth as aa
+    from . import catalogue_share as share_mod
     from . import content, media
 
     manifest = {
@@ -40,7 +49,7 @@ def create() -> tuple[bytes, dict]:
         "createdAt": int(time.time()),
         "createdAtHuman": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "contains": ["content", "designs", "collections", "pages", "settings", "rentals",
-                     "media", "jasaniHidden"],
+                     "media", "jasaniHidden", "catalogueShares"],
     }
     payload = {
         "content": _rows("content", "page, key, lang, value, updated_at, updated_by"),
@@ -62,6 +71,14 @@ def create() -> tuple[bytes, dict]:
         "publishes": [dict(r) for r in aa._connect().execute(
             "SELECT id, ts, by, pages FROM publishes ORDER BY id DESC LIMIT 20").fetchall()],
     }
+    shares = share_mod.backup_state()
+    payload["catalogueShares"] = shares["shares"]
+    payload["catalogueAssets"] = shares["assets"]
+    manifest["catalogueShares"] = shares["live"]
+    manifest["catalogueShareBytes"] = shares["bytes"]
+    if shares["dropped"]["assets"] or shares["dropped"]["pdfs"]:
+        #: said out loud rather than discovered after a restore
+        manifest["catalogueSharesTrimmed"] = shares["dropped"]
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("manifest.json", json.dumps(manifest, indent=1))
@@ -74,6 +91,15 @@ def create() -> tuple[bytes, dict]:
             for f in sorted(overrides.rglob("*")):
                 if f.is_file() and f.stat().st_size <= 45 * 1024 * 1024:
                     z.write(f, f"overrides/{f.relative_to(overrides).as_posix()}")
+        # content-addressed, so ten shares naming one photograph write it once
+        for digest in shares["files"]:
+            f = share_mod.assets_dir() / f"{digest}.webp"
+            if f.exists():
+                z.write(f, f"catalogue-assets/{digest}.webp")
+        for name in shares["pdfs"]:
+            f = share_mod.pdf_dir() / name
+            if f.exists():
+                z.write(f, f"catalogue-shares/{name}")
     manifest["bytes"] = buf.tell()
     manifest["mediaFiles"] = len(payload["media"])
     return buf.getvalue(), manifest
@@ -92,20 +118,22 @@ def inspect(blob: bytes) -> dict:
         raise BackupError("This backup was made by a different version of the panel.")
     return {"manifest": manifest,
             "counts": {key: len(data.get(key) or []) for key in
-                       ("content", "designs", "collections", "settings", "rentals", "media")}}
+                       ("content", "designs", "collections", "settings", "rentals",
+                        "media", "catalogueShares")}}
 
 
 def restore(blob: bytes, by: str) -> dict:
     """Replace panel-owned data with the backup's contents (admin accounts,
     sessions and customer submissions are never touched)."""
     from . import adminauth as aa
+    from . import catalogue_share as share_mod
     from . import content, media
 
     info = inspect(blob)
     with zipfile.ZipFile(io.BytesIO(blob)) as z:
         data = json.loads(z.read("data.json"))
         media.MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-        restored_files = 0
+        restored_files = restored_shares = 0
         for name in z.namelist():
             if name.startswith("media/") and _MEDIA_NAME.match(name[6:]):
                 (media.MEDIA_DIR / name[6:]).write_bytes(z.read(name))
@@ -114,6 +142,18 @@ def restore(blob: bytes, by: str) -> dict:
                 target = media.OVERRIDES_DIR / name[len("overrides/"):]
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(z.read(name))
+            # a member name is checked against what the store can hold, not
+            # against what it must not be: a hash or share-<n>.pdf, nothing else
+            elif name.startswith("catalogue-assets/"):
+                leaf = name[len("catalogue-assets/"):]
+                if share_mod.asset_name_ok(leaf):
+                    (share_mod.assets_dir() / leaf).write_bytes(z.read(name))
+                    restored_shares += 1
+            elif name.startswith("catalogue-shares/"):
+                leaf = name[len("catalogue-shares/"):]
+                if share_mod.pdf_name_ok(leaf):
+                    (share_mod.pdf_dir() / leaf).write_bytes(z.read(name))
+                    restored_shares += 1
     now = int(time.time())
     with aa._lock:
         conn = aa._connect()
@@ -156,10 +196,18 @@ def restore(blob: bytes, by: str) -> dict:
                           r.get("height"), r.get("alt", ""), r.get("created_at", now),
                           r.get("created_by", "")))
         conn.commit()
+    #: outside the big transaction on purpose: the share table is its own
+    #: store with its own files, and a failure here must not roll back the
+    #: website's content
+    share_result = share_mod.restore_state(data.get("catalogueShares"),
+                                           data.get("catalogueAssets"), by)
     rentals = data.get("rentals")
     if rentals:
         content._write_rentals(rentals)
     info["restoredFiles"] = restored_files
+    info["restoredShareFiles"] = restored_shares
+    info["restoredShares"] = share_result["shares"]
+    info["sharesUntouched"] = share_result["skipped"]
     return info
 
 

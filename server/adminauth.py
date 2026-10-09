@@ -217,15 +217,42 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     -- Which picture a supplier URL was turned into, so sharing the same
     -- products twice re-reads nothing. The file itself is named by the hash
     -- of its own bytes, so two URLs holding one photograph are one file.
+    -- Two timestamps, because they answer two different questions.
+    -- `fetched_at` is when the supplier's picture was last read, and decides
+    -- whether a NEW share may reuse this mapping or must look again;
+    -- `last_used_at` is when a build last named the file, and is what keeps
+    -- the sweep off a picture a share is still being written around.
     CREATE TABLE IF NOT EXISTS catalogue_assets (
         url_key TEXT PRIMARY KEY,
         hash TEXT NOT NULL,
         bytes INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT 0
+        fetched_at INTEGER NOT NULL DEFAULT 0,
+        last_used_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS catalogue_assets_hash ON catalogue_assets(hash);
     """)
+    _widen_catalogue_assets(conn)
     conn.commit()
+
+
+def _widen_catalogue_assets(conn: sqlite3.Connection) -> None:
+    """The one column change this schema has ever needed.
+
+    `catalogue_assets` shipped with a single `created_at` that was asked to
+    mean both "when we last read the supplier's picture" and "when a build
+    last named this file". Those are different questions and the second one
+    was overwriting the first, so a mapping could never be seen as stale.
+    `CREATE TABLE IF NOT EXISTS` cannot widen a table that already exists, so
+    this does — once, idempotently, seeding both from the old value.
+    """
+    names = {row[1] for row in conn.execute("PRAGMA table_info(catalogue_assets)")}
+    if not names or "fetched_at" in names:
+        return
+    conn.execute("ALTER TABLE catalogue_assets ADD COLUMN fetched_at INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE catalogue_assets ADD COLUMN last_used_at INTEGER NOT NULL DEFAULT 0")
+    if "created_at" in names:
+        conn.execute("UPDATE catalogue_assets SET fetched_at=created_at, "
+                     "last_used_at=created_at")
 
 
 # ---------------- passwords (scrypt: memory-hard, stdlib) ----------------

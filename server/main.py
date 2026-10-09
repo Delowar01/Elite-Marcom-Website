@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -346,13 +346,25 @@ async def catalogue_share_product(token: str, index: int):
 
 
 @app.get("/catalogue/{token}/i/{name}", include_in_schema=False)
-async def catalogue_share_image(token: str, name: str):
+async def catalogue_share_image(token: str, name: str,
+                                if_none_match: str | None = Header(default=None)):
     """One photograph from this share.
 
     The name is the SHA-256 of the file's own bytes, so it carries no
     separator a traversal could use, and it has to be one of the pictures
     *this* share names — a live link hands out the catalogue it was made for
     and nothing else in the store.
+
+    **The cache must not outlive the link.** A picture behind a bearer link
+    was being sent with `max-age=86400`, which lets a browser reuse it for a
+    day without asking us anything: revoke a catalogue and its page, data and
+    document stop, while a picture already in that browser's cache keeps
+    resolving. `no-cache` is not "do not store" — the browser still keeps the
+    file and still avoids re-downloading it — it is "ask first", and asking
+    is what makes revocation complete. The share is resolved **before** the
+    conditional is honoured, so a withdrawn or expired link gets its closed
+    state rather than a 304. The ETag is the content hash, which is the one
+    thing about this file that can never drift from its bytes.
     """
     from . import catalogue_share as cs
 
@@ -363,12 +375,12 @@ async def catalogue_share_image(token: str, name: str):
     path = cs.asset_path(name)
     if path is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(path, media_type="image/webp", headers={
-        # content-addressed, so the bytes behind this name can never change;
-        # a day is long enough to make the grid quick and short enough that a
-        # withdrawn link stops showing pictures too
-        "Cache-Control": "private, max-age=86400",
-        "X-Robots-Tag": _SHARE_ROBOTS})
+    etag = f'"{stem}"'
+    headers = {"Cache-Control": "private, no-cache", "ETag": etag,
+               "X-Robots-Tag": _SHARE_ROBOTS}
+    if if_none_match and etag in [t.strip() for t in if_none_match.split(",")]:
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, media_type="image/webp", headers=headers)
 
 
 @app.get("/catalogue/{token}/pdf", include_in_schema=False)

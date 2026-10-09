@@ -499,6 +499,57 @@ documentation). Non-negotiable rules from it:
     with no separator a traversal could use. Cleanup is mark-and-sweep over
     the live snapshots, never reference counting, because a count that drifts
     leaves either a broken picture or a file nobody can delete.
+    **The temporary file is per writer, not per picture.** Two builds meeting
+    one uncached photograph both see the destination missing and both write
+    it; with a shared `<digest>.webp.part` they wrote the same path and then
+    both renamed it, so whichever lost the race renamed a file that was no
+    longer there. `store_asset` writes `<digest>.<pid>-<random>.part` in the
+    same directory and `os.replace`s it, which is atomic within a directory:
+    the loser simply overwrites the winner with identical bytes, a reader
+    never sees a partial file because a partial file never has the final
+    name, and a failed write cleans up after itself.
+  - **Two timestamps on a mapping, because they answer two questions.**
+    `last_used_at` moves whenever a build names a picture and is what keeps
+    the sweep off it; `fetched_at` moves only when the image host was really
+    read, and is what decides whether a **new** share may reuse the mapping.
+    Overloading one column meant every reuse looked like a fresh read, so a
+    mapping could never go stale and a photograph the supplier replaced
+    behind the same address would have been ours for ever. Past
+    `SOURCE_TTL_S` (7 days) a new share re-reads the public picture once,
+    re-encodes and re-hashes it; unchanged bytes give the same hash and the
+    same single file, changed bytes give a new hash that only the new share
+    names. An existing share is frozen regardless — it stores hashes, not
+    URLs — and if the image host is unreachable the last-known-good picture
+    is used and `fetched_at` is left alone so the next share tries again.
+    This is share **creation** only: no page view ever revalidates anything,
+    and reading a public image host is not a Jasani API call.
+  - **A cached picture must not outlive the link.** The image response was
+    `private, max-age=86400`, which lets a browser reuse it for a day without
+    asking: revoke a catalogue and the page, the data and the document stop
+    while a picture already in that browser keeps resolving. It is now
+    `private, no-cache` with the content hash as the `ETag` — the browser
+    still keeps the file and still avoids re-downloading it, but it has to
+    ask, and asking is what makes revocation complete. The share is resolved
+    **before** a conditional is honoured, so a withdrawn link gets its 404
+    and a lapsed one its 410 rather than a 304. Never `public`, never
+    `immutable`, never a bare `max-age` on bearer-protected imagery; the page,
+    the JSON and the PDF stay `no-store`.
+  - **A client is holding the link, so a backup carries it.** The Operations
+    backup now includes every `catalogue_shares` row — history is a few
+    hundred bytes and worth keeping — plus, for the shares that are still
+    live, the frozen snapshot, the photographs they name (content-addressed,
+    so ten shares naming one picture store it once) and the optional PDF.
+    The raw token is not in the backup and is not needed: the client has it
+    and the database only ever stored its SHA-256, so a restore brings the
+    *same* link back. A revoked or lapsed share is carried as its row alone.
+    `BACKUP_ASSET_BUDGET` (30 MB) bounds the imagery so the zip still fits
+    `MAX_RESTORE_BYTES`, newest share first; one that does not fit keeps its
+    row and its snapshot so the link still opens with every word of the
+    catalogue, and the manifest says how many were trimmed. **A backup with
+    no `catalogueShares` key at all is one written before any of this, and
+    leaves the table alone** — that is not the same as a backup saying there
+    are none, and getting it wrong would have had an old backup quietly take
+    down every live client link.
   - **Revoked means revoked**: the page, the data, the pictures and the
     document stop together, and the row stays so the history reads straight.
     An expired link says so (410) because that is something a client can ask

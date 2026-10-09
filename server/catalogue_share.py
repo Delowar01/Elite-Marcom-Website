@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import secrets
 import time
@@ -76,6 +77,21 @@ ASSET_GRACE_S = 3600.0
 #: at most this often.
 CLEANUP_EVERY_S = 3600.0
 _last_cleanup = 0.0
+#: How long a URL -> picture mapping may be reused by a **new** share before
+#: the image host is asked again.
+#:
+#: A supplier can replace the photograph behind an address it has already
+#: used, and content addressing cannot see that: the URL is the same, so the
+#: mapping answers with yesterday's file for ever. Seven days is the
+#: judgement — the products feed itself turns over daily, a catalogue a
+#: client is shown is worth a week-old photograph but not a year-old one, and
+#: at 500 products a weekly re-read is 500 file reads from a public image
+#: host, which is charged to nothing. It is deliberately long enough that
+#: back-to-back shares of the same selection still copy nothing.
+#:
+#: This applies to share CREATION only. A share already made is frozen for
+#: ever by design, and no page view ever revalidates anything.
+SOURCE_TTL_S = 7 * 86400.0
 
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -167,50 +183,90 @@ def store_asset(encoded: bytes) -> str:
     Content addressing is what makes a second share of the same products
     free: the file is already there, byte for byte, so it is not written
     again.
+
+    The temporary file is **per writer**, not per picture. Two share builds
+    meeting the same uncached photograph at the same moment both see the
+    destination missing and both write; with one shared `<digest>.webp.part`
+    they were writing the same bytes to the same path and then both renaming
+    it, so whichever lost the race renamed a file that was no longer there.
+    A unique name in the same directory makes them independent, and
+    `os.replace` is atomic within a directory, so the loser simply overwrites
+    the winner's result with the identical bytes. A reader never sees a
+    partial file, because a partial file never has the final name.
     """
     digest = hashlib.sha256(encoded).hexdigest()
     path = assets_dir() / f"{digest}.webp"
-    if not path.exists():
-        tmp = path.with_suffix(".webp.part")
+    if path.exists():
+        return digest
+    tmp = path.with_name(f"{digest}.{os.getpid():x}-{secrets.token_hex(8)}.part")
+    try:
         tmp.write_bytes(encoded)
-        tmp.replace(path)                # a reader never sees a half file
+        os.replace(tmp, path)            # atomic; the loser writes it again
+    finally:
+        #: a failed write must not leave debris behind for the sweep to find
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     return digest
 
 
-def _asset_for_url(url: str) -> str | None:
-    """The hash this supplier URL was turned into last time, if the file is
-    still on disk. A remembered hash whose file has gone is not a hit.
+def _url_key(url: str) -> str:
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
-    A hit is **touched**: the picture is about to be named by a share that
-    does not exist yet, and a touched row is what keeps the sweep off it in
-    the meantime.
+
+def _asset_for_url(url: str) -> tuple[str | None, bool]:
+    """(hash, fresh) for a supplier URL this store has seen before.
+
+    `fresh` says whether the mapping is young enough for a **new** share to
+    reuse without looking at the image host again. A remembered hash whose
+    file has gone is not a hit at all.
+
+    A hit is **touched** — `last_used_at`, never `fetched_at`: the picture is
+    about to be named by a share that does not exist yet, and a touched row
+    is what keeps the sweep off it in the meantime. Touching the fetch time
+    instead is how a mapping could live for ever: every reuse made it look
+    newly read, so it could never go stale and a replaced photograph could
+    never be discovered.
     """
     from . import adminauth as aa
 
-    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    key = _url_key(url)
     row = aa._connect().execute(
-        "SELECT hash FROM catalogue_assets WHERE url_key=?", (key,)).fetchone()
-    if row and (assets_dir() / f"{row['hash']}.webp").exists():
-        with aa._lock:
-            conn = aa._connect()
-            conn.execute("UPDATE catalogue_assets SET created_at=? WHERE url_key=?",
-                         (int(time.time()), key))
-            conn.commit()
-        return row["hash"]
-    return None
+        "SELECT hash, fetched_at FROM catalogue_assets WHERE url_key=?",
+        (key,)).fetchone()
+    if not row or not (assets_dir() / f"{row['hash']}.webp").exists():
+        return None, False
+    _touch_url(key)
+    fresh = (time.time() - (row["fetched_at"] or 0)) < SOURCE_TTL_S
+    return row["hash"], fresh
+
+
+def _touch_url(key: str) -> None:
+    from . import adminauth as aa
+
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("UPDATE catalogue_assets SET last_used_at=? WHERE url_key=?",
+                     (int(time.time()), key))
+        conn.commit()
 
 
 def _remember_url(url: str, digest: str, size: int) -> None:
+    """Record what the image host served, and when. Both timestamps move:
+    this is a read and a use at the same moment."""
     from . import adminauth as aa
 
-    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    now = int(time.time())
     with aa._lock:
         conn = aa._connect()
         conn.execute(
-            "INSERT INTO catalogue_assets (url_key, hash, bytes, created_at) "
-            "VALUES (?,?,?,?) ON CONFLICT(url_key) DO UPDATE SET "
-            "hash=excluded.hash, bytes=excluded.bytes, created_at=excluded.created_at",
-            (key, digest, size, int(time.time())))
+            "INSERT INTO catalogue_assets (url_key, hash, bytes, fetched_at, "
+            "last_used_at) VALUES (?,?,?,?,?) ON CONFLICT(url_key) DO UPDATE SET "
+            "hash=excluded.hash, bytes=excluded.bytes, "
+            "fetched_at=excluded.fetched_at, last_used_at=excluded.last_used_at",
+            (_url_key(url), digest, size, now, now))
         conn.commit()
 
 
@@ -319,6 +375,38 @@ async def _build(job: dict, rows: list[dict], *, market: str, title: str,
     products: list[dict] = []
     job["state"] = "images"
 
+    async def picture(url: str) -> tuple[str | None, bytes | None]:
+        """(asset hash, the original bytes if they were read just now).
+
+        Three cases, and the middle one is the whole point of `fetched_at`.
+        A mapping we have never seen is read. A mapping younger than
+        `SOURCE_TTL_S` is reused without touching the image host — which is
+        what makes re-sharing the same selection free. A mapping older than
+        that is **revalidated**: the public picture is read once, re-encoded
+        and re-hashed, so a photograph the supplier replaced behind the same
+        address reaches the next share. If that read fails, the picture we
+        already hold is used rather than losing the product its photograph,
+        and `fetched_at` is left alone so the next share tries again.
+
+        None of this is a Jasani API call. It is a file read from the public
+        image host, the same line `supplier_video` draws, and it is charged
+        to no budget.
+        """
+        cached, fresh = _asset_for_url(url)
+        if cached and fresh:
+            return cached, None
+        raw = None
+        try:
+            raw = await jasani._fetch_image_bytes(url)
+        except Exception:
+            raw = None
+        encoded = web_image(raw) if raw else None
+        if encoded is None:
+            return cached, raw           # last-known-good, or nothing at all
+        digest = store_asset(encoded)
+        _remember_url(url, digest, len(encoded))
+        return digest, raw
+
     async def pictures(dto: dict) -> tuple[list[str], list[bytes]]:
         """(asset hashes for the page, prepared JPEGs for the PDF)."""
         hashes: list[str] = []
@@ -328,19 +416,9 @@ async def _build(job: dict, rows: list[dict], *, market: str, title: str,
             known = url_cache.get(url, "?")
             raw = None
             if known == "?":
-                digest = _asset_for_url(url)
-                if digest is None:
-                    try:
-                        raw = await jasani._fetch_image_bytes(url)
-                    except Exception:
-                        raw = None
-                    encoded = web_image(raw) if raw else None
-                    if encoded is not None:
-                        digest = store_asset(encoded)
-                        _remember_url(url, digest, len(encoded))
+                known, raw = await picture(url)
                 if len(url_cache) < URL_CACHE_MAX:
-                    url_cache[url] = digest
-                known = digest
+                    url_cache[url] = known
             if known:
                 hashes.append(known)
             if doc is not None:
@@ -766,10 +844,12 @@ def cleanup(now: float | None = None, grace: float | None = None) -> dict:
             for digest in item.get("img") or []:
                 keep.add(str(digest))
     with aa._lock:
-        #: strictly newer, so `grace=0` protects nothing at all rather than
-        #: protecting everything written in the current second
+        #: `last_used_at`, because the question here is "might a build still
+        #: be writing a share around this picture", not "how old is the
+        #: supplier's copy". Strictly newer, so `grace=0` protects nothing at
+        #: all rather than everything written in the current second.
         fresh = aa._connect().execute(
-            "SELECT DISTINCT hash FROM catalogue_assets WHERE created_at > ?",
+            "SELECT DISTINCT hash FROM catalogue_assets WHERE last_used_at > ?",
             (hold,)).fetchall()
     keep.update(str(r["hash"]) for r in fresh)
     removed = freed = 0
@@ -781,6 +861,16 @@ def cleanup(now: float | None = None, grace: float | None = None) -> dict:
                 removed += 1
             except OSError:
                 pass
+    #: a writer that died mid-write left a `.part` behind; nothing else ever
+    #: does, so anything older than the grace period is debris
+    for path in assets_dir().glob("*.part"):
+        try:
+            if path.stat().st_mtime <= hold:
+                freed += path.stat().st_size
+                path.unlink()
+                removed += 1
+        except OSError:
+            pass
     # the URL index remembers a hash only while its file is there, so the
     # sweep above is what decides which rows are still meaningful
     with aa._lock:
@@ -813,6 +903,160 @@ def _size(path) -> int:
         return path.stat().st_size
     except OSError:                           # swept between glob and stat
         return 0
+
+
+# ---------------- what an operational backup carries ----------------
+#
+# A share link is in a client's hands. Losing the server it points at and
+# restoring from a backup should not break it, so the backup carries the rows,
+# the frozen snapshots, the photographs and the optional documents of the
+# shares that are still **live**. It does not carry the raw token and does not
+# need to: the client already holds it, and the database only ever had its
+# SHA-256.
+
+#: How much of a backup shared-catalogue imagery may take. The restore path
+#: refuses a file over `backup.MAX_RESTORE_BYTES` (80 MB) and the rest of a
+#: backup — the media library above all — has to fit beside this.
+BACKUP_ASSET_BUDGET = 30 * 1024 * 1024
+_PDF_NAME = re.compile(r"^share-\d{1,12}\.pdf$")
+
+
+def is_live(row: dict, now: float | None = None) -> bool:
+    stamp = now if now is not None else time.time()
+    return (not row.get("revoked_at")
+            and bool(row.get("snapshot"))
+            and (not row.get("expires_at") or int(row["expires_at"]) > stamp))
+
+
+def backup_state(budget: int = BACKUP_ASSET_BUDGET) -> dict:
+    """The share rows, and the files the live ones need.
+
+    Every row is carried, because who shared what and when it was stopped is
+    history worth keeping and costs a few hundred bytes. The **weight** — the
+    snapshot, the pictures, the document — is carried only for a share that
+    still answers, and only while it fits the budget. Newest first, because a
+    link made this week is the one somebody is still looking at.
+
+    A live share whose imagery does not fit keeps its row and its snapshot, so
+    the link still opens and every word of the catalogue is there; it simply
+    comes back without photographs, which the viewer already draws properly.
+    A share whose document does not fit comes back as a view-only link rather
+    than one with a Download button that 404s.
+    """
+    from . import adminauth as aa
+
+    rows = [dict(r) for r in aa._connect().execute(
+        "SELECT * FROM catalogue_shares ORDER BY created_at DESC").fetchall()]
+    now = time.time()
+    shares: list[dict] = []
+    assets: dict[str, int] = {}              # hash -> bytes
+    pdfs: dict[str, int] = {}                # file name -> bytes
+    spent = 0
+    dropped = {"assets": 0, "pdfs": 0}
+    for row in rows:
+        out = dict(row)
+        if not is_live(row, now):
+            #: history without weight: a withdrawn or lapsed link has nothing
+            #: left to serve, so its copy of the catalogue is not carried
+            out["snapshot"] = ""
+            out["pdf_file"] = ""
+            out["pdf_bytes"] = 0
+            shares.append(out)
+            continue
+        wanted: dict[str, int] = {}
+        for digest in sorted(hashes_for(row)):
+            if digest in assets:
+                continue                     # another share already paid for it
+            path = assets_dir() / f"{digest}.webp"
+            if path.exists():
+                wanted[digest] = _size(path)
+        pdf_path = (pdf_dir() / str(row["pdf_file"])) if row.get("pdf_file") else None
+        pdf_size = _size(pdf_path) if pdf_path and pdf_path.exists() else 0
+        if spent + sum(wanted.values()) <= budget:
+            assets.update(wanted)
+            spent += sum(wanted.values())
+        else:
+            dropped["assets"] += 1
+        if pdf_size and spent + pdf_size <= budget:
+            pdfs[str(row["pdf_file"])] = pdf_size
+            spent += pdf_size
+        elif row.get("pdf_file"):
+            out["pdf_file"] = ""
+            out["pdf_bytes"] = 0
+            dropped["pdfs"] += 1
+        shares.append(out)
+    index = []
+    if assets:
+        marks = ",".join("?" * len(assets))
+        index = [dict(r) for r in aa._connect().execute(
+            f"SELECT url_key, hash, bytes, fetched_at, last_used_at "
+            f"FROM catalogue_assets WHERE hash IN ({marks})",
+            tuple(assets)).fetchall()]
+    return {"shares": shares, "assets": index, "files": sorted(assets),
+            "pdfs": sorted(pdfs), "bytes": spent, "dropped": dropped,
+            "live": sum(1 for r in rows if is_live(r, now))}
+
+
+def restore_state(shares: list[dict] | None, assets: list[dict] | None,
+                  by: str) -> dict:
+    """Put the share table back exactly as it was.
+
+    The id is preserved, because a share's document is stored under it, and
+    so is `token_hash` — that is what makes the link a client already holds
+    keep working. The raw token is not in the backup and is not needed.
+
+    `None` means the backup predates shared catalogues and has nothing to say
+    about them, which is not the same as saying there are none: the table is
+    left exactly as it is. An empty list is an answer and does replace it.
+    Getting that wrong would have had restoring a six-month-old backup
+    silently kill every link a client is holding today.
+    """
+    from . import adminauth as aa
+
+    if shares is None:
+        return {"shares": 0, "assets": 0, "skipped": True}
+    now = int(time.time())
+    with aa._lock:
+        conn = aa._connect()
+        conn.execute("DELETE FROM catalogue_shares")
+        for r in shares:
+            if not r.get("token_hash"):
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO catalogue_shares (id, token_hash, title, "
+                "market, products, options, snapshot, stock_at, allow_pdf, "
+                "pdf_file, pdf_bytes, created_at, created_by, expires_at, "
+                "revoked_at, revoked_by, views, last_viewed_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (r.get("id"), r["token_hash"], r.get("title", ""), r.get("market", ""),
+                 int(r.get("products") or 0), r.get("options") or "{}",
+                 r.get("snapshot") or "", r.get("stock_at"),
+                 1 if r.get("allow_pdf") else 0, r.get("pdf_file") or "",
+                 int(r.get("pdf_bytes") or 0), int(r.get("created_at") or now),
+                 r.get("created_by") or "", r.get("expires_at"), r.get("revoked_at"),
+                 r.get("revoked_by") or "", int(r.get("views") or 0),
+                 r.get("last_viewed_at")))
+        conn.execute("DELETE FROM catalogue_assets")
+        for a in assets or []:
+            if not a.get("url_key") or not a.get("hash"):
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO catalogue_assets (url_key, hash, bytes, "
+                "fetched_at, last_used_at) VALUES (?,?,?,?,?)",
+                (a["url_key"], a["hash"], int(a.get("bytes") or 0),
+                 int(a.get("fetched_at") or 0), int(a.get("last_used_at") or now)))
+        conn.commit()
+    _SNAPSHOTS.clear()
+    _HASHES.clear()
+    return {"shares": len(shares), "assets": len(assets or []), "skipped": False}
+
+
+def asset_name_ok(name: str) -> bool:
+    return bool(_HASH_RE.match(name[:-5])) if name.endswith(".webp") else False
+
+
+def pdf_name_ok(name: str) -> bool:
+    return bool(_PDF_NAME.match(name))
 
 
 def store_status() -> dict:
