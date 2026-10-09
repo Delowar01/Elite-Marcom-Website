@@ -1487,21 +1487,19 @@ class _Tiles:
 
 
 def _tiles(monkeypatch) -> _Tiles:
+    """Every gallery tile the document draws.
+
+    `rec.cover` stays empty: the cover is the approved fixed composition and
+    draws no product photograph at all, so every tile belongs to a page.
+    """
     rec = _Tiles()
     real_tile = cat._photo_tile
-    real_hero = cat._cover_hero
 
     def watched(c, reader, x, y, w, h, pad=0.0, shadow=False):
         rec.all.append((round(x, 1), round(y, 1), round(w, 1), round(h, 1)))
         real_tile(c, reader, x, y, w, h, pad, shadow)
 
-    def hero(c, readers, x, bottom, w, h):
-        start = len(rec.all)
-        real_hero(c, readers, x, bottom, w, h)
-        rec.cover = rec.all[start:]
-
     monkeypatch.setattr(cat, "_photo_tile", watched)
-    monkeypatch.setattr(cat, "_cover_hero", hero)
     return rec
 
 
@@ -1600,44 +1598,16 @@ def test_a_product_with_no_photograph_says_so_once(monkeypatch):
     assert "Images can be supplied on request" in text
 
 
-def test_the_cover_shows_real_products_from_this_catalogue(monkeypatch):
-    """A hero composition, built from the catalogue's own first pictures."""
+def test_the_cover_never_spends_a_product_photograph_on_itself(monkeypatch):
+    """The approved cover is a fixed Elite Marcom composition, so a
+    catalogue's own pictures all belong to its pages."""
     rec = _tiles(monkeypatch)
     items = [{"id": str(n), "code": f"C{n}", "name": f"Item {n}", "available": 5,
               "availableKnown": True} for n in range(3)]
     photos = {str(n): [jpeg_bytes(seed=n, w=900, h=900)] for n in range(3)}
     cat.build(items, photos, market="ksa", title="T", stock_at=STOCK_AT,
               stock_is_known=True)
-    # three on the cover, then one per product page
-    assert len(rec.cover) == 3 and len(rec.pages) == 3, rec.all
-    cover = rec.cover
-    assert cover[0][2] * cover[0][3] > cover[1][2] * cover[1][3], "one leads"
-    assert all(h > 60 for _, _, _, h in cover), "none of them is a thumbnail"
-
-
-def test_the_cover_hero_is_bounded_to_four_pictures(monkeypatch):
-    rec = _tiles(monkeypatch)
-    items = [{"id": str(n), "code": f"C{n}", "name": f"Item {n}", "available": 5,
-              "availableKnown": True} for n in range(9)]
-    photos = {str(n): [jpeg_bytes(seed=n, w=600, h=600)] for n in range(9)}
-    cat.build(items, photos, market="ksa", title="T", stock_at=STOCK_AT,
-              stock_is_known=True)
-    assert len(rec.cover) == cat.COVER_IMAGES, "the cover never grows past four"
-    assert len(rec.pages) == 9
-
-
-def test_a_catalogue_with_no_pictures_still_has_a_designed_cover(monkeypatch):
-    """A broken placeholder on a cover is worse than a cover without
-    pictures, so the typography takes the page instead."""
-    rec = _tiles(monkeypatch)
-    text = cat.extract_text(cat.build(
-        [{"id": "1", "code": "A", "name": "Item", "available": 2,
-          "availableKnown": True}], {}, market="ksa",
-        title="Elite Marcom\nProduct Catalogue", stock_at=STOCK_AT,
-        stock_is_known=True))
-    assert rec.all == []
-    assert "PRODUCT CATALOGUE" in text and "Elite Marcom" in text
-    assert "Saudi Arabia" in text and "1 product" in text
+    assert len(rec.pages) == 3 and rec.cover == [], rec.all
 
 
 @pytest.mark.parametrize("name,parts", [
@@ -1659,15 +1629,6 @@ def test_every_word_of_the_name_still_reaches_the_page():
     text = cat.extract_text(_one([], name=name))
     for word in ("NAPIER", "MagCase Phone Cardholder", "Navy Blue"):
         assert word in text, word
-
-
-@pytest.mark.parametrize("title,expected", [
-    ("Elite Marcom\nProduct Catalogue", ("Elite Marcom", "Product Catalogue")),
-    ("Corporate Gifts Product Catalogue", ("Corporate Gifts", "Product Catalogue")),
-    ("Ramadan Selection 2026", ("Corporate gifts", "Ramadan Selection 2026")),
-])
-def test_the_cover_title_is_split_into_a_hierarchy(title, expected):
-    assert cat.cover_title(title) == expected
 
 
 def test_a_sparse_product_fills_the_page_rather_than_leaving_a_hole(monkeypatch):
@@ -1797,6 +1758,18 @@ def test_extract_text_reads_pages_not_pictures():
     assert "Plain" in text, "the drawn text is still read"
 
 
+def _all_image_streams(pdf: bytes) -> list[tuple[int, bool]]:
+    """(bytes, is_jpeg) for every image in the file, the cover's included."""
+    out = []
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        head = pdf[max(0, m.start() - 2500):m.start()]
+        cut = head.rfind(b" obj")
+        head = head[cut:] if cut >= 0 else head
+        if re.search(rb"/Subtype\s*/Image", head):
+            out.append((len(m.group(1)), b"DCTDecode" in head))
+    return out
+
+
 # ---------------- what the document weighs ----------------
 #
 # The photographs are the document. Everything in this section is about the
@@ -1805,15 +1778,24 @@ def test_extract_text_reads_pages_not_pictures():
 # raw pixels.
 
 
+#: The approved cover brings three images of its own — the wordmark, the
+#: watermark and the branded hero — and they are the same bytes in every
+#: catalogue. A test about a product's photographs subtracts them.
+COVER_IMAGE_BYTES = sorted(
+    n for n, _ in _all_image_streams(cat.build(
+        [{"id": "x", "code": "X", "name": "X", "available": 1,
+          "availableKnown": True}], {}, market="ksa", title="T",
+        stock_at=STOCK_AT, stock_is_known=True)))
+
+
 def image_streams(pdf: bytes) -> list[tuple[int, bool]]:
-    """(bytes, is_jpeg) for every image in the file."""
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)endstream", pdf, re.S):
-        head = pdf[max(0, m.start() - 2500):m.start()]
-        cut = head.rfind(b" obj")
-        head = head[cut:] if cut >= 0 else head
-        if re.search(rb"/Subtype\s*/Image", head):
-            out.append((len(m.group(1)), b"DCTDecode" in head))
+    """(bytes, is_jpeg) for every image a *product* put in the file."""
+    out = list(_all_image_streams(pdf))
+    for size in COVER_IMAGE_BYTES:
+        for n, row in enumerate(out):
+            if row[0] == size:
+                out.pop(n)
+                break
     return out
 
 
@@ -1946,7 +1928,11 @@ def test_the_document_weighs_what_its_photographs_weigh():
     supplied = sum(len(b) for blobs in photos.values() for b in blobs)
     embedded = sum(n for n, _ in image_streams(pdf))
     assert embedded <= supplied + 60_000, "images plus the small logo"
-    assert len(pdf) < supplied * 1.2 + 200_000
+    #: the approved cover is a fixed cost — the same wordmark, watermark and
+    #: branded hero whatever the catalogue — so it is named rather than
+    #: hidden inside a looser bound
+    cover_cost = sum(COVER_IMAGE_BYTES)
+    assert len(pdf) < supplied * 1.2 + cover_cost + 200_000
     photographs = [jpeg for size, jpeg in image_streams(pdf) if size > 20_000]
     assert photographs and all(photographs), "the photographs are JPEG streams"
 
@@ -2144,25 +2130,27 @@ def test_a_long_description_takes_room_from_the_gallery(monkeypatch):
             "barcode": "2", "description": NAPIER_BODY * 2}
     cat.build([item], {"1": [jpeg_bytes(w=600, h=600)]}, market="ksa", title="T",
               stock_at=STOCK_AT, stock_is_known=True)
-    wordy = rec.all[1][3]                      # [0] is the cover hero
+    wordy = rec.all[0][3]                      # the cover draws no tile
     rec.all.clear()
     cat.build([dict(item, description="Short.")],
               {"1": [jpeg_bytes(w=600, h=600)]}, market="ksa", title="T",
               stock_at=STOCK_AT, stock_is_known=True)
-    sparse = rec.all[1][3]
+    sparse = rec.all[0][3]
     assert wordy < sparse, "a wordy product takes room from the gallery"
     assert wordy >= cat.GALLERY_FLOOR, "but the pictures stay large"
     assert sparse <= cat.GALLERY_MAX
 
 
 def test_the_cover_sets_the_full_hierarchy():
+    """The approved cover's own wording. The house name is the official
+    wordmark — artwork, not a typeset line — so it is not among these."""
     text = cat.extract_text(cat.build(
         [{"id": "1", "code": "A", "name": "Mug", "available": 2,
           "availableKnown": True}], {}, market="ksa",
         title="Elite Marcom\nProduct Catalogue", stock_at=STOCK_AT,
         stock_is_known=True))
-    for line in ("ELITE MARCOM", "CORPORATE GIFTS", "PRODUCT CATALOGUE",
-                 "Saudi Arabia", "KSA CATALOGUE", "PREPARED", "STOCK UPDATED"):
+    for line in ("CORPORATE GIFTS", "PRODUCT", "CATALOGUE", "Saudi Arabia",
+                 "KSA CATALOGUE", "PREPARED", "STOCK UPDATED"):
         assert line in text, line
 
 
@@ -2270,19 +2258,29 @@ def test_a_feature_label_is_built_from_the_matched_text():
         name="Flask", description="A 750 ml vacuum flask.")
 
 
-def test_the_cover_band_and_availability_carry_their_marks(snapshot):
-    """Drawn vector icons, so nothing can go missing from a deploy."""
-    marks: list[str] = []
-    real = cat._icon
+def test_the_band_and_availability_marks_are_drawn_not_a_font(snapshot):
+    """Vector icons on both pages, so nothing can go missing from a deploy.
+    The cover's three come from `server/cover.py`; the availability mark on
+    a product page is the catalogue's own."""
+    from server import cover as cover_master
+
+    page_marks: list[str] = []
+    cover_marks: list[str] = []
+    real_icon, real_cover = cat._icon, cover_master._draw_icon
 
     def watched(c, name, cx, cy, r):
-        marks.append(name)
-        real(c, name, cx, cy, r)
+        page_marks.append(name)
+        real_icon(c, name, cx, cy, r)
+
+    def watched_cover(c, kind, x, top):
+        cover_marks.append(kind)
+        real_cover(c, kind, x, top)
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(cat, "_icon", watched)
+        mp.setattr(cover_master, "_draw_icon", watched_cover)
         cat.build([{"id": "1", "code": "A", "name": "Mug", "available": 2,
                     "availableKnown": True}], {}, market="ksa", title="T",
                   stock_at=STOCK_AT, stock_is_known=True)
-    assert {"box", "calendar", "clock"} <= set(marks), "the cover's three cards"
-    assert "check" in marks, "the availability mark"
+    assert cover_marks == ["cube", "calendar", "clock"], "the cover's three cards"
+    assert "check" in page_marks, "the availability mark"

@@ -351,21 +351,16 @@ documentation). Non-negotiable rules from it:
     composition, which a test asserts. Duplicates are dropped before
     layout: a supplier that lists one file twice should not spend half the
     gallery showing it twice.
-  - **The cover opens on real products.** `Document.cover(photos)` is its own
-    step, fed by `_cover_photos` — one picture from each of the first few
-    products, at most `COVER_IMAGES`, through the same cache the pages use,
-    so building a cover never preloads the catalogue's imagery. One product
-    is a deliberate single-hero presentation rather than an empty page; with
-    no usable picture at all the typography takes the page, because a broken
-    placeholder on a cover is worse than a cover without photographs. The
-    operational facts — market, count, prepared, stock updated, the
-    disclaimer, the address — are a compact band at the foot: they belong on
-    the cover, they are not the cover.
-  - **Type carries the hierarchy.** `cover_title` splits the stored title
-    into an eyebrow and a headline; `name_parts` reads the supplier's own
+  - **The cover is no longer composed here.** It was: a hero built from the
+    catalogue's own first few products, a headline split out of the admin's
+    title. It is now the approved master (`server/cover.py`, below), and
+    `Document.cover()` ignores any photographs handed to it. `_cover_ground`,
+    `_cover_hero`, `_cover_meta`, `cover_title`, `_cover_photos` and
+    `COVER_IMAGES` went with it.
+  - **Type carries the hierarchy.** `name_parts` reads the supplier's own
     " - " segments as range / product / variant, so "NAPIER - MagCase Phone
-    Cardholder - Navy Blue" is set at three weights. Both are presentation
-    only — every word still prints, and there is a test that says so.
+    Cardholder - Navy Blue" is set at three weights. It is presentation only
+    — every word still prints, and there is a test that says so.
     `_tracked` draws the letterspaced labels and **must** reset `Tc` to 0
     before the text object ends: character spacing is page state, so one
     tracked label left every later string on the page letterspaced, drawing
@@ -464,6 +459,63 @@ documentation). Non-negotiable rules from it:
   High is about twice Standard and still a tenth of what it was
   (100 x 1: 4.72 / 9.10 MB; 500 x 1: 23.4 / 45.3 MB against 429 MB).
   Do not quote a figure this table does not carry.
+- **The cover is an approved design, translated — not composed**
+  (`server/cover.py`, assets in `server/data/cover`, fonts in
+  `server/data/fonts`, the authority in `docs/catalogue-cover-master.md`).
+  Every number in that module is measured from the master's own PDF, so a
+  coordinate that looks odd is a coordinate that was measured. It may not be
+  improved, rounded off or re-judged; the implementation map wins for cover
+  visuals, and the catalogue's own logic still wins for stock, selection,
+  counts, dates, prices, images, sharing and size.
+  - **Only two things are raster.** The official wordmark and the branded
+    hero. The background fall, the orange field, the watermark, every letter,
+    the metadata band, its three icons and its rules are vector or text, so
+    the page stays searchable and scales without pixels. A test fails if a
+    third raster appears.
+  - **The wordmark is a file, never a drawing.** `logo.png` is the approved
+    source byte for byte — SHA-256 `38cb42d7…`, asserted in a test — placed
+    at 16/12 mm, 57 mm wide and `57 × 518 / 1629` tall, which is its own
+    aspect ratio and not a rounded figure. Never trace it, never re-typeset
+    ELITE MARCOM, never substitute the older defective SVG.
+  - **The hero's seven product applications were audited once, in the
+    master**, and are not recreated. `scripts/build_cover_assets.py` lifts
+    the composition out of the master HTML by hash. There is a test that
+    fails if the words "homography", "perspective" or "quadrilateral" appear
+    in the generator, because a future reader must not be tempted.
+  - **What is behind the hero is baked into it.** The hero is 210 mm wide
+    and three quarters transparent, so the gradient, the field and the
+    watermark show through. ReportLab can embed a JPEG, or raw pixels with
+    an alpha channel, but not a JPEG with one — and the alpha route costs
+    7.75 MB of Flate against 1.75 MB of JPEG. So the build script composites
+    the hero over exactly the three layers beneath it, computed from the
+    same constants `cover.py` draws them with, and the result is drawn
+    opaque. `lerp_stops` and `field_path_points` exist so that the bake and
+    the renderer cannot interpret the gradient or the contour differently.
+    The baked band is identical to what it covers: measured against the
+    master's own 300 dpi render, every sampled point agrees within two
+    levels of 255.
+  - **The hero is embedded at the master's own 4096-px canvas**, so nothing
+    is resampled. That canvas is 4x for a reason — it is what antialiases
+    marks as small as the pen's 2.9 mm — and at 300 dpi the pen visibly
+    softens under the 600 dpi loupe the logo audit uses. Measured
+    alternatives are in the build script.
+  - **Six strings change and nothing else does**: market, country, year,
+    product count, prepared date, stock timestamp. The wording — CORPORATE
+    GIFTS, PRODUCT, CATALOGUE, the promise line, the disclaimer, the address
+    — is the approved wording, the same on a one-product catalogue and a
+    five-hundred-product one, which is the point. A test asserts the proof's
+    own fixture values ("08 Oct 2026", "1 product") appear nowhere in the
+    code. **The admin's catalogue title no longer sets the cover**; it is
+    still the PDF's document title, and the dialog says so.
+  - **Tracking is `setCharSpace`, never literal spaces**, and CSS adds it
+    after the last character too — which is why a right-aligned string is
+    measured with its trailing space included and `Saudi Arabia · KSA` ends
+    0.38 mm short of 194. `draw_tracked` always puts the char space back.
+  - Poppins 400/500/600 are registered from `server/data/fonts`. They are
+    the first embedded fonts this application ships; the standard 14 are
+    still what every other page uses. If the files go missing the cover sets
+    in Helvetica rather than failing, and `fonts_ready()` says so.
+
 - **A shared web catalogue is a frozen copy, not a live view**
   (`server/catalogue_share.py`, `catalogue_shares` and `catalogue_assets` in
   admin.db, permission `jasani.view`). `/catalogue/<token>` serves

@@ -441,42 +441,27 @@ async def _build(job: dict, rows: list[dict], *, market: str, title: str,
             del raw
         return hashes, blobs
 
-    # the cover's hero, and the first few products' pictures, come out of the
-    # same pass: `_cover_photos` would be a second reading of the image host
-    hero: list[bytes] = []
-    first: list[tuple[dict, list[str], list[bytes]]] = []
-    for row in rows[:cat.COVER_IMAGES]:
-        detail = jasani.item_detail(market, row["id"]) or dict(row)
-        detail["available"] = row.get("available")
-        detail["availableKnown"] = row.get("availableKnown")
-        dto = cat.to_dto(detail, stats)
-        hashes, blobs = await pictures(dto)
-        first.append((dto, hashes, blobs))
-        if blobs:
-            hero.append(blobs[0])
+    #: The cover is the approved fixed Elite Marcom composition, so nothing
+    #: is read for it. Before that it was built from the first few products'
+    #: pictures, which is why this used to prefetch them.
     if doc is not None:
-        doc.cover(hero)
+        doc.cover()
         if options.get("contents"):
             heads = []
             for row in rows:
                 head = cat.to_dto(jasani.item_detail(market, row["id"]) or dict(row))
                 heads.append((head["code"] or "—", head["name"] or "Product"))
             doc.contents(heads)
-    del hero
 
     job["state"] = "drawing"
     job["done"] = 0
     for n, row in enumerate(rows):
-        if n < len(first):
-            dto, hashes, blobs = first[n]
-            first[n] = (None, None, None)     # released as it is used
-        else:
-            detail = jasani.item_detail(market, row["id"]) or dict(row)
-            detail["available"] = row.get("available")
-            detail["availableKnown"] = row.get("availableKnown")
-            dto = cat.to_dto(detail, stats)
-            del detail
-            hashes, blobs = await pictures(dto)
+        detail = jasani.item_detail(market, row["id"]) or dict(row)
+        detail["available"] = row.get("available")
+        detail["availableKnown"] = row.get("availableKnown")
+        dto = cat.to_dto(detail, stats)
+        del detail
+        hashes, blobs = await pictures(dto)
         products.append(snapshot_product(dto, hashes, options))
         if doc is not None:
             doc.page(dto, blobs)

@@ -528,7 +528,6 @@ GALLERY_MIN = 232.0
 #: is a moderate yield, not a retreat to thumbnails.
 GALLERY_FLOOR = 188.0
 GALLERY_MAX = 366.0
-COVER_IMAGES = 4                  # a bounded hero set, never the catalogue
 
 
 def _tracked(c, x: float, y: float, text: str, font: str, size: float,
@@ -991,184 +990,27 @@ def _footer(c, page_no: int) -> None:
 
 # ---------------- the pages ----------------
 
-def _cover_ground(c) -> None:
-    """A designed surface rather than a blank one: a dilute orange field in
-    the upper corner, one architectural hairline, a grounding band at the
-    foot. Nothing here competes with a photograph."""
-    _page_ground(c)
-    c.saveState()
-    c.setFillColorRGB(*ORANGE)
-    c.setFillAlpha(0.07)
-    c.circle(PAGE_W - 40, PAGE_H - 70, 250, stroke=0, fill=1)
-    c.setFillAlpha(0.05)
-    c.circle(PAGE_W - 40, PAGE_H - 70, 150, stroke=0, fill=1)
-    c.setFillColorRGB(*INK)
-    c.setFillAlpha(0.028)
-    c.rect(0, 0, PAGE_W, 196, stroke=0, fill=1)
-    c.restoreState()
-    c.setFillColorRGB(*LINE)
-    c.rect(M, 196, PAGE_W - 2 * M, 0.6, stroke=0, fill=1)
+def _cover(c, *, market: str, count: int, stock_at, generated: float) -> None:
+    """The approved cover, drawn by `server/cover.py`.
 
-
-def _cover_hero(c, readers: list, x: float, bottom: float, w: float, h: float) -> None:
-    """Up to four real products from this catalogue, layered. With none, the
-    space belongs to the typography instead — a broken placeholder on a cover
-    is worse than a cover without pictures."""
-    gap = 12.0
-    n = len(readers)
-    if n == 0:
-        return
-    if n == 1:
-        # one product is a deliberate presentation, not an empty page: the
-        # picture sits on a dilute field, offset, so the composition has a
-        # foreground and a background rather than one centred rectangle
-        pw = w * 0.72
-        px = x + (w - pw) / 2
-        c.saveState()
-        c.setFillColorRGB(*ORANGE)
-        c.setFillAlpha(0.10)
-        c.roundRect(px + pw * 0.16, bottom - 18, pw, h, 4, stroke=0, fill=1)
-        c.restoreState()
-        _photo_tile(c, readers[0], px, bottom, pw, h, shadow=True)
-        return
-    if n == 2:
-        main_w = (w - gap) * 0.62
-        _photo_tile(c, readers[0], x, bottom, main_w, h, shadow=True)
-        _photo_tile(c, readers[1], x + main_w + gap, bottom + h * 0.16,
-                    w - main_w - gap, h * 0.68, shadow=True)
-        return
-    main_w = (w - gap) * 0.58
-    side_w = w - main_w - gap
-    _photo_tile(c, readers[0], x, bottom, main_w, h, shadow=True)
-    if n == 3:
-        side_h = (h - gap) / 2
-        _photo_tile(c, readers[1], x + main_w + gap, bottom + side_h + gap,
-                    side_w, side_h, shadow=True)
-        _photo_tile(c, readers[2], x + main_w + gap, bottom, side_w, side_h, shadow=True)
-        return
-    side_h = (h - 2 * gap) / 3
-    for i, reader in enumerate(readers[1:4]):
-        _photo_tile(c, reader, x + main_w + gap,
-                    bottom + (2 - i) * (side_h + gap), side_w, side_h, shadow=True)
-
-
-def _cover_meta(c, *, market: str, count: int, stock_at, generated: float) -> None:
-    """The operational facts, compact and at the foot. They have to be on the
-    cover; they do not have to be the cover."""
-    cols = [
-        ("box", f"{market.upper()} CATALOGUE",
-         f"{count:,} product{'' if count == 1 else 's'}"),
-        ("calendar", "PREPARED",
-         time.strftime("%d %b %Y", time.localtime(generated))),
-        ("clock", "STOCK UPDATED",
-         (time.strftime("%d %b %Y  ·  %H:%M", time.localtime(float(stock_at)))
-          if stock_at else "not available")),
-    ]
-    #: three quiet cards rather than three columns of loose text — the same
-    #: height, but the band reads as one designed object
-    gap = 14.0
-    card_w = (PAGE_W - 2 * M - 2 * gap) / 3
-    card_h = 54.0
-    card_y = 118.0
-    for i, (icon, label, value) in enumerate(cols):
-        x = M + i * (card_w + gap)
-        _panel(c, x, card_y, card_w, card_h, PAPER, 3.0)
-        c.setFillColorRGB(*LINE)
-        c.rect(x, card_y, card_w, 0.6, stroke=0, fill=1)
-        _icon(c, icon, x + 20, card_y + card_h - 20, 9.0)
-        c.setFillColorRGB(*GREY)
-        #: a point and a half on each of these: the band stays the same size,
-        #: but it is read on a phone as often as on a desk
-        _tracked(c, x + 36, card_y + card_h - 24, label, "Helvetica-Bold", 7.2, 1.4)
-        c.setFont("Helvetica-Bold", 11.5)
-        c.setFillColorRGB(*INK)
-        c.drawString(x + 20, card_y + 14, value[:34])
-    c.setFont("Helvetica", 8.2)
-    c.setFillColorRGB(0.44, 0.46, 0.50)
-    ty = 92.0
-    for line in _wrap("Quantities are those recorded at the last stock synchronisation "
-                      "shown above and are not a reservation. Please confirm "
-                      "availability before committing to a quantity.",
-                      "Helvetica", 8.2, PAGE_W - 2 * M - 160)[:3]:
-        c.drawString(M, ty, line)
-        ty -= 11.0
-    c.setFont("Helvetica-Bold", 9.0)
-    c.setFillColorRGB(*INK)
-    c.drawRightString(PAGE_W - M, 92, SITE)
-
-
-def cover_title(title: str) -> tuple[str, str]:
-    """(eyebrow, headline) — the hierarchy the cover is set in.
-
-    The stored title is one string ("Elite Marcom / Product Catalogue") and
-    setting all of it at 36pt is what made the old cover read as a label. The
-    first line becomes the small line above, the rest becomes the headline,
-    and a leading "Corporate Gifts" is lifted out rather than printed twice.
-    Presentation only: every word of the title is still on the page.
+    The page that used to be composed here — a hero made from the catalogue's
+    own first few products, a headline split out of the admin's title — is
+    replaced by the approved Elite Marcom Corporate Gifts master. It is the
+    same cover on a one-product catalogue and a five-hundred-product one,
+    which is the point: a client recognises it before reading it. Only the
+    market, the year, the count and the two dates change.
     """
-    text = (title or "").strip()
-    head, _, rest = text.partition("\n")
-    if rest.strip():
-        return head.strip()[:40], rest.strip()
-    low = text.lower()
-    for lead in ("elite marcom", "corporate gifts"):
-        if low.startswith(lead) and len(text) > len(lead) + 2:
-            return text[:len(lead)], text[len(lead):].lstrip(" -·—").strip()
-    return "Corporate gifts", text
+    from . import cover as cover_master
 
-
-def _cover(c, *, title: str, market: str, count: int, stock_at, generated: float,
-           photos: list[bytes] | None = None) -> None:
-    """The opening page. Hero first, then the title, then the facts."""
-    _cover_ground(c)
-    _logo(c, M, PAGE_H - 52, 26)
     label = MARKET_LABEL.get(market, market.upper())
-    c.setFillColorRGB(*GREY)
-    _tracked(c, PAGE_W - M - _tracked_width(f"{label}  ·  {market.upper()}",
-                                            "Helvetica", 7.4, 1.5),
-             PAGE_H - 66, f"{label}  ·  {market.upper()}", "Helvetica", 7.4, 1.5)
-
-    readers = usable_photos(photos or [], COVER_IMAGES)
-
-    # ---- the title block is anchored to the foot, and the hero takes the
-    # ---- room above it: that is what stops a cover ending in dead space ----
-    eyebrow, headline = cover_title(title)
-    head_size = 36.0 if readers else 50.0
-    lines = _wrap(headline.upper(), "Helvetica-Bold", head_size, PAGE_W - 2 * M)
-    if len(lines) > 2:
-        head_size = 27.0 if readers else 38.0
-        lines = _wrap(headline.upper(), "Helvetica-Bold", head_size, PAGE_W - 2 * M)
-    lines = lines[:3]
-    #: the market line lands here, a measured distance above the facts band at
-    #: 196, and the block is laid out upwards from it — so the cover ends on a
-    #: deliberate interval rather than on whatever was left over
-    y = 240.0 + head_size * 0.95 * len(lines) + 24 + 18
-    hero_top = PAGE_H - 112
-    hero_h = max(214.0, min(352.0, hero_top - (y + 34) - 44))
-    if readers:
-        _cover_hero(c, readers, M, hero_top - hero_h, PAGE_W - 2 * M, hero_h)
-    else:
-        #: no pictures: the type is the page, set low with an open field above
-        y = 262.0 + head_size * 0.95 * len(lines) + 24
-    c.setFillColorRGB(*ORANGE)
-    c.rect(M, y + 50, 38, 2.2, stroke=0, fill=1)
-    _eyebrow(c, M, y + 32, eyebrow, ORANGE, 8.0)
-    #: the range the document belongs to, between the house name and the
-    #: headline, so the hierarchy reads top to bottom without competing
-    if eyebrow.strip().lower() != "corporate gifts":
-        c.setFillColorRGB(*GREY)
-        _tracked(c, M, y + 15, "CORPORATE GIFTS", "Helvetica-Bold", 8.0, 2.0)
-    c.setFont("Helvetica-Bold", head_size)
-    c.setFillColorRGB(*INK)
-    for line in lines:
-        y -= head_size * 0.95
-        c.drawString(M, y, line)
-    y -= 24
-    c.setFont("Helvetica", 11)
-    c.setFillColorRGB(*GREY)
-    c.drawString(M, y, f"{label}  ·  {market.upper()}  ·  "
-                       + time.strftime("%Y", time.localtime(generated)))
-    _cover_meta(c, market=market, count=count, stock_at=stock_at, generated=generated)
+    cover_master.draw(
+        c, market=label, country=market.upper(),
+        year=time.strftime("%Y", time.localtime(generated)),
+        count_text=f"{count:,} product{'' if count == 1 else 's'}",
+        prepared_text=time.strftime("%d %b %Y", time.localtime(generated)),
+        stock_text=(time.strftime("%d %b %Y · %H:%M",
+                                  time.localtime(float(stock_at)))
+                    if stock_at else "not available"))
     c.showPage()
 
 
@@ -1536,17 +1378,19 @@ class Document:
         self._covered = False
 
     def cover(self, photos: list[bytes] | None = None) -> None:
-        """Draw the opening page, with a **bounded** set of real products from
-        this catalogue as its hero. At most `COVER_IMAGES` pictures are ever
-        held for it — the cover is a composition, not a contact sheet, and
-        preloading the catalogue's imagery is exactly what the streaming
-        rewrite exists to prevent."""
+        """Draw the approved opening page.
+
+        `photos` is accepted and ignored. The cover used to be built from the
+        catalogue's own first few products; the approved master is a fixed
+        Elite Marcom Corporate Gifts composition, so a caller that still
+        hands pictures over is not wrong, it simply no longer changes the
+        page. Nothing fetches imagery for the cover any more.
+        """
         if self._covered:
             return
         self._covered = True
-        _cover(self.c, title=self.title, market=self.market, count=self.count,
-               stock_at=self.stock_at, generated=time.time(),
-               photos=(photos or [])[:COVER_IMAGES])
+        _cover(self.c, market=self.market, count=self.count,
+               stock_at=self.stock_at, generated=time.time())
 
     def contents(self, entries: list[tuple[str, str]]) -> None:
         """(code, name) in order; page numbers are worked out from position."""
@@ -1586,15 +1430,7 @@ def build(items: list[dict], photos: dict[str, list[bytes]], *, market: str,
     doc = Document(market=market, title=title, count=len(items), stock_at=stock_at,
                    stock_is_known=stock_is_known, options=options)
     dtos = [to_dto(it) for it in items]
-    # the cover's hero is the first picture of each of the first few products
-    hero: list[bytes] = []
-    for dto in dtos:
-        got = photos.get(dto["id"]) or []
-        if got:
-            hero.append(got[0])
-        if len(hero) >= COVER_IMAGES:
-            break
-    doc.cover(hero)
+    doc.cover()                               # the approved, fixed master
     doc.contents([(d["code"] or "—", d["name"] or "Product") for d in dtos])
     for n, dto in enumerate(dtos):
         doc.page(dto, photos.get(dto["id"], []))
@@ -1735,45 +1571,6 @@ async def _photos_for(market: str, dto: dict, cache: dict,
     return out
 
 
-async def _cover_photos(market: str, rows: list[dict], cache: dict,
-                        quality: str = DEFAULT_QUALITY) -> list[bytes]:
-    """A handful of real products for the cover's hero composition.
-
-    Bounded twice over: one picture per product, and at most `COVER_IMAGES`
-    of them. They go through the same cache the pages use, so a hero picture
-    is not fetched again when its own page comes round, and the catalogue's
-    imagery is never preloaded to build a cover.
-    """
-    from . import jasani
-
-    out: list[bytes] = []
-    for row in rows[:COVER_IMAGES * 3]:
-        if len(out) >= COVER_IMAGES:
-            break
-        detail = jasani.item_detail(market, row["id"]) or dict(row)
-        urls = to_dto(detail).get("images") or []
-        if not urls:
-            continue
-        #: the hero is that product's leading picture, so it shares the
-        #: "main" entry its own page will use and is fetched once
-        key = (urls[0], "main")
-        if key in cache:
-            if cache[key] is not None:
-                out.append(cache[key])
-            continue
-        try:
-            raw = await jasani._fetch_image_bytes(urls[0])
-        except Exception:
-            raw = None
-        small = prepare_image(raw, slot="main", quality=quality) if raw else None
-        del raw
-        if len(cache) < PHOTO_CACHE_MAX:
-            cache[key] = small
-        if small is not None:
-            out.append(small)
-    return out
-
-
 async def _render(token: str, rows: list[dict], *, market: str, title: str,
                   stock_at, stock_is_known: bool, options: dict) -> bytes:
     """Draw the catalogue, one product at a time.
@@ -1792,7 +1589,7 @@ async def _render(token: str, rows: list[dict], *, market: str, title: str,
     quality = quality_mode(options.get("quality"))
     cache: dict[tuple, bytes | None] = {}
     job["state"] = "images"
-    doc.cover(await _cover_photos(market, rows, cache, quality))
+    doc.cover()
     if options.get("contents"):
         # the index needs names before any page is drawn; those are text, not
         # pictures, so reading them ahead costs nothing worth bounding

@@ -6404,7 +6404,14 @@
      different products or different page options for the same selection. */
   function catCommonFields(picked, filtered) {
     return '<div class="full"><label for="cat-title">Catalogue title</label>' +
-      '<textarea id="cat-title" rows="2" maxlength="120">Elite Marcom\nProduct Catalogue</textarea></div>' +
+      '<textarea id="cat-title" rows="2" maxlength="120">Elite Marcom\nProduct Catalogue</textarea>' +
+      /* the cover is the approved Elite Marcom master and its wording is
+         fixed, so this field is the document's own title now — saying so
+         here is cheaper than an admin wondering why their text never
+         appeared on page one */
+      '<p class="admin-inline-note">Names the PDF file and the document ' +
+      "properties. The cover itself carries the approved Elite Marcom " +
+      "wording.</p></div>" +
       '<div><label for="cat-market">Market</label><select id="cat-market">' +
         ["ksa", "uae"].map(function (m) {
           return '<option value="' + m + '"' + (jzState.market === m ? " selected" : "") +
