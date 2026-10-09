@@ -758,15 +758,16 @@ async def admin_jasani_items(request: Request,
     prices = aa.has_perm(session["role"], "jasani.prices")
     # Enter and comma both split; a pasted column arrives with newlines
     terms = [t.strip() for t in re.split(r"[,\n\t]", q or "") if t.strip()][:20]
+    #: a role that may not see a price may not select on one either, in any
+    #: of the four ways the snapshot allows — see `effective_filters`
+    eff = effective_filters(session, stock=stock, sort=sort,
+                            price_min=_f(priceMin), price_max=_f(priceMax))
     data = jasani.item_list(
-        market, terms=terms, field=field, stock=stock, brand=brand, colour=colour,
-        category=category, visibility=visibility, hide_zero=bool(hideZero),
-        #: a role that may not see a price may not select on one either — a
-        #: band is a question about prices however it is phrased. The route
-        #: decides, because the route is what knows the role.
-        price_min=_f(priceMin) if prices else None,
-        price_max=_f(priceMax) if prices else None,
-        min_stock=_min_stock(minStock), sort=sort, with_prices=prices)
+        market, terms=terms, field=field, stock=eff["stock"], brand=brand,
+        colour=colour, category=category, visibility=visibility,
+        hide_zero=bool(hideZero), price_min=eff["price_min"],
+        price_max=eff["price_max"], min_stock=_min_stock(minStock),
+        sort=eff["sort"], with_prices=prices)
     rows = data.pop("rows")
     # the whole snapshot is searched and filtered either way; this is only how
     # much of the result is handed to the browser at once
@@ -809,19 +810,22 @@ async def admin_jasani_items_export(request: Request, format: str = "csv",
     prices = aa.has_perm(session["role"], "jasani.prices")
     everything = scope == "all"
     terms = [] if everything else [t.strip() for t in re.split(r"[,\n\t]", q or "") if t.strip()][:20]
+    eff = effective_filters(
+        session, stock="" if everything else stock, sort=sort,
+        price_min=None if everything else _f(priceMin),
+        price_max=None if everything else _f(priceMax))
     data = jasani.item_list(
         market,
         terms=terms, field=field,
-        stock="" if everything else stock,
+        stock=eff["stock"],
         brand="" if everything else brand,
         colour="" if everything else colour,
         category="" if everything else category,
         visibility="" if everything else visibility,
         hide_zero=False if everything else bool(hideZero),
-        price_min=None if (everything or not prices) else _f(priceMin),
-        price_max=None if (everything or not prices) else _f(priceMax),
+        price_min=eff["price_min"], price_max=eff["price_max"],
         min_stock=None if everything else _min_stock(minStock),
-        sort=sort, with_prices=prices)
+        sort=eff["sort"], with_prices=prices)
     items = data["rows"]
     currency = data["currency"]
     name = exports.export_filename(format, f"{market}-{scope}", prefix="jasani-items")
@@ -915,6 +919,46 @@ CATALOGUE_FILTERS = ("market", "q", "field", "stock", "brand", "colour",
                      "priceMax", "minStock", "sort")
 
 
+#: Selectors that read `internal_map` — the supplier prices and the booked
+#: quantities. **Order and membership are information**: a role that may not
+#: see a price can still learn which product is cheaper by asking for
+#: `sort=priceAsc`, and which products carry booked stock by asking for
+#: `stock=booked` and reading what comes back. Neither needs the figure to
+#: be serialized. `adminauth.PERMISSIONS` has said since it was written that
+#: `jasani.prices` covers "supplier prices and booked stock", so that is the
+#: permission, and no new one is invented.
+PRICE_SENSITIVE_SORTS = frozenset({"priceAsc", "priceDesc"})
+INTERNAL_STOCK_FILTERS = frozenset({"booked"})
+#: what a forbidden sort becomes — the listing's own default
+PUBLIC_SORT = "featured"
+
+
+def effective_filters(session: dict | None, *, stock: str = "",
+                      sort: str = PUBLIC_SORT, price_min: float | None = None,
+                      price_max: float | None = None) -> dict:
+    """The filter state this caller may actually have, from the one they
+    asked for.
+
+    **One canonicalization, five callers** — the Items listing, the items
+    export, the count endpoint, the PDF route and a share. Scattering the
+    checks is how one route came to reject what another quietly honoured,
+    and a difference between two routes is itself a signal.
+
+    A forbidden selector is **normalized, not refused**: a 403 would tell an
+    unauthorized caller that the selector exists and is meaningful, and a
+    normalized answer tells them nothing at all. Price bands fall away, a
+    price sort becomes the public default and the booked filter stops
+    filtering — which is also why `item_list` is never even asked to open
+    the internal map for such a request.
+    """
+    if _can_price(session):
+        return {"stock": stock, "sort": sort,
+                "price_min": price_min, "price_max": price_max}
+    return {"stock": "" if stock in INTERNAL_STOCK_FILTERS else stock,
+            "sort": PUBLIC_SORT if sort in PRICE_SENSITIVE_SORTS else sort,
+            "price_min": None, "price_max": None}
+
+
 def _can_price(session: dict | None) -> bool:
     """Whether this caller may select on a price. Seeing one and filtering
     by one are the same question asked twice, so they are the same
@@ -954,22 +998,25 @@ def _catalogue_items(body: CatalogueBody, session: dict | None = None) -> list[d
     """
     from . import jasani
 
-    prices = _can_price(session)
+    eff = effective_filters(session, stock=body.stock, sort=body.sort,
+                            price_min=_f(body.priceMin),
+                            price_max=_f(body.priceMax))
     if body.scope != "filtered":
-        #: existence and market only — the ids are the authority
-        rows = jasani.item_list(body.market, sort=body.sort,
+        #: existence and market only — the ids are the authority. The sort
+        #: still goes through `effective_filters`: ordering a chosen list by
+        #: price is as much a question about prices as filtering by one.
+        rows = jasani.item_list(body.market, sort=eff["sort"],
                                 with_prices=False)["rows"]
         wanted = {str(i) for i in body.ids}
         return [r for r in rows if r["id"] in wanted]
 
     terms = [t.strip() for t in re.split(r"[,\n\t]", body.q or "") if t.strip()][:20]
     return jasani.item_list(
-        body.market, terms=terms, field=body.field, stock=body.stock,
+        body.market, terms=terms, field=body.field, stock=eff["stock"],
         brand=body.brand, colour=body.colour, category=body.category,
         visibility=body.visibility, hide_zero=bool(body.hideZero),
-        price_min=_f(body.priceMin) if prices else None,
-        price_max=_f(body.priceMax) if prices else None,
-        min_stock=_min_stock(body.minStock), sort=body.sort,
+        price_min=eff["price_min"], price_max=eff["price_max"],
+        min_stock=_min_stock(body.minStock), sort=eff["sort"],
         with_prices=False)["rows"]
 
 
@@ -981,6 +1028,12 @@ def _filter_summary(body: CatalogueBody, session: dict | None = None) -> list[st
     a price band may be named to the person who set it, and still never
     appears in the catalogue, the snapshot or any public page.
     """
+    #: the **effective** state, never the requested one: a summary that
+    #: named a filter the selection did not apply would be both wrong and,
+    #: for a neutralized selector, a confirmation that it exists
+    eff = effective_filters(session, stock=body.stock, sort=body.sort,
+                            price_min=_f(body.priceMin),
+                            price_max=_f(body.priceMax))
     out = [body.market.upper()]
     if body.scope != "filtered":
         return out
@@ -997,23 +1050,22 @@ def _filter_summary(body: CatalogueBody, session: dict | None = None) -> list[st
             out.append(f"{label}: {value}")
     stock_words = {"in": "In stock", "low": "Low stock", "out": "Out of stock",
                    "incoming": "Incoming expected", "booked": "Booked"}
-    if body.stock in stock_words:
-        out.append(f"Stock: {stock_words[body.stock]}")
+    if eff["stock"] in stock_words:
+        out.append(f"Stock: {stock_words[eff['stock']]}")
     visible_words = {"visible": "Visible on the site", "hidden": "Hidden",
                      "byhand": "Hidden by hand"}
     if body.visibility in visible_words:
         out.append(visible_words[body.visibility])
     if body.hideZero:
         out.append("Zero stock excluded")
-    if _can_price(session):
-        low, high = _f(body.priceMin), _f(body.priceMax)
-        if low is not None or high is not None:
-            from . import jasani
+    low, high = eff["price_min"], eff["price_max"]
+    if low is not None or high is not None:
+        from . import jasani
 
-            unit = jasani.CURRENCY_BY_MARKET.get(body.market, "")
-            band = (f"{low:,.0f}\u2013{high:,.0f}" if low is not None and high is not None
-                    else f"from {low:,.0f}" if low is not None else f"up to {high:,.0f}")
-            out.append(f"Price: {unit} {band}".strip())
+        unit = jasani.CURRENCY_BY_MARKET.get(body.market, "")
+        band = (f"{low:,.0f}\u2013{high:,.0f}" if low is not None and high is not None
+                else f"from {low:,.0f}" if low is not None else f"up to {high:,.0f}")
+        out.append(f"Price: {unit} {band}".strip())
     return out
 
 

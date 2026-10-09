@@ -183,6 +183,30 @@ documentation). Non-negotiable rules from it:
   decoupling fixed `stock="booked"`, which had been matching nothing in a
   catalogue because the key it tests was never written, and the price
   sorts, which had been collapsing to input order.
+  **Order and membership are information**, so four selectors are gated,
+  not one. `sort=priceAsc` is a reading of the prices — ask twice with the
+  cheaper product swapped and the answer changes — and `stock=booked` is
+  the same reading through membership; neither needs a figure to be
+  serialized. `effective_filters(session, …)` is the one canonicalization
+  every caller goes through (the Items listing, the items export,
+  `catalogue/count`, the PDF route and a share), turning the **requested**
+  filter state into the **effective** one: without `jasani.prices` a band
+  falls away, `PRICE_SENSITIVE_SORTS` become `PUBLIC_SORT` and
+  `INTERNAL_STOCK_FILTERS` stop filtering. It **normalizes rather than
+  refuses**, and the same way on every route: a 403 would confirm to an
+  unauthorized caller that the selector exists and means something, while a
+  neutralized request simply looks like one that never asked. `jasani.prices`
+  is the permission because `adminauth.PERMISSIONS` has said since it was
+  written that it covers "supplier prices **and booked stock**" — no new
+  permission was invented. The summary describes the effective state, so it
+  cannot name a filter that was not applied. The guarantee is that
+  `internal_map` is **never opened** for such a request, not that its
+  output is stripped afterwards: there is a test that makes it raise, and a
+  differential one that runs two snapshots whose public records are
+  identical and whose private figures are reversed and requires every
+  unauthorized answer — ids, order, count, export and summary — to be
+  byte-identical. UI hiding is not authorization; the panel hides these
+  controls from a catalogue role and the server enforces it anyway.
   **Selected items are exact ids.** They are resolved against the market's
   products and nothing else, so raising the minimum stock inside the dialog
   no longer silently unpicks a product somebody ticked by hand; the filters

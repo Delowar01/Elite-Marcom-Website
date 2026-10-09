@@ -468,3 +468,271 @@ def test_the_panel_sends_every_filter_the_contract_names():
     body = body[:body.index("\n  }")]
     for name in admin_api.CATALOGUE_FILTERS:
         assert re.search(rf"\b{name}\s*:", body), name
+
+
+# ---------------- a selector is a question, and order is an answer --------
+#
+# `priceMin`/`priceMax` were gated on `jasani.prices` and two other selectors
+# were not. `sort=priceAsc` orders by a figure, and an order is a reading of
+# it: ask for it twice with the cheaper product swapped and the answer
+# changes. `stock=booked` does the same through membership. Neither needs
+# the number to be serialized, and `adminauth.PERMISSIONS` has always said
+# `jasani.prices` covers "supplier prices and booked stock", so that is the
+# permission — none is invented.
+
+PROTECTED = [
+    {"sort": "priceAsc"},
+    {"sort": "priceDesc"},
+    {"stock": "booked"},
+    {"priceMin": "500"},
+    {"priceMax": "500"},
+    {"priceMin": "100", "priceMax": "199"},
+]
+
+NO_PRICES = {"role": "catalog"}
+WITH_PRICES = {"role": "owner"}
+
+
+@pytest.fixture(scope="module")
+def catalog_client():
+    """A catalogue-role session: jasani.view, and no jasani.prices."""
+    me = client.get("/api/admin/me").json()
+    client.post("/api/admin/users",
+                json={"email": "catalog@elitemarcom.com", "name": "Catalogue",
+                      "password": "catalog-long-pass", "role": "catalog"},
+                headers={"X-CSRF": me["csrf"]})
+    c = TestClient(app)
+    r = c.post("/api/admin/login", json={"email": "catalog@elitemarcom.com",
+                                         "password": "catalog-long-pass"}).json()
+    secret = r.get("secret") or aa.read_totp_secret(
+        aa.get_user_by_email("catalog@elitemarcom.com"))
+    c.post("/api/admin/2fa/verify",
+           json={"pending": r["pending"],
+                 "code": aa._totp_at(secret, int(time.time() // 30))})
+    assert c.get("/api/admin/me").json()["role"] == "catalog"
+    return c
+
+
+def as_catalog(c: TestClient, path: str, **body) -> dict:
+    payload = {"market": "ksa", "scope": "filtered"}
+    payload.update(body)
+    res = c.post(path, json=payload,
+                 headers={"X-CSRF": c.get("/api/admin/me").json()["csrf"]})
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_the_permission_matrix_still_says_prices_covers_booked_stock():
+    """The contract this gate rests on, read from where it is written."""
+    assert aa.has_perm("owner", "jasani.prices") is True
+    assert aa.has_perm("admin", "jasani.prices") is True
+    assert aa.has_perm("catalog", "jasani.view") is True
+    assert aa.has_perm("catalog", "jasani.prices") is False
+
+
+@pytest.mark.parametrize("asked", PROTECTED)
+def test_a_protected_selector_is_normalized_rather_than_refused(asked):
+    """One policy, because a refusal is itself an answer: it tells an
+    unauthorized caller the selector exists and means something. Neutralized
+    requests simply look like requests that did not ask."""
+    eff = admin_api.effective_filters(
+        NO_PRICES, stock=asked.get("stock", ""),
+        sort=asked.get("sort", "featured"),
+        price_min=admin_api._f(asked.get("priceMin")),
+        price_max=admin_api._f(asked.get("priceMax")))
+    assert eff["price_min"] is None and eff["price_max"] is None
+    assert eff["sort"] not in admin_api.PRICE_SENSITIVE_SORTS
+    assert eff["stock"] not in admin_api.INTERNAL_STOCK_FILTERS
+    #: and an authorized caller keeps every one of them
+    allowed = admin_api.effective_filters(
+        WITH_PRICES, stock=asked.get("stock", ""),
+        sort=asked.get("sort", "featured"),
+        price_min=admin_api._f(asked.get("priceMin")),
+        price_max=admin_api._f(asked.get("priceMax")))
+    assert allowed["sort"] == asked.get("sort", "featured")
+    assert allowed["stock"] == asked.get("stock", "")
+    assert allowed["price_min"] == admin_api._f(asked.get("priceMin"))
+
+
+def test_an_unprotected_selector_is_left_exactly_as_asked():
+    """The gate is narrow: it touches four selectors and nothing else."""
+    for role in (NO_PRICES, WITH_PRICES):
+        eff = admin_api.effective_filters(role, stock="low", sort="stockDesc")
+        assert eff == {"stock": "low", "sort": "stockDesc",
+                       "price_min": None, "price_max": None}
+
+
+# ---- the private map is not consulted, not merely not printed ------------
+
+@pytest.mark.parametrize("asked", PROTECTED)
+def test_an_unauthorized_request_never_opens_the_internal_map(
+        asked, catalog_client, monkeypatch):
+    """Removing `_price` from a row is not the guarantee. The guarantee is
+    that the map is never read, so there is nothing to infer from."""
+    def boom(*a, **k):
+        raise AssertionError("the internal map was opened without jasani.prices")
+
+    monkeypatch.setattr(jasani, "internal_map", boom)
+
+    query = {"market": "ksa", "perPage": 10}
+    query.update(asked)
+    assert catalog_client.get("/api/admin/jasani/items",
+                              params=query).status_code == 200
+    assert catalog_client.get("/api/admin/jasani/items-export",
+                              params={**query, "format": "csv"}).status_code == 200
+    assert as_catalog(catalog_client, "/api/admin/jasani/catalogue/count",
+                      **asked)["count"] == TOTAL
+    for body in ({"scope": "filtered", **asked},
+                 {"scope": "selected", "ids": ["ksa-1", "ksa-2"], **asked}):
+        model = admin_api.CatalogueBody(market="ksa", **body)
+        admin_api._catalogue_items(model, NO_PRICES)
+        admin_api._catalogue_items(admin_api.CatalogueShareBody(market="ksa", **body),
+                                   NO_PRICES)
+        admin_api._filter_summary(model, NO_PRICES)
+
+
+def test_an_authorized_request_does_open_it():
+    """The other half: the gate is a gate, not a wall."""
+    opened = []
+    real = jasani.internal_map
+
+    def watched(market):
+        opened.append(market)
+        return real(market)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(jasani, "internal_map", watched)
+        assert len(ids_for({"scope": "filtered", "priceMin": "100",
+                            "priceMax": "199"})) == 100
+    assert opened == ["ksa"]
+
+
+# ---- the differential: identical public data, opposite private data ------
+
+def _twin_snapshot(cheaper: str, booked: str, tmp_path):
+    """Two products whose public records are identical in every field, and
+    whose private figures are the other way round."""
+    products = []
+    for pid in ("twin-a", "twin-b"):
+        products.append({
+            "id": pid, "code": "ITGL 9000", "name": "Twin Product",
+            "brand": "Alpha", "color": "Black", "categories": ["Drinkware"],
+            "market": "ksa", "image": "", "images": [], "sequence": 1,
+            "description": "A useful item.",
+            "stock": {"available": 50, "known": True, "incoming": 0},
+            jasani._INT_KEY: {
+                "price": 10.0 if pid == cheaper else 900.0,
+                "currency": "SAR",
+                "booked": 7 if pid == booked else 0},
+        })
+    jasani._write_cache("ksa", products, fetched_at=STOCK_AT, stock_at=STOCK_AT)
+
+
+@pytest.mark.parametrize("asked", PROTECTED)
+def test_the_private_map_cannot_be_read_through_the_public_answer(
+        asked, catalog_client, tmp_path):
+    """**The real security property.** Two snapshots, identical in every
+    public field, differing only in which product is cheaper and which
+    carries booked stock. Without `jasani.prices` every answer — the ids,
+    their order, the count and the summary — must be byte-identical. If the
+    private map can change an unauthorized response at all, it can be read.
+    """
+    seen = []
+    for cheaper, booked in (("twin-a", "twin-a"), ("twin-b", "twin-b")):
+        _twin_snapshot(cheaper, booked, tmp_path)
+        listing = catalog_client.get(
+            "/api/admin/jasani/items",
+            params={"market": "ksa", "perPage": 10, **asked}).json()
+        export = catalog_client.get(
+            "/api/admin/jasani/items-export",
+            params={"market": "ksa", "format": "csv", **asked}).text
+        counted = as_catalog(catalog_client,
+                             "/api/admin/jasani/catalogue/count", **asked)
+        body = admin_api.CatalogueBody(market="ksa", scope="filtered", **asked)
+        seen.append(json.dumps({
+            "ids": listing["ids"], "matched": listing["matched"],
+            "items": [i["id"] for i in listing["items"]],
+            "export": export,
+            "count": counted["count"], "summary": counted["summary"],
+            "pdf": [r["id"] for r in admin_api._catalogue_items(body, NO_PRICES)],
+            "share": [r["id"] for r in admin_api._catalogue_items(
+                admin_api.CatalogueShareBody(market="ksa", scope="filtered",
+                                             **asked), NO_PRICES)],
+        }, sort_keys=True))
+    assert seen[0] == seen[1], (
+        f"the private map changed an unauthorized answer for {asked}")
+
+
+@pytest.mark.parametrize("asked,differs", [
+    ({"sort": "priceAsc"}, True),
+    ({"sort": "priceDesc"}, True),
+    ({"stock": "booked"}, True),
+    ({"priceMin": "500"}, True),
+    ({"priceMax": "500"}, True),
+])
+def test_the_same_selectors_really_do_work_for_an_authorized_role(asked, differs,
+                                                                  tmp_path):
+    """And the proof the gate is not simply breaking the feature: with
+    `jasani.prices` the two snapshots give different answers, which is
+    exactly the difference the other role must not be able to observe."""
+    seen = []
+    for cheaper, booked in (("twin-a", "twin-a"), ("twin-b", "twin-b")):
+        _twin_snapshot(cheaper, booked, tmp_path)
+        body = admin_api.CatalogueBody(market="ksa", scope="filtered", **asked)
+        seen.append([r["id"] for r in admin_api._catalogue_items(body, WITH_PRICES)])
+    assert (seen[0] != seen[1]) is differs, (asked, seen)
+    #: the same request without the permission cannot tell them apart
+    blind = []
+    for cheaper, booked in (("twin-a", "twin-a"), ("twin-b", "twin-b")):
+        _twin_snapshot(cheaper, booked, tmp_path)
+        body = admin_api.CatalogueBody(market="ksa", scope="filtered", **asked)
+        blind.append([r["id"] for r in admin_api._catalogue_items(body, NO_PRICES)])
+    assert blind[0] == blind[1]
+
+
+def test_a_protected_sort_is_neutralized_for_a_chosen_list_too():
+    """Ordering ids somebody ticked by price is as much a question about
+    prices as filtering by one. The selected scope keeps its own rule —
+    the ids are the authority — and still loses the sort."""
+    picked = ["ksa-1", "ksa-500", "ksa-900"]
+    body = {"scope": "selected", "ids": picked, "sort": "priceAsc"}
+    assert ids_for(body) == ids_for({**body, "sort": "featured"}), \
+        "an owner's price sort is honoured, and here equals featured by id"
+    blind = admin_api._catalogue_items(
+        admin_api.CatalogueBody(market="ksa", **body), NO_PRICES)
+    public = admin_api._catalogue_items(
+        admin_api.CatalogueBody(market="ksa", scope="selected", ids=picked,
+                                sort="featured"), NO_PRICES)
+    assert [r["id"] for r in blind] == [r["id"] for r in public]
+
+
+# ---- the summary describes what was applied ------------------------------
+
+@pytest.mark.parametrize("asked,word", [
+    ({"stock": "booked"}, "Booked"),
+    ({"priceMin": "100", "priceMax": "199"}, "Price"),
+    ({"priceMin": "100"}, "100"),
+])
+def test_the_summary_never_names_a_filter_that_was_neutralized(asked, word):
+    body = admin_api.CatalogueBody(market="ksa", scope="filtered", **asked)
+    blind = " ".join(admin_api._filter_summary(body, NO_PRICES))
+    seeing = " ".join(admin_api._filter_summary(body, WITH_PRICES))
+    assert word not in blind, (asked, blind)
+    assert word in seeing, (asked, seeing)
+
+
+def test_every_protected_selector_is_named_in_one_place():
+    """So the next person adding a selector that reads the internal map has
+    somewhere obvious to add it."""
+    assert admin_api.PRICE_SENSITIVE_SORTS == {"priceAsc", "priceDesc"}
+    assert admin_api.INTERNAL_STOCK_FILTERS == {"booked"}
+    assert admin_api.PUBLIC_SORT == "featured"
+    #: and every one of them really is a selector `item_list` opens the map
+    #: for — the data layer and the gate agree on the list
+    import inspect
+
+    source = inspect.getsource(jasani.item_list)
+    needs = source[source.index("needs_internal = "):]
+    needs = needs[:needs.index("\n    internal = ")]
+    for name in admin_api.PRICE_SENSITIVE_SORTS | admin_api.INTERNAL_STOCK_FILTERS:
+        assert f'"{name}"' in needs, (name, needs)
