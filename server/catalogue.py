@@ -828,9 +828,50 @@ _NEGATED = re.compile(r"\b(?:not|no|never|without|excluding|except|unsuitable)\b
                       re.I)
 
 
+#: A figure grouped with an **ASCII space**, and only that. A comma is this
+#: feed's own grouping convention and a no-break space is typography: both
+#: say "these digits are one number" and neither is ambiguous. A plain space
+#: is ordinary language, where "4 750 ml" is as likely to be four bottles of
+#: 750 ml as it is one measurement of 4,750.
+_SPACE_GROUPED = re.compile(r"\d{1,3}(?: \d{3})+")
+
+#: The words that settle it, immediately before the leading group. Each one
+#: is unambiguously about *how many*, so the digits after it are a count and
+#: the digits after those are the measurement. Deliberately short: a vague
+#: word here would suppress a real specification, which is the opposite
+#: mistake and just as bad. "4 pcs 750 ml" and "4 x 750 ml" need nothing —
+#: the word between the two figures already stops them being read as one.
+_COUNT_LEAD = re.compile(
+    r"(?:\b(?:set|sets|pack|packs|box|boxes|case|cases|carton|cartons"
+    r"|bundle|bundles|pair|pairs|tray|trays)\s+of"
+    r"|\b(?:quantity|qty|pcs|pieces|units)\b)\s*[:\-]?\s*$", re.I)
+
+
+def _is_counted(hay: str, m) -> bool:
+    """Whether this match read a count and a measurement as one number.
+
+    A badge is optional; a plausible wrong badge is not. "Set of 4 750 ml
+    bottles" produced "4,750 ml" — a specification no reader would question
+    and the product does not have. Where a count word stands immediately in
+    front of a space-grouped figure, the grouped reading is refused and the
+    rule simply finds nothing, because the honest alternative — pulling the
+    750 back out of a number we have just said we cannot read — would mean
+    unpicking the guard that stops a malformed "5 00 ml" becoming "0 ml".
+    No badge is the right answer here.
+    """
+    for group in _SPACE_GROUPED.finditer(hay, m.start(), m.end()):
+        lead = hay[max(0, group.start() - 24):group.start()]
+        if _COUNT_LEAD.search(lead):
+            return True
+    return False
+
+
 def _affirmed(hay: str, pattern: str):
-    """The first match of `pattern` that nothing in its sentence negates."""
+    """The first match of `pattern` that nothing in its sentence negates and
+    that is not a count being read as part of a measurement."""
     for m in re.finditer(pattern, hay, re.I):
+        if _is_counted(hay, m):
+            continue
         lead = hay[max(0, m.start() - 70):m.start()]
         tail = hay[m.end():m.end() + 70]
         for stop in (".", "!", "?", "\n", ";"):
