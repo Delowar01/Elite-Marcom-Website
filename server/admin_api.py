@@ -761,8 +761,12 @@ async def admin_jasani_items(request: Request,
     data = jasani.item_list(
         market, terms=terms, field=field, stock=stock, brand=brand, colour=colour,
         category=category, visibility=visibility, hide_zero=bool(hideZero),
-        price_min=_f(priceMin), price_max=_f(priceMax), min_stock=_min_stock(minStock),
-        sort=sort, with_prices=prices)
+        #: a role that may not see a price may not select on one either — a
+        #: band is a question about prices however it is phrased. The route
+        #: decides, because the route is what knows the role.
+        price_min=_f(priceMin) if prices else None,
+        price_max=_f(priceMax) if prices else None,
+        min_stock=_min_stock(minStock), sort=sort, with_prices=prices)
     rows = data.pop("rows")
     # the whole snapshot is searched and filtered either way; this is only how
     # much of the result is handed to the browser at once
@@ -814,8 +818,8 @@ async def admin_jasani_items_export(request: Request, format: str = "csv",
         category="" if everything else category,
         visibility="" if everything else visibility,
         hide_zero=False if everything else bool(hideZero),
-        price_min=None if everything else _f(priceMin),
-        price_max=None if everything else _f(priceMax),
+        price_min=None if (everything or not prices) else _f(priceMin),
+        price_max=None if (everything or not prices) else _f(priceMax),
         min_stock=None if everything else _min_stock(minStock),
         sort=sort, with_prices=prices)
     items = data["rows"]
@@ -875,6 +879,14 @@ class CatalogueBody(BaseModel):
     category: str = Field(default="", max_length=120)
     visibility: str = Field(default="", max_length=20)
     hideZero: bool = False
+    #: the Items screen has had a price band since it had prices, and the
+    #: catalogue did not carry it — so a visibly filtered list of 456 was
+    #: rebuilt here as 881 and the share was refused. A band selects which
+    #: records match and nothing else: no price reaches the DTO, the PDF,
+    #: the snapshot or any public response, and `jasani.prices` still
+    #: decides whether a band may be used at all.
+    priceMin: str = Field(default="", max_length=20)
+    priceMax: str = Field(default="", max_length=20)
     sort: str = Field(default="featured", max_length=20)
     description: bool = True
     specs: bool = True
@@ -882,6 +894,9 @@ class CatalogueBody(BaseModel):
     stockDate: bool = True
     code: bool = True
     contents: bool = False
+    #: What the panel last displayed, so a refusal can say what changed.
+    #: Advisory only: it never decides anything. See `_too_many`.
+    countedAs: int | None = Field(default=None, ge=0, le=10_000_000)
     #: "standard" (the default) or "high" — how large and how finely the
     #: photographs are encoded. Anything else is read as standard rather
     #: than refused, because an unreadable option must not produce the
@@ -889,26 +904,162 @@ class CatalogueBody(BaseModel):
     quality: str = Field(default="standard", max_length=12)
 
 
-def _catalogue_items(body: CatalogueBody) -> list[dict]:
+#: The filter state the Items screen, the count, the PDF and a share all
+#: read. One list, in one place, because the bug this closes was three
+#: slightly different lists: the screen applied a price band the catalogue
+#: discarded, so a visible 456 was rebuilt as 881 and the share was refused
+#: at the last moment. `sort` does not change which products match, but it
+#: belongs here because it decides the order two renderers must agree on.
+CATALOGUE_FILTERS = ("market", "q", "field", "stock", "brand", "colour",
+                     "category", "visibility", "hideZero", "priceMin",
+                     "priceMax", "minStock", "sort")
+
+
+def _can_price(session: dict | None) -> bool:
+    """Whether this caller may select on a price. Seeing one and filtering
+    by one are the same question asked twice, so they are the same
+    permission — a band is a binary search over figures a role may not
+    read."""
+    if session is None:
+        return False
+    #: a session is a sqlite3.Row on a real request and a plain dict in a
+    #: test, so it is subscripted rather than `.get`
+    try:
+        role = session["role"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    return bool(aa.has_perm(role, "jasani.prices"))
+
+
+def _catalogue_items(body: CatalogueBody, session: dict | None = None) -> list[dict]:
     """The products the catalogue will carry, read from the cached snapshot.
 
+    **The one selection function.** The PDF route, the share route and the
+    count endpoint all come through here, so the number an admin is shown
+    and the number that is built cannot be two different numbers, and the
+    PDF and the share cannot resolve different products from one dialog.
+
     Nothing here touches the supplier: `item_list` filters the snapshot the
-    scheduled synchronisation already wrote, and the detail lookup reads the
-    same cache.
+    scheduled synchronisation already wrote.
+
+    Two scopes, and they answer different questions:
+
+    * **filtered** — every product the filter state matches.
+    * **selected** — exactly the ids the admin ticked. The filters do *not*
+      redefine that set; only the market does, because an id from the other
+      market is not a product this catalogue can carry. Previously the ids
+      were intersected with the filtered rows, so raising the minimum stock
+      inside the dialog silently removed products the admin had chosen by
+      hand, which is not what ticking a box means.
     """
     from . import jasani
 
+    prices = _can_price(session)
+    if body.scope != "filtered":
+        #: existence and market only — the ids are the authority
+        rows = jasani.item_list(body.market, sort=body.sort,
+                                with_prices=False)["rows"]
+        wanted = {str(i) for i in body.ids}
+        return [r for r in rows if r["id"] in wanted]
+
     terms = [t.strip() for t in re.split(r"[,\n\t]", body.q or "") if t.strip()][:20]
-    data = jasani.item_list(
+    return jasani.item_list(
         body.market, terms=terms, field=body.field, stock=body.stock,
         brand=body.brand, colour=body.colour, category=body.category,
         visibility=body.visibility, hide_zero=bool(body.hideZero),
-        min_stock=_min_stock(body.minStock), sort=body.sort, with_prices=False)
-    rows = data["rows"]
+        price_min=_f(body.priceMin) if prices else None,
+        price_max=_f(body.priceMax) if prices else None,
+        min_stock=_min_stock(body.minStock), sort=body.sort,
+        with_prices=False)["rows"]
+
+
+def _filter_summary(body: CatalogueBody, session: dict | None = None) -> list[str]:
+    """What is narrowing the list, in the admin's own words.
+
+    Written here rather than in the panel so it cannot describe a filter
+    the selection does not apply, or miss one it does. Admin-only context:
+    a price band may be named to the person who set it, and still never
+    appears in the catalogue, the snapshot or any public page.
+    """
+    out = [body.market.upper()]
     if body.scope != "filtered":
-        wanted = {str(i) for i in body.ids}
-        rows = [r for r in rows if r["id"] in wanted]
-    return rows
+        return out
+    minimum = _min_stock(body.minStock)
+    if minimum:
+        out.append(f"Minimum stock \u2265 {minimum:,}")
+    terms = [t.strip() for t in re.split(r"[,\n\t]", body.q or "") if t.strip()][:20]
+    if terms:
+        shown = ", ".join(terms[:4]) + ("\u2026" if len(terms) > 4 else "")
+        out.append(f"Search: {shown}")
+    for label, value in (("Brand", body.brand), ("Colour", body.colour),
+                         ("Category", body.category)):
+        if value:
+            out.append(f"{label}: {value}")
+    stock_words = {"in": "In stock", "low": "Low stock", "out": "Out of stock",
+                   "incoming": "Incoming expected", "booked": "Booked"}
+    if body.stock in stock_words:
+        out.append(f"Stock: {stock_words[body.stock]}")
+    visible_words = {"visible": "Visible on the site", "hidden": "Hidden",
+                     "byhand": "Hidden by hand"}
+    if body.visibility in visible_words:
+        out.append(visible_words[body.visibility])
+    if body.hideZero:
+        out.append("Zero stock excluded")
+    if _can_price(session):
+        low, high = _f(body.priceMin), _f(body.priceMax)
+        if low is not None or high is not None:
+            from . import jasani
+
+            unit = jasani.CURRENCY_BY_MARKET.get(body.market, "")
+            band = (f"{low:,.0f}\u2013{high:,.0f}" if low is not None and high is not None
+                    else f"from {low:,.0f}" if low is not None else f"up to {high:,.0f}")
+            out.append(f"Price: {unit} {band}".strip())
+    return out
+
+
+def _too_many(body: CatalogueBody, found: int, what: str) -> str:
+    """The refusal, worded so an admin can see what moved.
+
+    `countedAs` is what the panel last displayed. It is used **for the
+    sentence and nothing else** — the decision is always the server's own
+    recount, because a figure the browser sends is a figure the browser
+    could be wrong about or could have made up.
+    """
+    from . import catalogue as cat
+
+    seen = body.countedAs
+    if seen and seen != found:
+        return (f"The filtered result changed from {seen:,} to {found:,} "
+                f"products. Maximum is {cat.MAX_ITEMS}. Review the filters "
+                "and try again.")
+    return (f"That is {found:,} products. {what} holds at most "
+            f"{cat.MAX_ITEMS}; narrow the filters or select fewer.")
+
+
+@router.post("/api/admin/jasani/catalogue/count")
+async def admin_jasani_catalogue_count(request: Request, body: CatalogueBody,
+                                       x_csrf: str | None = Header(default=None)):
+    """How many products **this exact request** would build.
+
+    The dialog's "All filtered items" figure used to be read once, when the
+    dialog opened, from the listing the screen happened to be showing —
+    while Market and Minimum stock could still be changed inside the dialog
+    and were sent with the request. So the panel could promise 456 and the
+    server resolve 881, and the admin found out only when the share was
+    refused. This answers for the body that would be posted, through the
+    same `_catalogue_items`, so the two cannot disagree.
+
+    Cached snapshot only: no supplier call, no image fetched, no document
+    drawn, nothing created. It is a read, and it is cheap.
+    """
+    session = require_perm(request, "jasani.view")
+    require_csrf(request, session, x_csrf)
+    from . import catalogue as cat
+
+    found = len(_catalogue_items(body, session))
+    return {"count": found, "limit": cat.MAX_ITEMS,
+            "allowed": 0 < found <= cat.MAX_ITEMS,
+            "summary": _filter_summary(body, session)}
 
 
 @router.post("/api/admin/jasani/catalogue")
@@ -921,14 +1072,13 @@ async def admin_jasani_catalogue(request: Request, body: CatalogueBody,
     from . import catalogue as cat
     from . import jasani
 
-    rows = _catalogue_items(body)
+    rows = _catalogue_items(body, session)
     if not rows:
         raise HTTPException(status_code=400, detail=(
             "No products match. Select some items, or widen the filters."))
     if len(rows) > cat.MAX_ITEMS:
-        raise HTTPException(status_code=400, detail=(
-            f"That is {len(rows):,} products. A catalogue holds at most "
-            f"{cat.MAX_ITEMS}; narrow the filters or select fewer."))
+        raise HTTPException(status_code=400, detail=_too_many(body, len(rows),
+                                                              "A catalogue"))
     status = jasani.cache_status(body.market)
     token = cat.start(session["email"], body.market, len(rows))
     detail = {"market": body.market, "items": len(rows), "scope": body.scope,
@@ -1017,14 +1167,13 @@ async def admin_jasani_catalogue_share(request: Request, body: CatalogueShareBod
     from . import catalogue_share as cs
     from . import jasani
 
-    rows = _catalogue_items(body)
+    rows = _catalogue_items(body, session)
     if not rows:
         raise HTTPException(status_code=400, detail=(
             "No products match. Select some items, or widen the filters."))
     if len(rows) > cat.MAX_ITEMS:
-        raise HTTPException(status_code=400, detail=(
-            f"That is {len(rows):,} products. A shared catalogue holds at most "
-            f"{cat.MAX_ITEMS}; narrow the filters or select fewer."))
+        raise HTTPException(status_code=400, detail=_too_many(body, len(rows),
+                                                              "A shared catalogue"))
     status = jasani.cache_status(body.market)
     token = cat.start(session["email"], body.market, len(rows))
     detail = {"market": body.market, "items": len(rows), "scope": body.scope,

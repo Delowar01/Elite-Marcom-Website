@@ -150,6 +150,43 @@ documentation). Non-negotiable rules from it:
   changed. The listing also returns `ids`, every matching id, so **Select all
   filtered** needs no second request and no five hundred checkboxes in the
   document.
+  **One filter contract, or the screen and the catalogue disagree.**
+  Production had a dialog promising "All filtered items: 456" and a Create
+  link answering "That is 881 products", and two independent faults each
+  caused it. The figure was read **once**, when the dialog opened, out of
+  the listing the screen happened to be showing — while Market and Minimum
+  stock could still be changed inside the dialog and *were* sent with the
+  request. And the Items screen filtered by a **price band** that the
+  catalogue never carried, so the same visible filters rebuilt a different
+  set. `admin_api.CATALOGUE_FILTERS` is now the one list (market, q, field,
+  stock, brand, colour, category, visibility, hideZero, priceMin, priceMax,
+  minStock, sort) and `_catalogue_items` is the one selection function: the
+  count endpoint, the PDF route and a share all come through it, so the
+  number an admin is shown is the number that is built and the two
+  renderers cannot resolve different products.
+  `POST /api/admin/jasani/catalogue/count` answers for the body the dialog
+  would post — cached snapshot only, no supplier call, no image, no
+  document, nothing created — and the panel recalculates on every change to
+  anything that selects products (`catWatch`; a control added later only
+  needs `data-cat-count`), disabling **Generate** / **Create link** while
+  the figure is over `MAX_ITEMS` rather than letting an admin find out by
+  pressing the button. The server still recounts and enforces the ceiling
+  at creation: the live figure is UX, never the boundary, and `countedAs`
+  is advisory — it words "changed from 456 to 507" and decides nothing.
+  **Filtering by a price is the same permission as seeing one**, because a
+  band is a binary search over figures: the route passes `price_min` /
+  `price_max` only for `jasani.prices`, and `item_list` no longer infers
+  that from `with_prices`. Separating the two is what lets a catalogue
+  *select* on a price it may never *show* — `_row` writes `_price` and
+  `_booked`, stripped beside `_cats` and `_seq` before a row is returned,
+  so a figure the caller may not see cannot ride out on one. The same
+  decoupling fixed `stock="booked"`, which had been matching nothing in a
+  catalogue because the key it tests was never written, and the price
+  sorts, which had been collapsing to input order.
+  **Selected items are exact ids.** They are resolved against the market's
+  products and nothing else, so raising the minimum stock inside the dialog
+  no longer silently unpicks a product somebody ticked by hand; the filters
+  redefine the *filtered* scope, which is what it is called.
   `min_stock` filters on the **viewed market's** available quantity with
   `>=`, so a minimum of 100 keeps an item sitting on exactly 100; a negative
   minimum is refused rather than read as zero.

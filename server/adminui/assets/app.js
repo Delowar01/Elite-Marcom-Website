@@ -6433,9 +6433,15 @@
         '<label class="ed-check"><input type="radio" name="cat-scope" value="selected"' +
           (picked.length ? " checked" : " disabled") + "> Selected items: <b>" +
           jzNum(picked.length) + "</b></label>" +
+        /* the figure is a placeholder until the server answers for the
+           request this dialog would actually send — Market and Minimum
+           stock can still be changed in here, and they used not to move it */
         '<label class="ed-check"><input type="radio" name="cat-scope" value="filtered"' +
-          (picked.length ? "" : " checked") + "> All filtered items: <b>" +
-          jzNum(filtered) + "</b></label></div></div>" +
+          (picked.length ? "" : " checked") + "> All filtered items: <b " +
+          'id="cat-count">' + jzNum(filtered) + "</b></label></div>" +
+        '<span class="admin-inline-note" id="cat-count-max" hidden>Maximum ' +
+          jzNum(500) + ' products.</span></div>' +
+        '<p class="admin-inline-note" id="cat-summary"></p></div>' +
       '<div class="full"><label>Include for each product</label><div class="cat-opts">' +
         [["desc", "Item description", true], ["specs", "Specifications", true],
          ["qty", "Available quantity", true], ["date", "Stock date", true],
@@ -6443,6 +6449,101 @@
           return '<label class="ed-check"><input type="checkbox" data-cat="' + o[0] + '"' +
             (o[2] ? " checked" : "") + "> " + o[1] + "</label>";
         }).join("") + "</div></div>";
+  }
+
+  /* ---------------- the figure the dialog promises ----------------
+     It used to be read once, when the dialog opened, out of whatever
+     listing the screen happened to be showing. Market and Minimum stock
+     can still be changed in here and are sent with the request, so the
+     panel could promise 456 while the server resolved 881 and refused the
+     share at the last moment. The figure is now the server's answer for
+     the exact body Create link would post, recalculated whenever anything
+     that selects products changes. */
+  var catSeen = { count: null, timer: null, seq: 0 };
+
+  function catSetCount(text, over) {
+    var el = document.getElementById("cat-count");
+    if (el) el.textContent = text;
+    var note = document.getElementById("cat-count-max");
+    if (note) note.hidden = !over;
+  }
+
+  /* The primary button is disabled while the count is unknown or too large,
+     so the ceiling is something the admin sees rather than something they
+     discover by pressing the button. */
+  function catGate(dlg, go, picked) {
+    if (!go) return;
+    var chosen = dlg.querySelector('input[name="cat-scope"]:checked');
+    var selected = chosen && chosen.value === "selected";
+    var n = selected ? picked.length : catSeen.count;
+    go.disabled = n !== null && (n === 0 || n > catSeen.limit);
+  }
+
+  /* Always asks the **filtered** question, whichever radio is chosen, so
+     the figure beside "All filtered items" is always the one that request
+     would resolve. Selected items are exact ids and need no server to
+     count them: the filters do not redefine that set. */
+  function catRefreshCount(dlg, picked, go) {
+    var mine = ++catSeen.seq;
+    var payload = catPayload(dlg, picked);
+    payload.scope = "filtered";
+    payload.ids = [];
+    catSeen.count = null;
+    catSetCount("Checking\u2026", false);
+    if (go) go.disabled = true;
+    api("/api/admin/jasani/catalogue/count", payload).then(function (r) {
+      if (mine !== catSeen.seq || !document.body.contains(dlg)) return;
+      if (!r.ok) {
+        /* a count that will not load is not a broken dialog: say so, and
+           let the server have the last word when the button is pressed */
+        catSetCount("unavailable", false);
+        catSeen.count = null;
+        if (go) go.disabled = false;
+        return;
+      }
+      catSeen.count = r.data.count;
+      catSeen.limit = r.data.limit;
+      catSetCount(jzNum(r.data.count), r.data.count > r.data.limit);
+      var parts = (r.data.summary || []).slice();
+      var chosen = dlg.querySelector('input[name="cat-scope"]:checked');
+      if (chosen && chosen.value === "selected") {
+        parts = ["Selected items are exactly the " + jzNum(picked.length) +
+                 " ticked on the screen"].concat(parts.slice(0, 1));
+      }
+      catSummary(parts);
+      catGate(dlg, go, picked);
+    });
+  }
+
+  function catSummary(parts) {
+    var el = document.getElementById("cat-summary");
+    if (!el) return;
+    el.textContent = parts.length ? "Filtered by: " + parts.join(" \u00b7 ") : "";
+  }
+
+  /* Every control in the dialog that changes which products are selected.
+     A control added later only has to carry data-cat-count to join in. */
+  function catWatch(dlg, picked, go) {
+    catSeen.limit = 500;
+    var recount = function () {
+      clearTimeout(catSeen.timer);
+      catSeen.timer = setTimeout(function () {
+        catRefreshCount(dlg, picked, go);
+      }, 180);
+    };
+    ["#cat-market", "#cat-min"].forEach(function (sel) {
+      var el = dlg.querySelector(sel);
+      if (el) { el.addEventListener("change", recount); el.addEventListener("input", recount); }
+    });
+    Array.prototype.forEach.call(
+      dlg.querySelectorAll('input[name="cat-scope"], [data-cat-count]'),
+      function (el) {
+        el.addEventListener("change", function () {
+          catGate(dlg, go, picked);     // the radio answers at once
+          recount();                    // the wording and figure follow
+        });
+      });
+    catRefreshCount(dlg, picked, go);
   }
 
   function catProgressBlock() {
@@ -6468,7 +6569,16 @@
       minStock: dlg.querySelector("#cat-min").value.trim(),
       q: jzState.terms.join(","), field: jzState.field, stock: jzState.stock,
       brand: jzState.brand, colour: jzState.colour, category: jzState.category,
-      visibility: jzState.visibility, hideZero: !!jzState.hideZero, sort: jzState.sort,
+      visibility: jzState.visibility, hideZero: !!jzState.hideZero,
+      /* the screen has filtered by price since it has shown prices, and the
+         catalogue did not carry the band — which is how a visible 456 was
+         rebuilt as 881 and the share refused. No price is ever drawn; a
+         band only decides which records match. */
+      priceMin: jzState.priceMin, priceMax: jzState.priceMax,
+      sort: jzState.sort,
+      /* what the dialog last displayed, so a refusal can say what moved.
+         The server recounts and its answer wins; this is for the sentence. */
+      countedAs: catSeen.count,
       description: opt("desc"), specs: opt("specs"), stockQty: opt("qty"),
       stockDate: opt("date"), code: opt("code"), contents: opt("toc"),
       quality: dlg.querySelector("#cat-quality").value
@@ -6505,6 +6615,7 @@
       { label: "Cancel", close: true }
     ]);
     var go = document.getElementById("cat-go");
+    catWatch(dlg, sc.picked, go);
     go.addEventListener("click", function () {
       if (go.disabled) return;
       go.disabled = true;                       // one click, one catalogue
@@ -6557,6 +6668,7 @@
     ]);
     jzShareList();
     var go = document.getElementById("cat-go");
+    catWatch(dlg, sc.picked, go);
     go.addEventListener("click", function () {
       if (go.disabled) return;
       go.disabled = true;

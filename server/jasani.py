@@ -1503,10 +1503,16 @@ def _row(p: dict, internal: dict, hidden: set[str], drop_zero: bool,
         "hidden": is_hidden, "hiddenByRule": by_rule,
         "live": not is_hidden and not by_rule,
     }
+    rec = internal.get(pid) or {}
+    if internal:
+        #: private, and stripped before the row is returned. Filtering and
+        #: sorting by a figure is not the same permission as seeing it, and
+        #: a catalogue has to do the first without ever doing the second.
+        row["_price"] = _price_of(rec)
+        row["_booked"] = rec.get("booked", 0)
     if with_prices:
-        rec = internal.get(pid) or {}
-        row["price"] = _price_of(rec)
-        row["booked"] = rec.get("booked", 0)
+        row["price"] = row.get("_price")
+        row["booked"] = row.get("_booked", 0)
         row["currency"] = rec.get("currency") or CURRENCY_BY_MARKET.get(market_of(p), "")
     return row
 
@@ -1549,7 +1555,17 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
     """Search, filter and sort the cached snapshot. Never calls the supplier."""
     products = all_products(market)
     known = stock_known(market)
-    internal = internal_map(market) if with_prices else {}
+    #: the internal map is loaded when a figure is **needed**, which is not
+    #: the same as when it may be shown. A price band, a price sort and the
+    #: booked-stock filter all read it; only `with_prices` puts it on a row.
+    #: Before this the catalogue asked for the same filters as the Items
+    #: screen with `with_prices=False` and silently got a different answer:
+    #: the price band was discarded, and `stock="booked"` matched nothing
+    #: because the key it tests was never written.
+    needs_internal = bool(with_prices or price_min is not None
+                          or price_max is not None or stock == "booked"
+                          or sort in ("priceAsc", "priceDesc"))
+    internal = internal_map(market) if needs_internal else {}
     hidden = hidden_ids(market)
     drop_zero = hide_zero_stock(market)
     low = config.LOW_STOCK_THRESHOLD
@@ -1572,10 +1588,11 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
 
     keys = _SEARCH_FIELDS.get(field, _SEARCH_FIELDS["all"])
     needles = [t.strip().lower() for t in (terms or []) if t.strip()][:20]
-    # a caller who may not see prices cannot filter by one either: the band is
-    # ignored rather than matching nothing, which would look like a broken page
-    if not with_prices:
-        price_min = price_max = None
+    #: whether a caller may *use* a price band is the route's decision — it
+    #: knows the role — and it says so by passing None. This function no
+    #: longer second-guesses it from `with_prices`, because that conflated
+    #: "may see a price" with "may select on one" and made one screen's
+    #: filters mean something different from another's.
 
     def keep(r: dict) -> bool:
         if min_stock is not None:
@@ -1601,7 +1618,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
             return False
         if stock == "incoming" and r["incoming"] <= 0:
             return False
-        if stock == "booked" and not r.get("booked"):
+        if stock == "booked" and not r.get("_booked"):
             return False
         if brand and r["brand"] != brand:
             return False
@@ -1616,7 +1633,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
         if visibility == "byhand" and not r["hidden"]:
             return False
         if price_min is not None or price_max is not None:
-            value = r.get("price")
+            value = r.get("_price")
             if value is None:
                 return False
             if price_min is not None and value < price_min:
@@ -1628,7 +1645,7 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
     kept = [r for r in rows if keep(r)]
 
     def price_key(r):
-        v = r.get("price")
+        v = r.get("_price")
         return v if v is not None else 0.0
 
     sorters = {
@@ -1647,6 +1664,11 @@ def item_list(market: str, *, terms: list[str] | None = None, field: str = "all"
     for r in kept:
         r.pop("_cats", None)
         r.pop("_seq", None)
+        #: a figure the caller may not see never leaves this function, so a
+        #: price cannot ride out on a row the way it could if the public key
+        #: were simply deleted by whoever happened to remember
+        r.pop("_price", None)
+        r.pop("_booked", None)
     return {"rows": kept, "totals": totals, "facets": facets,
             "lowThreshold": low, "hideZeroStock": drop_zero, "stockKnown": known,
             "currency": CURRENCY_BY_MARKET.get(market, ""),
